@@ -42,7 +42,8 @@ class GoatAgent(Agent):
 
     def __init__(self, config, device_id: int = 0):
         # self.max_steps = config.AGENT.max_steps
-        self.max_steps = [500, 500, 500, 500, 500]
+        # self.max_steps = [500, 500, 500, 500, 500]
+        self.max_steps = [500] * 10
         # self.max_steps = [500, 400, 300, 200, 200, 200, 200, 200, 200, 200, 200]
         # self.max_steps = [400, 300, 200, 200, 200, 200, 200, 200, 200, 200, 200]
         self.num_environments = config.NUM_ENVIRONMENTS
@@ -268,6 +269,7 @@ class GoatAgent(Agent):
             free_locations = free_locations.unsqueeze(1)
         if object_goal_category is not None:
             object_goal_category = object_goal_category.unsqueeze(1)
+        # * before module call obs.shape is [1, 380+3+1]
         (
             self.goal_map,
             self.found_goal,
@@ -594,6 +596,8 @@ class GoatAgent(Agent):
                     **vis_inputs[0],
                     "short_term_goal": short_term_goal,
                 }
+        else:
+            info = None
 
         if action == DiscreteNavigationAction.STOP:
             if len(obs.task_observations["tasks"]) - 1 > self.current_task_idx:
@@ -633,6 +637,11 @@ class GoatAgent(Agent):
             all_rgb_keypoints,
             instance_ids,
         ) = (None, None, None, None, [], [], [], [])
+
+        # print("-------- in preprocess obs/ GoatAgent --------")
+        # print("Task id: ", self.current_task_idx)
+        # print("self._module.instance_goal_found: ", self._module.instance_goal_found)
+        # print("task_type: ", task_type)
 
         if not self._module.instance_goal_found:
             if task_type == "imagenav":
@@ -674,11 +683,14 @@ class GoatAgent(Agent):
                     use_full_image=True,
                 )
         
+        # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless. 
+        # * Maybe I should change the config. But nevertheles, this works even with 380.
         semantic = self.one_hot_encoding[torch.from_numpy(semantic).to(self.device)]
 
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:
+            # * Why using instance_map which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes. 
             instances = obs.task_observations["instance_map"]
             # first create a mapping to 1, 2, ... num_instances
             instance_ids = np.unique(instances)
@@ -726,6 +738,7 @@ class GoatAgent(Agent):
                 task_type, current_task
             )
 
+        # * preprocessed obs shape is (1, 3+1+num_sem_classes+num_instances, H, W)
         return (
             obs_preprocessed,
             pose_delta,
