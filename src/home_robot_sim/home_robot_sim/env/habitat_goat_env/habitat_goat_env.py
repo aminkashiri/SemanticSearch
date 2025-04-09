@@ -24,12 +24,14 @@ from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
 
 from home_robot.perception.constants import df as hm3d_mapping_df
 
-all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
+all_ovon_categories_path = "/home-robot/data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
+# all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
 with open(all_ovon_categories_path, "r") as f:
     all_ovon_categories = json.load(f)
 
 # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
-all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
+all_ovon_categories = sorted(list(set(all_ovon_categories.keys())))
+# all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
 
 all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]
 
@@ -65,6 +67,8 @@ class HabitatGoatEnv(HabitatEnv):
             if len(main_category) == 0:
                 continue
             else:
+                if len(main_category) > 1:
+                    raise Exception("Multiple categories found for", obj.category.name())
                 main_category = main_category['category'].item()
 
             main_category = "_".join(main_category.split(" "))
@@ -129,14 +133,14 @@ class HabitatGoatEnv(HabitatEnv):
             DeticPerception,
         )
         
-        all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
-        with open(all_ovon_categories_path, "r") as f:
-            all_ovon_categories = json.load(f)
+        # all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
+        # with open(all_ovon_categories_path, "r") as f:
+        #     all_ovon_categories = json.load(f)
 
-        # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
-        all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
+        # # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
+        # all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
 
-        all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]
+        # all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]
 
         self.segmentation = DeticPerception(
             vocabulary="custom",
@@ -189,6 +193,7 @@ class HabitatGoatEnv(HabitatEnv):
     ) -> home_robot.core.interfaces.Observations:
         if self.ground_truth_semantics:
 
+            # * shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
             obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
 
@@ -242,8 +247,8 @@ class HabitatGoatEnv(HabitatEnv):
         return rescaled_depth[:, :, -1]
 
     def _preprocess_goals(self, tasks, habitat_obs):
-        goals = []
-        vocabulary = []
+        # goals = []
+        # vocabulary = []
 
         goals = habitat_obs['multigoal']
 
