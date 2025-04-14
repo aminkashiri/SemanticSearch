@@ -11,6 +11,183 @@ from sklearn.cluster import DBSCAN
 
 from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.utils.morphology import binary_dilation
+from scipy.ndimage import label
+
+
+class LanguageNavSemanticFrontierExplorationPolicy(nn.Module):
+    """
+    Policy to select high-level goals for Object Goal Navigation:
+    go to object goal if it is mapped and explore frontier (closest
+    unexplored region) otherwise.
+    """
+
+    def __init__(self, exploration_strategy: str, num_of_semantic_categories: int, warmup_steps: int):
+        super().__init__()
+        assert exploration_strategy in [
+            "seen_frontier",
+            "been_close_to_frontier",
+            "semantic",
+        ]
+        self.exploration_strategy = exploration_strategy
+
+        self.dilate_explored_kernel = nn.Parameter(
+            torch.from_numpy(skimage.morphology.disk(10))
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .float(),
+            requires_grad=False,
+        )
+        self.select_border_kernel = nn.Parameter(
+            torch.from_numpy(skimage.morphology.disk(1))
+            .unsqueeze(0)
+            .unsqueeze(0)
+            .float(),
+            requires_grad=False,
+        )
+        self.num_of_semantic_categories = num_of_semantic_categories
+        self.warmup_steps = warmup_steps
+
+    @property
+    def goal_update_steps(self):
+        return 1
+
+    def forward(
+        self,
+        map_features,
+        step,
+        robot_position,
+        object_category=None,
+        reject_visited_targets=False,
+    ):
+        """
+        Arguments:
+            map_features: semantic map features of shape
+             (batch_size, 9 + num_sem_categories, M, M)
+            object_category: object goal category
+        Returns:
+            goal_map: binary map encoding goal(s) of shape (batch_size, M, M)
+            found_goal: binary variables to denote whether we found the object
+            goal category of shape (batch_size,)
+        """
+        assert object_category is not None
+
+        goal_map, found_goal = self.reach_goal_if_in_map(
+            map_features, object_category, reject_visited_targets=reject_visited_targets
+        )
+
+        if self.exploration_strategy == "semantic" and step > self.warmup_steps:
+            goal_map = self.semantic_exploration(
+                map_features, goal_map, found_goal, object_category, robot_position
+            )
+        else:
+            goal_map = self.explore_otherwise(map_features, goal_map, found_goal)
+        return goal_map, found_goal
+
+    def semantic_exploration(
+        self, map_features, goal_map, found_goal, category, robot_position
+    ):
+        if found_goal[0]:
+            return goal_map
+        
+        sem_weights = np.random.rand(self.num_of_semantic_categories, self.num_of_semantic_categories)
+        sem_weights = sem_weights[category]
+
+        frontier_map = self.get_frontier_map(map_features)
+        structure = np.ones((3, 3))  # 8-connectivity
+        labeled_map, num_features = label(frontier_map, structure=structure)
+
+        frontiers = [
+            frontiers.append(np.argwhere(labeled_map == i))
+            for i in range(1, num_features + 1)
+        ]
+
+        sem_layers = map_features[
+            0,
+            2 * MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS
+            + self.num_of_semantic_categories,
+            :,
+            :,
+        ]
+        r = 40
+        frontier_scores = []
+        for frontier in frontiers:
+            center = int(frontier.mean(axis=0))
+            local_map = sem_layers[
+                :, center[0] - r : center[0] + r, center[1] - r : center[1] + r
+            ]
+            neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0]
+
+            if len(neighbor_classes) > 0:
+                frontier_sem_score = np.mean(sem_weights[neighbor_classes]) / np.linalg.norm(robot_position, center) #! MyTODO: Geodesic distance
+            else:
+                frontier_sem_score = np.mean(sem_weights) / np.linalg.norm(robot_position, center) #! MyTODO: Geodesic distance
+            frontier_scores.append(frontier_sem_score)
+        
+        # Select the frontier with the highest score
+        best_frontier = np.argmax(frontier_scores)
+        goal_map = np.zeros(map_features.shape[-2:], dtype=np.uint8)
+        goal_map[tuple(best_frontier.T)] = 1
+        return goal_map
+
+    def reach_goal_if_in_map(
+        self,
+        map_features,
+        goal_category,
+        reject_visited_targets=False,
+    ):
+        """If the desired goal is in the semantic map, reach it."""
+        batch_size, _, height, width = map_features.shape
+        device = map_features.device
+
+        goal_map = torch.zeros((batch_size, height, width), device=device)
+        found_goal_current = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+        for e in range(batch_size):
+            # if the category goal was not found previously
+            if not found_goal_current[e]:
+                # the category to navigate to
+                category_map = map_features[
+                    e, goal_category[e] + 2 * MC.NON_SEM_CHANNELS, :, :
+                ]
+
+                if reject_visited_targets:
+                    # remove the target objects that the agent has already been close to
+                    category_map = category_map * (
+                        1 - map_features[e, MC.BLACKLISTED_TARGETS_MAP, :, :]
+                    )
+                # if the desired category is found with required constraints, set goal for navigation
+                if (category_map == 1).sum() > 0:
+                    goal_map[e] = category_map == 1
+                    found_goal_current[e] = True
+        return goal_map, found_goal_current
+
+    def get_frontier_map(self, map_features):
+        # Select unexplored area
+        if self.exploration_strategy == "seen_frontier":
+            frontier_map = (map_features[:, [MC.EXPLORED_MAP], :, :] == 0).float()
+        elif self.exploration_strategy == "been_close_to_frontier":
+            frontier_map = (map_features[:, [MC.BEEN_CLOSE_MAP], :, :] == 0).float()
+
+        # Dilate explored area
+        frontier_map = 1 - binary_dilation(
+            1 - frontier_map, self.dilate_explored_kernel
+        )
+
+        # Select the frontier
+        frontier_map = (
+            binary_dilation(frontier_map, self.select_border_kernel) - frontier_map
+        )
+        return frontier_map
+
+    def explore_otherwise(self, map_features, goal_map, found_goal):
+        """Explore closest unexplored region otherwise."""
+        frontier_map = self.get_frontier_map(map_features)
+        batch_size = map_features.shape[0]
+        for e in range(batch_size):
+            if not found_goal[e]:
+                goal_map[e] = frontier_map[e]
+
+        return goal_map
 
 
 class LanguageNavFrontierExplorationPolicy(nn.Module):
