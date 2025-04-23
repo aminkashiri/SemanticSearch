@@ -27,6 +27,117 @@ from home_robot.utils.spot import draw_circle_segment, fill_convex_hull
 # For debugging input and output maps - shows matplotlib visuals
 debug_maps = False
 
+import numpy as np
+from bresenham import bresenham  # pip install bresenham
+
+def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_beams=360):
+    """
+    Perform 2D raycasting to compute known vs unknown cells.
+
+    Args:
+        obstacle_map (np.ndarray): 2D array (0=free, 1=obstacle)
+        robot_pos (Tuple[int, int]): (x, y) in grid coordinates
+        max_range (int): max number of cells to raycast in each direction
+        num_beams (int): number of rays to cast (default: 360)
+
+    Returns:
+        known_map (np.ndarray): 2D binary array (1=known, 0=unknown)
+    """
+    H, W = obstacle_map.shape
+    known_map = np.zeros_like(obstacle_map, dtype=np.uint8)  # 0 = unknown, 1 = known
+
+    cx, cy = robot_pos
+    center_angle = 0 # Constant facing downard
+    half_fov_rad = np.radians(gaze_width / 2)
+    angles = np.linspace(center_angle - half_fov_rad, center_angle + half_fov_rad, num_beams)
+
+    for angle in angles:
+        dx = np.cos(angle)
+        dy = np.sin(angle)
+
+        ex = cx + int(round(dx * max_range))
+        ey = cy + int(round(dy * max_range))
+
+        for x, y in bresenham(cx, cy, ex, ey):
+            if 0 <= x < W and 0 <= y < H:
+                known_map[x, y] = 1  # mark as known
+                if obstacle_map[x, y] > 1:  # stop at obstacle
+                    break
+            else:
+                break  # ray exited map bounds
+
+    return known_map
+
+
+
+def get_fp_exp_pred(
+    self, all_height_proj, fp_map_pred, feat, init_grid, current_pose, XYZ_cm_std
+):
+    if self.exploration_type == "raycast":
+        fp_exp_pred = compute_known_cells_map(
+            fp_map_pred[0, 0].cpu().numpy(),
+            (0, fp_map_pred.shape[-1] // 2),
+            self.gaze_distance * 100 / self.resolution,
+            self.gaze_width,
+            num_beams=360,
+        )
+        fp_exp_pred = torch.from_numpy(fp_exp_pred).to(dtype=fp_map_pred.dtype, device=fp_map_pred.device).unsqueeze(0).unsqueeze(0)
+        # import matplotlib
+        # matplotlib.use("TkAgg")
+        # plt.subplot(121)
+        # plt.imshow(fp_exp_pred[0, 0].cpu())
+        # plt.subplot(122)
+        # plt.imshow(fp_map_pred[0, 0].cpu())
+        # plt.show()
+
+        return fp_exp_pred
+    elif self.exploration_type == "default":
+        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
+    elif self.exploration_type == "hull":
+        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
+        fp_exp_pred = fp_exp_pred.clip(0, 1)
+        # set the current agent position as 1
+        fp_exp_pred[:, :, 0, fp_exp_pred.shape[-1] // 2] = 1
+
+        # fill convex hull
+        filled = fill_convex_hull(fp_exp_pred[0, 0].cpu())
+        assert fp_exp_pred.shape[:2] == (1, 1)
+        fp_exp_pred[0, 0] = torch.tensor(filled)
+
+    # uses a fixed cone infront of the camerea
+    elif self.exploration_type == "gaze":
+        fp_exp_pred = torch.zeros_like(fp_map_pred)
+        view_image = torch.zeros(fp_map_pred.shape[-2:])
+        # get the desired radius in cells
+        dist = self.gaze_distance * 100 / self.resolution
+        view_image = draw_circle_segment(
+            view_image, (0, fp_exp_pred.shape[-1] // 2), dist, 0, self.gaze_width
+        )
+        fp_exp_pred[..., :, :] = view_image
+    # uses depth point projections but limits the fov and distance using the code
+    elif self.exploration_type == "gaze_projected":
+        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
+        view_image = torch.zeros(fp_map_pred.shape[-2:])
+        # get the desired radius in cells
+        dist = self.gaze_distance * 100 / self.resolution
+        view_image = (
+            draw_circle_segment(
+                view_image,
+                (0, fp_exp_pred.shape[-1] // 2),
+                dist,
+                0,
+                self.gaze_width,
+            )
+            / 255
+        )
+        fp_exp_pred *= view_image.to(fp_exp_pred.device)
+    else:
+        raise Exception("not implemented")
+    return fp_exp_pred
+
 
 class Categorical2DSemanticMapModule(nn.Module):
     """
@@ -281,9 +392,11 @@ class Categorical2DSemanticMapModule(nn.Module):
                 seq_camera_poses,
                 origins,
                 lmb,
-                seq_obstacle_locations[:, t]
-                if seq_obstacle_locations is not None
-                else None,
+                (
+                    seq_obstacle_locations[:, t]
+                    if seq_obstacle_locations is not None
+                    else None
+                ),
                 seq_free_locations[:, t] if seq_free_locations is not None else None,
                 blacklist_target,
             )
@@ -396,7 +509,7 @@ class Categorical2DSemanticMapModule(nn.Module):
     def draw_line(self, matrix, x1, y1, x2, y2, padding=1):
         dx = abs(x2 - x1)
         dy = abs(y2 - y1)
-        
+
         if x1 < x2:
             sx = 1
         else:
@@ -405,9 +518,9 @@ class Categorical2DSemanticMapModule(nn.Module):
             sy = 1
         else:
             sy = -1
-        
+
         err = dx - dy
-        
+
         while True:
             for i in range(-padding, padding + 1):
                 for j in range(-padding, padding + 1):
@@ -416,10 +529,10 @@ class Categorical2DSemanticMapModule(nn.Module):
                     if 0 <= x < matrix.shape[2] and 0 <= y < matrix.shape[1]:
                         matrix[0, y, x] = 1  # Set x-value to 1
                         matrix[1, y, x] = 1  # Set y-value to 1
-            
+
             if x1 == x2 and y1 == y2:
                 break
-            
+
             e2 = 2 * err
             if e2 > -dy:
                 err -= dy
@@ -427,7 +540,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             if e2 < dx:
                 err += dx
                 y1 += sy
-
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -637,54 +749,15 @@ class Categorical2DSemanticMapModule(nn.Module):
         # self.local_map_size_cm
         # plt.imshow(fp_exp_pred[0,0].cpu())
         # plt.pause(0.01)
-
-        fp_map_pred = fp_map_pred / self.map_pred_threshold
-        # uses depth point projections but limits the fov and distance
-        if self.exploration_type == "default":
-            fp_exp_pred = all_height_proj[:, 0:1, :, :]
-            fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
-        elif self.exploration_type == "hull":
-            fp_exp_pred = all_height_proj[:, 0:1, :, :]
-            fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
-            fp_exp_pred = fp_exp_pred.clip(0, 1)
-            # set the current agent position as 1
-            fp_exp_pred[:, :, 0, fp_exp_pred.shape[-1] // 2] = 1
-
-            # fill convex hull
-            filled = fill_convex_hull(fp_exp_pred[0, 0].cpu())
-            assert fp_exp_pred.shape[:2] == (1, 1)
-            fp_exp_pred[0, 0] = torch.tensor(filled)
-
-        # uses a fixed cone infront of the camerea
-        elif self.exploration_type == "gaze":
-            fp_exp_pred = torch.zeros_like(fp_map_pred)
-            view_image = torch.zeros(fp_map_pred.shape[-2:])
-            # get the desired radius in cells
-            dist = self.gaze_distance * 100 / self.resolution
-            view_image = draw_circle_segment(
-                view_image, (0, fp_exp_pred.shape[-1] // 2), dist, 0, self.gaze_width
-            )
-            fp_exp_pred[..., :, :] = view_image
-        # uses depth point projections but limits the fov and distance using the code
-        elif self.exploration_type == "gaze_projected":
-            fp_exp_pred = all_height_proj[:, 0:1, :, :]
-            fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
-            view_image = torch.zeros(fp_map_pred.shape[-2:])
-            # get the desired radius in cells
-            dist = self.gaze_distance * 100 / self.resolution
-            view_image = (
-                draw_circle_segment(
-                    view_image,
-                    (0, fp_exp_pred.shape[-1] // 2),
-                    dist,
-                    0,
-                    self.gaze_width,
-                )
-                / 255
-            )
-            fp_exp_pred *= view_image.to(fp_exp_pred.device)
-        else:
-            raise Exception("not implemented")
+        fp_exp_pred = get_fp_exp_pred(
+            self,
+            all_height_proj,
+            fp_map_pred,
+            feat,
+            init_grid,
+            current_pose,
+            XYZ_cm_std,
+        )
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
@@ -839,7 +912,8 @@ class Categorical2DSemanticMapModule(nn.Module):
             # Set a disk around the agent to explored
             # This is around the current agent - we just sort of assume we know where we are
             try:
-                radius = self.explored_radius
+                # radius = self.explored_radius
+                radius = 0
                 explored_disk = torch.from_numpy(skimage.morphology.disk(radius))
                 current_map[
                     e,
@@ -874,8 +948,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             except IndexError:
 
                 pass
-
+        # debug_maps = True
         if debug_maps:
+            import matplotlib
+            matplotlib.use("TkAgg")
             current_map = current_map.cpu()
             explored = current_map[0, MC.EXPLORED_MAP].numpy()
             been_close = current_map[0, MC.BEEN_CLOSE_MAP].numpy()
@@ -888,7 +964,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.axis("off")
             plt.title("been close")
             plt.imshow(been_close)
-            plt.subplot(233)
+            plt.subplot(333)
             plt.axis("off")
             plt.imshow(been_close * explored)
             plt.subplot(334)
@@ -906,8 +982,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.imshow(been_close * obstacles)
             plt.subplot(337)
             plt.axis("off")
-            rgb = obs[0, :3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
-            plt.imshow(rgb.cpu().numpy())
+            # rgb = obs[0, :3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
+            rgb = obs[0, :3].permute(1, 2, 0)
+            # print("rgs.shape", rgb.shape)
+            plt.imshow(rgb.cpu().numpy().astype(np.uint8))
             plt.subplot(338)
             plt.imshow(depth[0].cpu().numpy())
             plt.axis("off")
@@ -915,14 +993,11 @@ class Categorical2DSemanticMapModule(nn.Module):
             seg = np.zeros_like(depth[0].cpu().numpy())
             for i in range(4, obs_channels):
                 seg += (i - 4) * obs[0, i].cpu().numpy()
-                print("class =", i, np.sum(obs[0, i].cpu().numpy()), "pts")
+            #     print("class =", i, np.sum(obs[0, i].cpu().numpy()), "pts")
             plt.imshow(seg)
             plt.axis("off")
             plt.show()
 
-            print("Non semantic channels =", MC.NON_SEM_CHANNELS)
-            print("map shape =", current_map.shape)
-            breakpoint()
 
         if self.must_explore_close:
             current_map[:, MC.EXPLORED_MAP] = (
@@ -1122,9 +1197,9 @@ class Categorical2DSemanticMapModule(nn.Module):
                     (lmb[e, 2], lmb[e, 3]),
                     max_instance_id,
                 )
-                global_map[
-                    e, i + MC.NON_SEM_CHANNELS + self.num_sem_categories
-                ] = instances
+                global_map[e, i + MC.NON_SEM_CHANNELS + self.num_sem_categories] = (
+                    instances
+                )
 
         return global_map
 
@@ -1208,10 +1283,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             :, 0 : MC.NON_SEM_CHANNELS, :, :
         ]
         # Global obstacles, explored area, and current and past position
-        map_features[
-            :, MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :
-        ] = nn.MaxPool2d(self.global_downscaling)(
-            global_map[:, 0 : MC.NON_SEM_CHANNELS, :, :]
+        map_features[:, MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :] = (
+            nn.MaxPool2d(self.global_downscaling)(
+                global_map[:, 0 : MC.NON_SEM_CHANNELS, :, :]
+            )
         )
         # Local semantic categories
         map_features[:, 2 * MC.NON_SEM_CHANNELS :, :, :] = local_map[
