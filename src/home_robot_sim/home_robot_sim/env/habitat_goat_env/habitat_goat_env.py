@@ -31,6 +31,7 @@ with open(all_ovon_categories_path, "r") as f:
 
 # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
 all_ovon_categories = sorted(list(set(all_ovon_categories.keys())))
+print("All OVON categories:", {i+1: all_ovon_categories[i] for i in range(len(all_ovon_categories))})
 # all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
 
 all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]

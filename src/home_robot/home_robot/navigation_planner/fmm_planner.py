@@ -29,6 +29,7 @@ class FMMPlanner:
         visualize=False,
         print_images=True,
         debug=False,
+        fixed=False,
     ):
         """
         Arguments:
@@ -60,6 +61,7 @@ class FMMPlanner:
         self.fmm_dist = None
         self.debug = debug
         # self.goal_map = None
+        self.fixed = fixed
 
     def set_goal(self, goal, auto_improve: bool = False):
         """Set planner goal. Goal should be of size 2, containing x and y positions."""
@@ -84,6 +86,7 @@ class FMMPlanner:
         dd: np.ndarray = None,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
+        postfix="",
     ):
         """Set long-term goal(s) used to compute distance from a binary
         goal map.
@@ -151,6 +154,8 @@ class FMMPlanner:
                 cv2.imshow("Planner Distance", dist_vis)
                 cv2.waitKey(1)
 
+            if not postfix == "":
+                return dd
             if self.print_images and timestep is not None:
                 cv2.imwrite(
                     os.path.join(self.vis_dir, f"planner_snapshot_{timestep}.png"),
@@ -293,13 +298,16 @@ class FMMPlanner:
 
         if vis_dir is not None:
             self.vis_dir = vis_dir
+        
+        #! myTODO: Finish fixing goal dilation
         planner = FMMPlanner(
             np.ones_like(self.traversible),
+            # self.traversible if self.fixed else np.ones_like(self.traversible),
             print_images=self.print_images,
             vis_dir=self.vis_dir,
         )
         # Plan to the goal mask
-        planner.set_multi_goal(goal, timestep=timestep)
+        planner.set_multi_goal(goal, timestep=timestep, postfix="dilate")
 
         # Now mask out anything here based on distance to the goal mask
         mask = self.traversible
@@ -315,6 +323,9 @@ class FMMPlanner:
             navigable_goal_map = dist_map < distance
 
         if visualize:
+            # visualize = True
+            # import matplotlib
+            # matplotlib.use("TkAgg")
             # Debugging code. Make sure we are properly finding the closest traversible goal.
             plt.subplot(221)
             plt.imshow(self.traversible)
