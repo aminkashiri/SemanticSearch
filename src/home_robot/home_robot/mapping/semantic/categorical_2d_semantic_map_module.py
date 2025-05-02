@@ -44,6 +44,10 @@ def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_
         known_map (np.ndarray): 2D binary array (1=known, 0=unknown)
     """
     H, W = obstacle_map.shape
+    from scipy.ndimage import binary_dilation
+    obstacle_map = np.where(obstacle_map >= 1, 1, 0)
+    structure = np.ones((3, 3), dtype=np.uint8)
+    obstacle_map = binary_dilation(obstacle_map, structure=structure).astype(np.uint8)
     known_map = np.zeros_like(obstacle_map, dtype=np.uint8)  # 0 = unknown, 1 = known
 
     cx, cy = robot_pos
@@ -61,7 +65,7 @@ def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_
         for x, y in bresenham(cx, cy, ex, ey):
             if 0 <= x < W and 0 <= y < H:
                 known_map[x, y] = 1  # mark as known
-                if obstacle_map[x, y] > 1:  # stop at obstacle
+                if obstacle_map[x, y] == 1:  # stop at obstacle
                     break
             else:
                 break  # ray exited map bounds
@@ -84,9 +88,9 @@ def get_fp_exp_pred(
         fp_exp_pred = torch.from_numpy(fp_exp_pred).to(dtype=fp_map_pred.dtype, device=fp_map_pred.device).unsqueeze(0).unsqueeze(0)
         # import matplotlib
         # matplotlib.use("TkAgg")
-        # plt.subplot(121)
+        # plt.subplot(221)
         # plt.imshow(fp_exp_pred[0, 0].cpu())
-        # plt.subplot(122)
+        # plt.subplot(222)
         # plt.imshow(fp_map_pred[0, 0].cpu())
         # plt.show()
 
@@ -824,7 +828,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         rot_mat, trans_mat = ru.get_grid(st_pose_adjusted, agent_view.size(), dtype)
         rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
         translated = F.grid_sample(rotated, trans_mat, align_corners=True)
-        plt.imshow(rotated[0, 0].cpu())
+        # plt.imshow(rotated[0, 0].cpu())
 
         # Clamp to [0, 1] after transform agent view to map coordinates
         translated = torch.clamp(translated, min=0.0, max=1.0).float()
@@ -837,9 +841,10 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # Remove people from the last map if people are detected
         # TODO Handle people more cleanly
-        if translated[:, MC.NON_SEM_CHANNELS + 11, :, :].sum() > 0.99:
-            print("Detected a person, removing previous people from the map")
-            prev_map[:, MC.NON_SEM_CHANNELS + 11, :, :] = 0
+        #! Commented this because channel 11 is not a person in my case
+        # if translated[:, MC.NON_SEM_CHANNELS + 11, :, :].sum() > 0.99:
+        #     print("Detected a person, removing previous people from the map")
+        #     prev_map[:, MC.NON_SEM_CHANNELS + 11, :, :] = 0
 
         # Update obstacles in current map
         # TODO Implement this properly for num_environments > 1
@@ -901,7 +906,6 @@ class Categorical2DSemanticMapModule(nn.Module):
                 y - 2 : y + 3,
                 x - 2 : x + 3,
             ].fill_(1.0)
-
             # if self.old_x and self.old_y:
             #     # Draw a line from the previous location to the current location
             #     self.draw_line(current_map[e, MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2], x, y, self.old_x, self.old_y)
@@ -912,8 +916,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             # Set a disk around the agent to explored
             # This is around the current agent - we just sort of assume we know where we are
             try:
-                # radius = self.explored_radius
-                radius = 0
+                if self.exploration_type != "raycast":
+                    radius = self.explored_radius
+                else:
+                    radius = 0
                 explored_disk = torch.from_numpy(skimage.morphology.disk(radius))
                 current_map[
                     e,

@@ -69,7 +69,7 @@ class GoatAgent(Agent):
             self.instance_memory = InstanceMemory(
                 self.num_environments,
                 config.AGENT.SEMANTIC_MAP.du_scale,
-                debug_visualize=config.PRINT_IMAGES,
+                # debug_visualize=config.PRINT_IMAGES,
                 config=config,
                 mask_cropped_instances=False,
                 padding_cropped_instances=200
@@ -165,6 +165,7 @@ class GoatAgent(Agent):
             map_downsample_factor=config.AGENT.PLANNER.map_downsample_factor,
             map_update_frequency=config.AGENT.PLANNER.map_update_frequency,
             discrete_actions=config.AGENT.PLANNER.discrete_actions,
+            fixed=True if config.AGENT.exploration_strategy == "fixed" else False, 
         )
         self.one_hot_encoding = torch.eye(
             config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
@@ -455,7 +456,7 @@ class GoatAgent(Agent):
         else:
             return 0.0
 
-    def act(self, obs: Observations) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
+    def act(self, obs: Observations, stop=False) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
         current_task = obs.task_observations["tasks"][self.current_task_idx]
         task_type = current_task["type"]
@@ -525,7 +526,7 @@ class GoatAgent(Agent):
                 **planner_inputs[0],
                 use_dilation_for_stg=self.use_dilation_for_stg,
                 timestep=self.sub_task_timesteps[0][self.current_task_idx],
-                debug=False
+                # debug=True
             )
 
         # t3 = time.time()
@@ -534,8 +535,8 @@ class GoatAgent(Agent):
         if (
             self.sub_task_timesteps[0][self.current_task_idx]
             >= self.max_steps[self.current_task_idx]
-        ):
-            print("Reached max number of steps for subgoal, calling STOP")
+        ) or stop:
+            print("Reached max number of steps for subgoal, or stuck somewhere, calling STOP")
             action = DiscreteNavigationAction.STOP
 
         if could_not_find_path and not planner_stop and action != DiscreteNavigationAction.STOP:

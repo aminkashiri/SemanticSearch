@@ -62,9 +62,10 @@ class DiscretePlanner:
         agent_cell_radius: int = 1,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
-        goal_tolerance: float = 0.01, # for sim
+        goal_tolerance: float = 0.01,  # for sim
         discrete_actions: bool = True,
         continuous_angle_tolerance: float = 30.0,
+        fixed=False,
     ):
         """
         Arguments:
@@ -118,6 +119,8 @@ class DiscretePlanner:
 
         self.map_downsample_factor = map_downsample_factor
         self.map_update_frequency = map_update_frequency
+
+        self.fixed = fixed
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -229,6 +232,7 @@ class DiscretePlanner:
                 planning_window,
                 plan_to_dilated_goal=use_dilation_for_stg,
                 frontier_map=frontier_map,
+                visualize=True,
             )
         except Exception as e:
             print("Warning! Planner crashed with error:", e)
@@ -240,7 +244,7 @@ class DiscretePlanner:
                 (0, 0),
                 np.zeros(goal_map.shape),
                 replan,
-                stop
+                stop,
             )
         # Short term goal is in cm, start_x and start_y are in m
         if debug:
@@ -310,7 +314,7 @@ class DiscretePlanner:
                         short_term_goal,
                         dilated_obstacles,
                         replan,
-                        stop
+                        stop,
                     )
 
         # Normalize agent angle
@@ -328,17 +332,17 @@ class DiscretePlanner:
 
         if goal_pose is None:
             # Compute angle to the final goal
-            relative_angle_to_closest_goal = pu.normalize_angle(angle_agent - angle_goal)
+            relative_angle_to_closest_goal = pu.normalize_angle(
+                angle_agent - angle_goal
+            )
         else:
             relative_angle_to_closest_goal = pu.normalize_angle(angle_agent - goal_pose)
-
 
         if debug:
             # Actual metric distance to goal
             distance_to_goal = np.linalg.norm(np.array([goal_x, goal_y]) - start)
             distance_to_goal_cm = distance_to_goal * self.map_resolution
             # Display information
-            print("-----------------")
             print("Found reachable goal:", found_goal)
             print("Stop:", stop)
             print("Angle to goal:", relative_angle_to_closest_goal)
@@ -361,7 +365,6 @@ class DiscretePlanner:
             print(
                 m_relative_stg_x, m_relative_stg_y, "rel ang =", relative_angle_to_stg
             )
-            print("-----------------")
 
         action = self.get_action(
             relative_stg_x,
@@ -373,9 +376,35 @@ class DiscretePlanner:
             stop,
             debug,
         )
+        import matplotlib
+        matplotlib.use("TkAgg")
+        plt.xlabel(f"Action: {action}")
+        frontier_map = np.flipud(frontier_map.squeeze())
+        obstacle_map = np.flipud(obstacle_map.squeeze())
+        H, W = frontier_map.shape
+        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
+        vis_map[obstacle_map == 1] = [0, 0, 0]
+        vis_map[frontier_map == 1] = [255, 0, 0]
+        # plt.imshow(vis_map, interpolation='nearest')
+        # plt.savefig(os.path.join(self.vis_dir, f"stp_{timestep}.png"))
+        cv2.imwrite(
+            os.path.join(self.vis_dir, f"stg_{self.timestep}_frontiers.png"),
+            vis_map[..., ::-1].astype(int),
+        )
+        if debug:
+            print("Replan: ", replan)
+            print("Action:", action)
+            print("--- End Planning ---")
 
         self.last_action = action
-        return action, closest_goal_map, short_term_goal, dilated_obstacles, replan, stop
+        return (
+            action,
+            closest_goal_map,
+            short_term_goal,
+            dilated_obstacles,
+            replan,
+            stop,
+        )
 
     def get_action(
         self,
@@ -422,9 +451,7 @@ class DiscretePlanner:
                     xyt_local = xyt_global_to_base(
                         xyt_global, [0, 0, math.radians(start_compass)]
                     )
-                    xyt_local[
-                        2
-                    ] = (
+                    xyt_local[2] = (
                         -relative_angle_to_stg
                     )  # the original angle was already in base frame
                     action = ContinuousNavigationAction(xyt_local)
@@ -489,7 +516,10 @@ class DiscretePlanner:
             stop: binary flag to indicate we've reached the goal
         """
         gx1, gx2, gy1, gy2 = planning_window
-        (x1, y1,) = (
+        (
+            x1,
+            y1,
+        ) = (
             0,
             0,
         )
@@ -518,6 +548,7 @@ class DiscretePlanner:
             visualize=self.visualize,
             print_images=self.print_images,
             goal_tolerance=self.goal_tolerance,
+            fixed=self.fixed,
         )
         if plan_to_dilated_goal:
             # Compute dilated goal map for use with simulation code - use this to compute closest goal
@@ -566,20 +597,20 @@ class DiscretePlanner:
         short_term_goal = int(stg_x), int(stg_y)
 
         if visualize:
-            print("Start visualizing")
-            plt.figure(1)
-            plt.subplot(131)
             _navigable_goal_map = navigable_goal_map.copy()
-            _navigable_goal_map[int(stg_x), int(stg_y)] = 1
-            plt.imshow(np.flipud(_navigable_goal_map))
-            plt.plot(stg_x, stg_y, "bx")
-            plt.plot(start[0], start[1], "rx")
-            plt.subplot(132)
-            plt.imshow(np.flipud(planner.fmm_dist))
-            plt.subplot(133)
-            plt.imshow(np.flipud(planner.traversible))
-            plt.show()
-            print("Done visualizing.")
+            _navigable_goal_map = _navigable_goal_map.astype(np.uint8)
+            _traversible = traversible.astype(np.uint8)
+
+            white = np.ones((_navigable_goal_map.shape + (3,)), dtype=np.uint8) * 255
+            white[_traversible == 0] = [0, 0, 0]
+            white[_navigable_goal_map == 1] = [255, 0, 0]
+            white[start[0], start[1]] = [0, 255, 0]
+            white[int(stg_x), int(stg_y)] = [0, 0, 255]
+
+            cv2.imwrite(
+                os.path.join(self.vis_dir, f"stg_{self.timestep}.png"),
+                np.flipud(white[..., ::-1]),
+            )
 
         return (
             short_term_goal,
@@ -624,7 +655,7 @@ class DiscretePlanner:
     def get_closest_goal(self, goal_map, start):
         """closest goal, avoiding any obstacles."""
         empty = np.ones_like(goal_map)
-        empty_planner = FMMPlanner(empty)
+        empty_planner = FMMPlanner(empty, fixed=self.fixed)
         empty_planner.set_goal(start)
         dist_map = empty_planner.fmm_dist * goal_map
         dist_map[dist_map == 0] = 10000

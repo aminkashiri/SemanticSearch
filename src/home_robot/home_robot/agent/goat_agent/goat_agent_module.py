@@ -65,6 +65,16 @@ class GoatAgentModule(nn.Module):
                 config.ENVIRONMENT, "evaluate_instance_tracking", False
             ),
             exploration_type=config.AGENT.SEMANTIC_MAP.exploration_type,
+            gaze_width=(
+                40
+                if config.AGENT.SEMANTIC_MAP.exploration_type == "raycast"
+                else 30
+            ), #! myTODO: Hardcoded 3
+            gaze_distance=(
+                config.AGENT.SEMANTIC_MAP.max_depth
+                if config.AGENT.SEMANTIC_MAP.exploration_type == "raycast"
+                else 3
+            ), #! myTODO: Hardcoded 3
         )
         self.policy = LanguageNavFrontierExplorationPolicy(
             exploration_strategy=config.AGENT.exploration_strategy
@@ -163,7 +173,9 @@ class GoatAgentModule(nn.Module):
             # TODO:
             init_local_map[:, 21][seq_found_goal[:, 0] == 0] *= 0.0
 
-        stale_local_id_to_global_id_map = self.instance_memory.local_id_to_global_id_map.copy()
+        stale_local_id_to_global_id_map = (
+            self.instance_memory.local_id_to_global_id_map.copy()
+        )
         # Update map with observations and generate map features
         batch_size, sequence_length = seq_obs.shape[:2]
         (
@@ -197,6 +209,13 @@ class GoatAgentModule(nn.Module):
         map_features = seq_map_features.flatten(0, 1)
         # Compute the frontier map here
         frontier_map = self.policy.get_frontier_map(map_features)
+
+
+        location = seq_local_pose[:, :2][0,0]
+        location = (location * 100.0 / self.semantic_map_module.xy_resolution).int()
+        frontier_map = self.policy.remove_close_frontiers(
+            frontier_map, location
+        )
 
         seq_goal_map[seq_found_goal[:, 0] == 0] = frontier_map[
             seq_found_goal[:, 0] == 0
@@ -237,11 +256,14 @@ class GoatAgentModule(nn.Module):
             if seq_object_goal_category is not None:
                 seq_object_goal_category = seq_object_goal_category.flatten(0, 1)
 
+            location = seq_local_pose[:, :2][0,0]
+            location = (location * 100.0 / self.semantic_map_module.xy_resolution).int()
             # Compute the goal map
             goal_map, found_goal = self.policy(
                 map_features,
                 seq_object_goal_category,
                 reject_visited_targets=reject_visited_targets,
+                location=location,
             )
 
             seq_goal_map = goal_map.view(
