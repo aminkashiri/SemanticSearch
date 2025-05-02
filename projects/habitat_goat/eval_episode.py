@@ -25,6 +25,20 @@ from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
 from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
+
+class Tee:
+    def __init__(self, filename):
+        self.file = open(filename + ".txt", "w")
+        self.stdout = sys.__stdout__
+
+    def write(self, message):
+        self.stdout.write(message)
+        self.file.write(message)
+
+    def flush(self):
+        self.stdout.flush()
+        self.file.flush()
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -46,6 +60,12 @@ if __name__ == "__main__":
         help="Scene indices (for parallel eval)",
     )
     parser.add_argument(
+        "--log",
+        type=str,
+        default="output",
+        help="Name of log file",
+    )
+    parser.add_argument(
         "opts",
         default=None,
         nargs=argparse.REMAINDER,
@@ -56,16 +76,28 @@ if __name__ == "__main__":
     print(json.dumps(vars(args), indent=4))
     print("-" * 100)
 
+    sys.stdout = Tee(args.log)
+    sys.stderr = sys.stdout
+
+
     config = get_config(args.habitat_config_path, args.baseline_config_path)
 
-    all_scenes = os.listdir(os.path.dirname(config.habitat.dataset.data_path.format(split=config.habitat.dataset.split)) + "/content/")
-    all_scenes = sorted([x.split('.')[0] for x in all_scenes])
+    all_scenes = os.listdir(
+        os.path.dirname(
+            config.habitat.dataset.data_path.format(split=config.habitat.dataset.split)
+        )
+        + "/content/"
+    )
+    all_scenes = sorted([x.split(".")[0] for x in all_scenes])
 
-    if args.scene_idx != -1:
-        scene_start = args.scene_idx * 5
-        config.habitat.dataset.content_scenes = all_scenes[scene_start:scene_start+5]
+    # if args.scene_idx != -1:
+    #     scene_start = args.scene_idx * 5
+    #     config.habitat.dataset.content_scenes = all_scenes[scene_start:scene_start+5]
 
-    # config.habitat.dataset.content_scenes = ["TEEsavR23oF"] # TODO: for debugging. REMOVE later.
+    # config.habitat.dataset.content_scenes = [
+    #     "4ok3usBNeis"
+    # ]  # TODO: for debugging. REMOVE later.
+    config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
 
     config.NUM_ENVIRONMENTS = 1
     config.PRINT_IMAGES = 1
@@ -84,6 +116,11 @@ if __name__ == "__main__":
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
         agent.reset()
+        stop = False
+
+        # while not int(env.habitat_env.current_episode.episode_id) == 4:
+        #     env.reset()
+        #     agent.reset()
 
         old_distance_to_goal = None
         ctr = 0
@@ -108,16 +145,22 @@ if __name__ == "__main__":
         # if scene_id != "HkseAnWCgqk":
         #     continue
 
-        agent.planner.set_vis_dir(scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}")
+        agent.planner.set_vis_dir(
+            scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+        )
         agent.imagenav_visualizer.set_vis_dir(
             f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
         )
-        agent.matching.set_vis_dir(f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}")
-        env.visualizer.set_vis_dir(scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}")
+        agent.matching.set_vis_dir(
+            f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
+        )
+        env.visualizer.set_vis_dir(
+            scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+        )
 
         all_subtask_metrics = []
-        pbar = tqdm(total=config.AGENT.max_steps)
-        
+        pbar = tqdm(total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True)
+
         while not env.episode_over:
             current_task_idx = env.habitat_env.task.current_task_idx
             t += 1
@@ -134,31 +177,36 @@ if __name__ == "__main__":
 
                 pprint(obs_tasks)
 
-            action, info = agent.act(obs)
+            action, info = agent.act(obs, stop)
             env.apply_action(action, info=info)
-            pbar.set_description(
-                f"{scene_id}_{episode_id}_{current_task_idx}"
-            )
+            pbar.set_description(f"{scene_id}_{episode_id}_{current_task_idx}")
             pbar.update(1)
 
-            if env.get_episode_metrics()["goat_distance_to_sub-goal"] == old_distance_to_goal:
+            if (
+                env.get_episode_metrics()["goat_distance_to_sub-goal"]
+                == old_distance_to_goal
+            ):
                 ctr += 1
 
                 if ctr > 20:
                     print("Agent was stuck. Stopping episode.")
-                    action = DiscreteNavigationAction.STOP
+                    # action = DiscreteNavigationAction.STOP
+                    stop = True
                     ctr = 0
             else:
                 ctr = 0
-            
-            old_distance_to_goal = env.get_episode_metrics()["goat_distance_to_sub-goal"]
+
+            old_distance_to_goal = env.get_episode_metrics()[
+                "goat_distance_to_sub-goal"
+            ]
 
             if action == DiscreteNavigationAction.STOP:
+                stop = False
                 ep_metrics = env.get_episode_metrics()
                 ep_metrics.pop("goat_top_down_map", None)
-                print('-------------------------')
+                print("-------------------------")
                 print(f"{scene_id}_{episode_id}_{current_task_idx}", ep_metrics)
-                print('-------------------------')
+                print("-------------------------")
 
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
@@ -169,10 +217,12 @@ if __name__ == "__main__":
                         f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
                     )
                     agent.planner.set_vis_dir(
-                        scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+                        scene_id,
+                        f"{episode_id}_{env.habitat_env.task.current_task_idx}",
                     )
                     env.visualizer.set_vis_dir(
-                        scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+                        scene_id,
+                        f"{episode_id}_{env.habitat_env.task.current_task_idx}",
                     )
                     pbar.reset()
 
