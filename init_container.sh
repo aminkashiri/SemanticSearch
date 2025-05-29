@@ -25,8 +25,8 @@ pip install -e src/third_party/detectron2
 pip install -r src/home_robot/home_robot/perception/detection/detic/Detic/requirements.txt
 pip install -e src/third_party/habitat-lab/habitat-lab
 pip install -e src/third_party/habitat-lab/habitat-baselines
-pip install "gym>=0.25"
-pip install bresenham
+pip install "gym>=0.25" bresenham gdown
+pip install sophuspy --upgrade
 
 mkdir -p home-robot/src/home_robot/home_robot/perception/detection/detic/Detic/models
 wget https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth \
@@ -41,8 +41,6 @@ wget https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_f
 
 
 
-
-pip install -q gdown
 gdown https://drive.google.com/uc?id=1N0UbpXK3v7oTphC4LoDqlNeMHbrwkbPe
 
 unzip goat-bench.zip 
