@@ -44,13 +44,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--habitat_config_path",
         type=str,
-        default="goat/modular_goat_hm3d_stretch.yaml",
+        # default="goat/modular_goat_hm3d.yaml",
+        default="goat/modular_goat_hm3d_fixed.yaml",
         help="Path to config yaml",
     )
     parser.add_argument(
         "--baseline_config_path",
         type=str,
-        default="projects/habitat_goat/configs/agent/hm3d_eval_stretch.yaml",
+        # default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
+        default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
         help="Path to config yaml",
     )
     parser.add_argument(
