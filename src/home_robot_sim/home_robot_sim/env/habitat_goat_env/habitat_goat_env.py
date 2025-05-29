@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
+import os
 import habitat
 import json
 import numpy as np
@@ -24,8 +25,8 @@ from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
 
 from home_robot.perception.constants import df as hm3d_mapping_df
 
-all_ovon_categories_path = "/home-robot/data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
 # all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
+all_ovon_categories_path = "./data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
 with open(all_ovon_categories_path, "r") as f:
     all_ovon_categories = json.load(f)
 
