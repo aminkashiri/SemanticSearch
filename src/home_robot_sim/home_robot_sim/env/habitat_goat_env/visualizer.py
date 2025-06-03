@@ -474,7 +474,7 @@ class Visualizer:
             cv2.waitKey(1)
         if self.print_images:
             cv2.imwrite(
-                os.path.join(self.vis_dir, "snapshot_{:03d}.png".format(timestep)),
+                os.path.join(self.vis_dir, f"{timestep:03d}_5.snapshot.png"),
                 image_vis,
             )
 

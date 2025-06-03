@@ -196,6 +196,19 @@ class DiscretePlanner:
         start = pu.threshold_poses(start, obstacle_map.shape)
         start = np.array(start)
 
+        # visualize input
+        fm = np.flipud(frontier_map.squeeze())
+        om = np.flipud(obstacle_map.squeeze())
+        H, W = fm.shape
+        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
+        vis_map[om == 1] = [0, 0, 0]
+        vis_map[fm == 1] = [255, 0, 0]
+        vis_map[start[0], start[1]] = [0, 255, 0]
+        cv2.imwrite(
+            os.path.join(self.vis_dir, f"{self.timestep}_1.planning_input.png"),
+            vis_map[..., ::-1].astype(int),
+        )
+
         if debug:
             print()
             print("--- Planning ---")
@@ -375,21 +388,6 @@ class DiscretePlanner:
             found_goal,
             stop,
             debug,
-        )
-        import matplotlib
-        matplotlib.use("TkAgg")
-        plt.xlabel(f"Action: {action}")
-        frontier_map = np.flipud(frontier_map.squeeze())
-        obstacle_map = np.flipud(obstacle_map.squeeze())
-        H, W = frontier_map.shape
-        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
-        vis_map[obstacle_map == 1] = [0, 0, 0]
-        vis_map[frontier_map == 1] = [255, 0, 0]
-        # plt.imshow(vis_map, interpolation='nearest')
-        # plt.savefig(os.path.join(self.vis_dir, f"stp_{timestep}.png"))
-        cv2.imwrite(
-            os.path.join(self.vis_dir, f"stg_{self.timestep}_frontiers.png"),
-            vis_map[..., ::-1].astype(int),
         )
         if debug:
             print("Replan: ", replan)
@@ -614,7 +612,7 @@ class DiscretePlanner:
             white[int(stg_x), int(stg_y)] = [0, 0, 255]
 
             cv2.imwrite(
-                os.path.join(self.vis_dir, f"stg_{self.timestep}.png"),
+                os.path.join(self.vis_dir, f"{self.timestep}_6.stg.png"),
                 np.flipud(white[..., ::-1]),
             )
 
