@@ -12,6 +12,26 @@ import skfmm
 import skimage
 from numpy import ma
 
+import matplotlib.cm as cm
+from matplotlib.colors import Normalize, TwoSlopeNorm
+
+def convert_to_cmap(subset):
+    final_img = np.flipud(subset.copy()) 
+    unique_vals = np.unique(final_img)
+    second_max = unique_vals[-2]
+    final_img[final_img==np.max(final_img)] = second_max + 1
+
+    vmin, vmax = np.nanmin(final_img), np.nanmax(final_img)
+    if vmin < 0:
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+    else:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    cmap = cm.get_cmap("plasma")
+
+    rgba_img = cmap(norm(final_img)) 
+    rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8) 
+    return rgb_img
 
 class FMMPlanner:
     """
@@ -154,11 +174,11 @@ class FMMPlanner:
                 cv2.imshow("Planner Distance", dist_vis)
                 cv2.waitKey(1)
 
-            if not postfix == "":
-                return dd
+
             if self.print_images and timestep is not None:
+                output_name = f"{timestep}_2.dilate_goal.png" if postfix else f"{timestep}_3.planner_snapshot.png"
                 cv2.imwrite(
-                    os.path.join(self.vis_dir, f"planner_snapshot_{timestep}.png"),
+                    os.path.join(self.vis_dir, output_name),
                     (dist_vis * 255).astype(int),
                 )
         return dd
@@ -178,12 +198,17 @@ class FMMPlanner:
         dist_mask = FMMPlanner.get_dist(dx, dy, scale, self.step_size)
 
         state = [int(x) for x in state]
+        # max_value = self.fmm_dist.shape[0] ** 2
+        max_value = np.max(self.fmm_dist)
 
+        #! max in self.fmm_dist actually means obstacle. (it is set to: actual_max+1)
+        #! Hence, we also set padded cells to this maximum.
         dist = np.pad(
             self.fmm_dist,
             self.du,
             "constant",
-            constant_values=self.fmm_dist.shape[0] ** 2,
+            # constant_values=self.fmm_dist.shape[0] ** 2,
+            constant_values=max_value
         )
         subset = dist[
             state[0] : state[0] + 2 * self.du + 1, state[1] : state[1] + 2 * self.du + 1
@@ -193,20 +218,22 @@ class FMMPlanner:
             subset.shape[0] == 2 * self.du + 1 and subset.shape[1] == 2 * self.du + 1
         ), "Planning error: unexpected subset shape {}".format(subset.shape)
 
-        visualize = False
-        if visualize:
-            # TODO
-            plt.subplot(231)
-            plt.imshow(subset)
+
+        #!myTODO: Input this from env 
+        print_images = True
+
+        sub_h, sub_w = subset.shape
+        dist_vis = np.zeros((sub_h * 2, sub_w * 2,3))
+        if print_images:
+            dist_vis[:sub_h, :sub_w] = convert_to_cmap(subset)
 
         subset *= mask
-        subset += (1 - mask) * self.fmm_dist.shape[0] ** 2
+        # subset += (1 - mask) * self.fmm_dist.shape[0] ** 2
+        subset += (1 - mask) * max_value
 
-        if visualize:
-            plt.subplot(232)
-            plt.imshow(subset)
-            plt.subplot(235)
-            plt.imshow(mask)
+        if print_images:
+            dist_vis[:sub_h, sub_w : 2 * sub_w,:] = np.flipud(mask[...,None].copy()*255)
+            dist_vis[sub_h:, :sub_w] = convert_to_cmap(subset)
 
         if self.debug:
             print(
@@ -224,10 +251,12 @@ class FMMPlanner:
         ratio1 = subset / dist_mask
         subset[ratio1 < -1.5] = 1
 
-        if visualize:
-            plt.subplot(233)
-            plt.imshow(subset)
-            plt.show()
+        if print_images:
+            dist_vis[sub_h:, sub_w:] = convert_to_cmap(subset)
+            cv2.imwrite(
+                os.path.join(self.vis_dir, f"{timestep}_4.get_stg.png"),
+                (dist_vis).astype(int),
+            )
 
         (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
 
