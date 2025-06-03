@@ -588,12 +588,18 @@ class DiscretePlanner:
 
         self.timestep += 1
 
-        state = [start[0] - x1 + 1, start[1] - y1 + 1]
+        #! myTODO: Make sure +1 and -1 are unnecessary
+        # state = [start[0] - x1 + 1, start[1] - y1 + 1]
+        state = [start[0] - x1, start[1] - y1]
+
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, replan, stop = planner.get_short_term_goal(
             state, continuous=(not self.discrete_actions), timestep=self.timestep
         )
-        stg_x, stg_y = stg_x + x1 - 1, stg_y + y1 - 1
+        #! myTODO: Make sure +1 and -1 are unnecessary
+        # stg_x, stg_y = stg_x + x1 - 1, stg_y + y1 - 1
+        stg_x, stg_y = stg_x + x1, stg_y + y1
+
         short_term_goal = int(stg_x), int(stg_y)
 
         if visualize:
