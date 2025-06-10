@@ -30,6 +30,9 @@ from home_robot.perception.detection.maskrcnn.coco_categories import coco_catego
 from .goat_agent_module import GoatAgentModule
 from .goat_matching import GoatMatching
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 # For visualizing exploration issues
 debug_frontier_map = False
 
@@ -165,7 +168,7 @@ class GoatAgent(Agent):
             map_downsample_factor=config.AGENT.PLANNER.map_downsample_factor,
             map_update_frequency=config.AGENT.PLANNER.map_update_frequency,
             discrete_actions=config.AGENT.PLANNER.discrete_actions,
-            fixed=True if config.AGENT.exploration_strategy == "fixed" else False, 
+            geodesic_dilation=True if config.AGENT.exploration_strategy == "fixed" and config.AGENT.get("goal_dilation_method") == "geodesic" else False, 
         )
         self.one_hot_encoding = torch.eye(
             config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
@@ -204,6 +207,7 @@ class GoatAgent(Agent):
         self.goal_pose = None
         self.goal_filtering = config.AGENT.SEMANTIC_MAP.goal_filtering
         self.prev_task_type = None
+        self.exploration_strategy = config.AGENT.exploration_strategy
 
     # ------------------------------------------------------------------
     # Inference methods to interact with vectorized simulation
@@ -385,7 +389,7 @@ class GoatAgent(Agent):
         self.reject_visited_targets = False
         self.blacklist_target = False
         self.current_task_idx = 0
-        self.fully_explored = [False] * self.num_environments
+        self.navigate_to_best = [False] * self.num_environments
         self.force_match_against_memory = False
 
         if self.imagenav_visualizer is not None:
@@ -446,7 +450,7 @@ class GoatAgent(Agent):
     def score_thresh(self, task_type):
         # If we have fully explored the environment, set the matching threshold to 0.0
         # to go to the highest scoring instance
-        if self.fully_explored[0]:
+        if self.navigate_to_best[0]:
             return 0.0
 
         if task_type == "languagenav":
@@ -458,6 +462,7 @@ class GoatAgent(Agent):
 
     def act(self, obs: Observations, stop=False) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
+        logger.info(f"-------------------- Subtask step {self.sub_task_timesteps[0][self.current_task_idx]+1} --------------------")
         current_task = obs.task_observations["tasks"][self.current_task_idx]
         task_type = current_task["type"]
 
@@ -513,6 +518,7 @@ class GoatAgent(Agent):
         if planner_inputs[0]["found_goal"]:
             self.episode_panorama_start_steps = 0
         if self.total_timesteps[0] < self.episode_panorama_start_steps:
+            #! When total_timesteps is less than the panorama start steps, we just turn right. So if turn angle is 30, at 12th step, we don't need to turn anymore.
             action = DiscreteNavigationAction.TURN_RIGHT
         else:
             (
@@ -545,10 +551,21 @@ class GoatAgent(Agent):
             # self.semantic_map.local_map[0, MC.EXPLORED_MAP] *= 0
             # self.semantic_map.global_map[0, MC.EXPLORED_MAP] *= 0
 
-            # TODO: is this accurate?
-            print("Can't find a path. Map fully explored.")
-            self.fully_explored[0] = True
-            self.force_match_against_memory = True
+            if self.exploration_strategy == "fixed":
+                if self.navigate_to_best[0]:
+                    #! If we are fully explored and we are here again, we should just stop
+                    logger.info("Already fully explored, stopping")
+                    action = DiscreteNavigationAction.STOP
+                elif planner_inputs[0]["found_goal"]:
+                    logger.info("Couldn't find a path to the found goal, even with replan. Stopping...")
+                    action = DiscreteNavigationAction.STOP
+                else:
+                    logger.info("Couldn't find a path to frontier goal, even with replan. Setting the goal for next step to the best match in memory, even if it is less than threshold...")
+                    self.navigate_to_best[0] = True
+                    self.force_match_against_memory = True
+            else:
+                self.fully_explored[0] = True
+                self.force_match_against_memory = True
 
             # if self.reached_goal_candidate:
             #     # move to next sub-task
@@ -610,6 +627,7 @@ class GoatAgent(Agent):
                     self.num_environments, 1, dtype=bool, device=self.device
                 )
                 self.reset_sub_episode()
+        #! myTODO: Remove. It looks like it is not used anywhere.
         self.prev_task_type = task_type
         return action, info
 

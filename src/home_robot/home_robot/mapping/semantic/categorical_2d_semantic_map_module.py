@@ -30,6 +30,9 @@ debug_maps = False
 import numpy as np
 from bresenham import bresenham  # pip install bresenham
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_beams=360):
     """
     Perform 2D raycasting to compute known vs unknown cells.
@@ -346,6 +349,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             seq_origins: sequence of local map origins of shape
              (batch_size, sequence_length, 3)
         """
+        logger.info(f"Updating maps and current position")
         batch_size, sequence_length = seq_obs.shape[:2]
         device, dtype = seq_obs.device, seq_obs.dtype
 
@@ -415,6 +419,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             seq_lmb[:, t] = lmb
             seq_origins[:, t] = origins
             seq_map_features[:, t] = self._get_map_features(local_map, global_map)
+
+            logger.info(f"Updated global pose is: {seq_global_pose[0, 0]}")
+            logger.info(f"Updated local pose is: {seq_local_pose[0, 0]}")
+            logger.info(f"Updated local map boundaries are: {seq_lmb[0,0]}")
         return (
             seq_map_features,
             local_map,

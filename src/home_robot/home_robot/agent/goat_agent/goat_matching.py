@@ -20,6 +20,9 @@ matplotlib.use("Agg")
 MIN_PIXELS = 1000
 MIN_EDGE = 15
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 
 class GoatMatching(Matching):
     def __init__(
@@ -476,27 +479,48 @@ class GoatMatching(Matching):
     def get_goal_map_from_goal_instance(
         self, instance_map, goal_map, lmb, goal_inst, instance_goal_found, found_goal
     ):
+        #! myTODO: We are checking goal_inst and instance_goal_found here before calling the function, so I should be able to remove instance_goal_found as input.
+        if goal_inst is None or instance_goal_found is False:
+            logger.error(f"Goal instance {goal_inst} not found or instance_goal_found is False: {instance_goal_found}.")
+            raise Exception(f"Goal instance {goal_inst} not found or instance_goal_found is False: {instance_goal_found}.")
         goal_pose = None
-        if goal_inst is not None and instance_goal_found is True:
-            found_goal[0] = True
-            if self.goto_past_pose:
-                instance_memory = self.instance_memory
-                instance_views = instance_memory.instance_views[0][goal_inst].instance_views
-                # pick a view with maximum object coverage
-                best_view = np.argmax([view.object_coverage for view in instance_views])
-                pose = instance_views[best_view].pose
-                curr_x, curr_y, curr_o, gy1, _, gx1, _ = pose.tolist()
-                goal_map = torch.zeros(instance_map[0].shape)
-                pos = (
-                    int(curr_x * 100.0 / 5 - lmb[0][2]),
-                    int(curr_y * 100.0 / 5 - lmb[0][0]),
-                )
-                goal_map[pos[1], pos[0]] = 1
-                goal_pose = [curr_o]
-            else:
-                inst_map_idx = instance_map == goal_inst
-                inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
-                goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
+
+        found_goal[0] = True
+        if self.goto_past_pose:
+            instance_memory = self.instance_memory
+            instance_views = instance_memory.instance_views[0][goal_inst].instance_views
+            # pick a view with maximum object coverage
+            best_view = np.argmax([view.object_coverage for view in instance_views])
+            pose = instance_views[best_view].pose
+            curr_x, curr_y, curr_o, gy1, _, gx1, _ = pose.tolist()
+            # #! myTODO: Make sure this 5 is correct. I think they have hardcoded it to 5cm, but is SEMANTIC_MAP.map_resolution=5
+            # pos = (
+            #     int(curr_y * 100.0 / 5 - lmb[0][0]),
+            #     int(curr_x * 100.0 / 5 - lmb[0][2]),
+            # )
+
+            # Previous code
+            # goal_map = torch.zeros(instance_map[0].shape)
+            # goal_map[pos[0], pos[1]] = 1
+            # goal_pose = [curr_o]
+
+
+            # Past pose closest to the goal instance, new code
+            inst_map_idx = instance_map == goal_inst
+            inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
+            goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
+            
+            #! The output goal pose is the actual index in global map
+            goal_pose = [[curr_o, curr_y * 100.0 / 5 , curr_x * 100.0 / 5]]
+
+            logger.info(f">>> Goal instance {goal_inst} best past pose is: {goal_pose}, with coverage {instance_views[best_view].object_coverage}. Returning goal_pose in addition to goal_map.")
+
+
+        else:
+            inst_map_idx = instance_map == goal_inst
+            inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
+            goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
+            logger.info(f">>> Returning goal_map for instance: {goal_inst}.")
 
         return goal_map, found_goal, goal_pose
 
@@ -530,6 +554,7 @@ class GoatMatching(Matching):
         ]
 
         if goal_inst is not None and instance_goal_found is True:
+            logger.info(f"Goal instance {goal_inst} alredy found.")
             goal_map, found_goal, goal_pose = self.get_goal_map_from_goal_instance(
                 instance_map, goal_map, lmb, goal_inst, instance_goal_found, found_goal
             )
@@ -544,6 +569,9 @@ class GoatMatching(Matching):
                     instance_goal_found, goal_inst = self.get_best_match(
                         agg_scores, instance_ids, instance_map, score_thresh
                     )
+        
+        if instance_goal_found is True:
+            logger.info(f"Goal instance {goal_inst} found in this step by matching with memory.")
 
         if goal_inst is None and matches is not None:
             for e in range(confidence.shape[0]):
@@ -560,8 +588,11 @@ class GoatMatching(Matching):
                     instance_goal_found, goal_inst = self.get_best_match(
                         agg_scores, global_instance_ids, instance_map, score_thresh
                     )
+                if instance_goal_found is True:
+                    logger.info(f"Goal instance {goal_inst} found in this step by matching with observation.")
 
         if goal_inst is not None and instance_goal_found is True:
+            logger.info(f"Goal instance {goal_inst} found in this step, getting goal map and pose.")
             goal_map, found_goal, goal_pose = self.get_goal_map_from_goal_instance(
                 instance_map, goal_map, lmb, goal_inst, instance_goal_found, found_goal
             )
