@@ -16,6 +16,9 @@ from home_robot.navigation_policy.language_navigation.languagenav_frontier_explo
 
 from .goat_matching import GoatMatching
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 # Do we need to visualize the frontier as we explore?
 debug_frontier_map = False
 
@@ -77,7 +80,7 @@ class GoatAgentModule(nn.Module):
             ), #! myTODO: Hardcoded 3
         )
         self.policy = LanguageNavFrontierExplorationPolicy(
-            exploration_strategy=config.AGENT.exploration_strategy
+            exploration_strategy=config.AGENT.exploration_strategy, goto_past_pose=config.AGENT.SUPERGLUE.goto_past_pose,
         )
         self.goal_policy_config = config.AGENT.SUPERGLUE
         self.instance_goal_found = False
@@ -211,7 +214,7 @@ class GoatAgentModule(nn.Module):
         frontier_map = self.policy.get_frontier_map(map_features)
 
 
-        location = seq_local_pose[:, :2][0,0]
+        location = seq_local_pose[0,0][:2]
         location = (location * 100.0 / self.semantic_map_module.xy_resolution).int()
         frontier_map = self.policy.remove_close_frontiers(
             frontier_map, location
@@ -222,7 +225,10 @@ class GoatAgentModule(nn.Module):
         ]
 
         seq_goal_pose = None
+        logger.info(f"Choosing next goal to follow")
+        logger.info(f"len(all_matches): {len(all_matches)}, matches: {matches is not None}, instance_goal_found: {self.instance_goal_found}")
         if len(all_matches) > 0 or matches is not None or self.instance_goal_found:
+            logger.info(f"Selecting and localizing instance goal")
             (
                 seq_goal_map,
                 seq_found_goal,
@@ -256,14 +262,14 @@ class GoatAgentModule(nn.Module):
             if seq_object_goal_category is not None:
                 seq_object_goal_category = seq_object_goal_category.flatten(0, 1)
 
-            location = seq_local_pose[:, :2][0,0]
-            location = (location * 100.0 / self.semantic_map_module.xy_resolution).int()
             # Compute the goal map
-            goal_map, found_goal = self.policy(
+            goal_map, found_goal, seq_goal_pose = self.policy(
                 map_features,
                 seq_object_goal_category,
                 reject_visited_targets=reject_visited_targets,
                 location=location,
+                instance_memory=self.instance_memory,
+                num_sem_categories=self.semantic_map_module.num_sem_categories,
             )
 
             seq_goal_map = goal_map.view(

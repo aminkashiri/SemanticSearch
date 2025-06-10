@@ -22,6 +22,10 @@ from home_robot.utils.geometry import xyt_global_to_base
 
 from .fmm_planner import FMMPlanner
 
+from home_robot.utils.logger import get_logger
+
+logger = get_logger()
+
 CM_TO_METERS = 0.01
 
 
@@ -65,7 +69,7 @@ class DiscretePlanner:
         goal_tolerance: float = 0.01,  # for sim
         discrete_actions: bool = True,
         continuous_angle_tolerance: float = 30.0,
-        fixed=False,
+        geodesic_dilation=False,
     ):
         """
         Arguments:
@@ -78,11 +82,9 @@ class DiscretePlanner:
              structuring element
             map_size_cm: global map size (in centimeters)
             map_resolution: size of map bins (in centimeters)
-            visualize: if True, render planner internals for debugging
             print_images: if True, save visualization as images
         """
         self.discrete_actions = discrete_actions
-        self.visualize = visualize
         self.print_images = print_images
         self.default_vis_dir = f"{dump_location}/images/{exp_name}"
         os.makedirs(self.default_vis_dir, exist_ok=True)
@@ -120,7 +122,7 @@ class DiscretePlanner:
         self.map_downsample_factor = map_downsample_factor
         self.map_update_frequency = map_update_frequency
 
-        self.fixed = fixed
+        self.geodesic_dilation = geodesic_dilation
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -179,8 +181,8 @@ class DiscretePlanner:
              location in the goal map in geodesic distance
         """
         # Reset timestep using argument; useful when there are timesteps where the discrete planner is not invoked
-        if timestep is not None:
-            self.timestep = timestep
+        assert timestep is not None
+        self.timestep = timestep
 
         self.last_pose = self.curr_pose
         obstacle_map = np.rint(obstacle_map)
@@ -196,24 +198,14 @@ class DiscretePlanner:
         start = pu.threshold_poses(start, obstacle_map.shape)
         start = np.array(start)
 
-        # visualize input
-        fm = np.flipud(frontier_map.squeeze())
-        om = np.flipud(obstacle_map.squeeze())
-        H, W = fm.shape
-        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
-        vis_map[om == 1] = [0, 0, 0]
-        vis_map[fm == 1] = [255, 0, 0]
-        vis_map[start[0], start[1]] = [0, 255, 0]
-        cv2.imwrite(
-            os.path.join(self.vis_dir, f"{self.timestep}_1.planning_input.png"),
-            vis_map[..., ::-1].astype(int),
-        )
+        logger.info(f"---- Starting planning with start pose: {start} ---- ")
+        logger.info(f"> Sensor pose: {sensor_pose.tolist()}")
+        logger.info(f"> Found goal: {found_goal}")
+        logger.info(f"> Goal points provided: {np.any(goal_map > 0)}")
 
-        if debug:
-            print()
-            print("--- Planning ---")
-            print("Found goal:", found_goal)
-            print("Goal points provided:", np.any(goal_map > 0))
+        if self.print_images:
+            self.visualize_input(frontier_map, obstacle_map, goal_map, start)
+
 
         self.curr_pose = [start_x, start_y, start_o]
         self.visited_map[gx1:gx2, gy1:gy2][
@@ -260,22 +252,12 @@ class DiscretePlanner:
                 stop,
             )
         # Short term goal is in cm, start_x and start_y are in m
-        if debug:
-            print("Current pose:", start)
-            print("Short term goal:", short_term_goal)
-            print(
-                "  - delta =",
-                short_term_goal[0] - start[0],
-                short_term_goal[1] - start[1],
-            )
-            dist_to_short_term_goal = np.linalg.norm(
-                start - np.array(short_term_goal[:2])
-            )
-            print(
-                "Distance (m):",
-                dist_to_short_term_goal * self.map_resolution * CM_TO_METERS,
-            )
-            print("Replan:", replan)
+        logger.debug(f"Current pose: {start}")
+        logger.debug(f"Short term goal: {short_term_goal}")
+        logger.debug(f"Delta = {short_term_goal[0] - start[0]} , {short_term_goal[1] - start[1]}")
+        dist_to_short_term_goal = np.linalg.norm(start - np.array(short_term_goal[:2]))
+        logger.debug(f"Distance (m): { dist_to_short_term_goal * self.map_resolution * CM_TO_METERS}")
+        logger.debug(f"Replan: {replan}")
         # t1 = time.time()
         # print(f"[Planning] get_short_term_goal() time: {t1 - t0}")
 
@@ -349,7 +331,7 @@ class DiscretePlanner:
                 angle_agent - angle_goal
             )
         else:
-            relative_angle_to_closest_goal = pu.normalize_angle(angle_agent - goal_pose)
+            relative_angle_to_closest_goal = pu.normalize_angle(angle_agent - goal_pose[0])
 
         if debug:
             # Actual metric distance to goal
@@ -513,6 +495,7 @@ class DiscretePlanner:
              the goal
             stop: binary flag to indicate we've reached the goal
         """
+        logger.info(f"Getting short-term goal")
         gx1, gx2, gy1, gy2 = planning_window
         (
             x1,
@@ -543,10 +526,9 @@ class DiscretePlanner:
             traversible,
             step_size=self.step_size,
             vis_dir=self.vis_dir,
-            visualize=self.visualize,
             print_images=self.print_images,
             goal_tolerance=self.goal_tolerance,
-            fixed=self.fixed,
+            geodesic_dilation=self.geodesic_dilation,
         )
         if plan_to_dilated_goal:
             # Compute dilated goal map for use with simulation code - use this to compute closest goal
@@ -570,7 +552,6 @@ class DiscretePlanner:
                 goal_map,
                 self.min_goal_distance_cm / self.map_resolution,
                 timestep=self.timestep,
-                vis_dir=self.vis_dir,
             )
             if not np.any(navigable_goal_map):
                 frontier_map = add_boundary(frontier_map, value=0)
@@ -584,36 +565,32 @@ class DiscretePlanner:
             )
             goal_distance_map, closest_goal_pt = self.get_closest_goal(goal_map, start)
 
-        self.timestep += 1
+        #! myTODO: Looks like this is no needed
+        # self.timestep += 1
 
-        #! myTODO: Make sure +1 and -1 are unnecessary
-        # state = [start[0] - x1 + 1, start[1] - y1 + 1]
-        state = [start[0] - x1, start[1] - y1]
+        state = [start[0] - x1 + 1, start[1] - y1 + 1]
 
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, replan, stop = planner.get_short_term_goal(
             state, continuous=(not self.discrete_actions), timestep=self.timestep
         )
-        #! myTODO: Make sure +1 and -1 are unnecessary
-        # stg_x, stg_y = stg_x + x1 - 1, stg_y + y1 - 1
-        stg_x, stg_y = stg_x + x1, stg_y + y1
+        stg_x, stg_y = stg_x + x1 - 1, stg_y + y1 - 1
 
         short_term_goal = int(stg_x), int(stg_y)
 
-        if visualize:
+        if self.print_images:
             _navigable_goal_map = navigable_goal_map.copy()
             _navigable_goal_map = _navigable_goal_map.astype(np.uint8)
-            _traversible = traversible.astype(np.uint8)
 
             white = np.ones((_navigable_goal_map.shape + (3,)), dtype=np.uint8) * 255
-            white[_traversible == 0] = [0, 0, 0]
-            white[_navigable_goal_map == 1] = [255, 0, 0]
-            white[start[0], start[1]] = [0, 255, 0]
-            white[int(stg_x), int(stg_y)] = [0, 0, 255]
+            white[traversible == 0] = [0, 0, 0]
+            white[_navigable_goal_map == 1] = [0, 0, 255]
+            white[start[0]+1, start[1]+1] = [0, 255, 0]
+            white[int(stg_x), int(stg_y)] = [255, 0, 0]
 
             cv2.imwrite(
-                os.path.join(self.vis_dir, f"{self.timestep}_6.stg.png"),
-                np.flipud(white[..., ::-1]),
+                os.path.join(self.vis_dir, f"{self.timestep}_7.stg.png"),
+                np.flipud(white),
             )
 
         return (
@@ -659,7 +636,7 @@ class DiscretePlanner:
     def get_closest_goal(self, goal_map, start):
         """closest goal, avoiding any obstacles."""
         empty = np.ones_like(goal_map)
-        empty_planner = FMMPlanner(empty, fixed=self.fixed)
+        empty_planner = FMMPlanner(empty)
         empty_planner.set_goal(start)
         dist_map = empty_planner.fmm_dist * goal_map
         dist_map[dist_map == 0] = 10000
@@ -711,3 +688,24 @@ class DiscretePlanner:
                     )
                     [r, c] = pu.threshold_poses([r, c], self.collision_map.shape)
                     self.collision_map[r, c] = 1
+
+    def visualize_input(self, frontier_map, obstacle_map, goal_map, start):
+        fm = np.flipud(frontier_map.squeeze())
+        om = np.flipud(obstacle_map.squeeze())
+        gm = np.flipud(goal_map.squeeze())
+        H, W = fm.shape
+        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
+        vis_map[om == 1] = [0, 0, 0]
+        vis_map[fm == 1] = [
+            255,
+            0,
+            0,
+        ]  # Frontier is red, but sometimes replaced by goal which is blue if we have no other goal.
+        vis_map[gm == 1] = [0, 0, 255]  # Goal is blue
+        vis_map[np.logical_and(gm == 1, om == 1)] = [255, 0, 255]  # purple
+        vis_map[start[0], start[1]] = [0, 255, 0]
+        # logger.debug(f"SAVING 1.planning_input.png")
+        cv2.imwrite(
+            os.path.join(self.vis_dir, f"{self.timestep}_1.planning_input.png"),
+            vis_map[..., ::-1].astype(int),
+        )

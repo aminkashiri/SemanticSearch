@@ -13,6 +13,9 @@ from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.utils.morphology import binary_dilation
 from scipy.ndimage import label
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 
 class LanguageNavSemanticFrontierExplorationPolicy(nn.Module):
     """
@@ -244,7 +247,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
     unexplored region) otherwise.
     """
 
-    def __init__(self, exploration_strategy: str, close_frontier_radius: float = 20.0):
+    def __init__(self, exploration_strategy: str, close_frontier_radius: float = 20.0, goto_past_pose=False):
         super().__init__()
         assert exploration_strategy in [
             "seen_frontier",
@@ -270,20 +273,29 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         self.close_frontier_radius = close_frontier_radius
 
+        self.goto_past_pose = goto_past_pose 
+
     @property
     def goal_update_steps(self):
         return 1
 
     def reach_single_category(
-        self, map_features, category, reject_visited_targets, location=None
+        self, map_features, category, reject_visited_targets, location=None, instance_memory=None, num_sem_categories=None
     ):
         # if the goal is found, reach it
-        goal_map, found_goal = self.reach_goal_if_in_map(
-            map_features, category, reject_visited_targets=reject_visited_targets
+        goal_map, found_goal, goal_pose = self.reach_goal_if_in_map(
+            map_features, category, reject_visited_targets=reject_visited_targets, instance_memory=instance_memory, num_sem_categories=num_sem_categories, location=location
         )
         # otherwise, do frontier exploration
         goal_map = self.explore_otherwise(map_features, goal_map, found_goal, location)
-        return goal_map, found_goal
+        if found_goal[0]==True:
+            logger.info(f"Found goal category {category[0]} in the map, returning it as goal.")
+        else:
+            logger.info(
+                f"Did not find goal category {category[0]} in the map, exploring frontier instead. {found_goal[0]}"
+            )
+
+        return goal_map, found_goal, goal_pose
 
     def forward(
         self,
@@ -291,6 +303,8 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         object_category=None,
         reject_visited_targets=False,
         location=None,
+        instance_memory=None,
+        num_sem_categories=None,
     ):
         """
         Arguments:
@@ -306,7 +320,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         # Here, the goal is specified by a single object
         return self.reach_single_category(
-            map_features, object_category, reject_visited_targets, location=location
+            map_features, object_category, reject_visited_targets, location=location, instance_memory=instance_memory, num_sem_categories=num_sem_categories
         )
 
     def cluster_filtering(self, m):
@@ -337,8 +351,14 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         map_features,
         goal_category,
         reject_visited_targets=False,
+        instance_memory=None,
+        num_sem_categories=None,
+        location=None,
     ):
         """If the desired goal is in the semantic map, reach it."""
+        logger.debug(f"Searching for goal category {goal_category[0]} in the map.")
+        goal_pose = None
+
         batch_size, _, height, width = map_features.shape
         device = map_features.device
 
@@ -360,9 +380,65 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
                     )
                 # if the desired category is found with required constraints, set goal for navigation
                 if (category_map == 1).sum() > 0:
-                    goal_map[e] = category_map == 1
+                    logger.debug("Found goal category in the map.")
+
                     found_goal_current[e] = True
-        return goal_map, found_goal_current
+
+                    if self.goto_past_pose:
+                        logger.debug("Returning past pose for the goal.")
+                        goal_map[e], goal_pose = self.get_goal_map_for_category(goal_category[e], instance_memory, map_features, num_sem_categories, location)
+                    else:
+                        logger.debug("Returning goal cells as the goal map.")
+                        goal_map[e] = category_map == 1
+                else:
+                    logger.debug("Did not find goal category in the map.")
+        return goal_map, found_goal_current, goal_pose
+    
+    def get_goal_map_for_category(self, category, instance_memory, local_map, num_sem_categories, location, mode="closest_pose"):
+        """
+        Get the goal map for a specific category from the instance memory, by checking adding all the poses.
+        location is (y,x) in the grid. local_map[y,x] is the value for the cell robot is currently at.
+        """
+        #! myTODO: Instead of this, we can return all poses and all possible goals, and later convert them back to best location for that pose, and then choose the closest.
+        instance_map = local_map[0][
+            MC.NON_SEM_CHANNELS
+            + num_sem_categories : MC.NON_SEM_CHANNELS
+            + 2 * num_sem_categories,
+            :,
+            :,
+        ]
+
+        best_view = None
+        best_inst_key = None
+        best_metric = 0
+        for (inst_key, inst) in instance_memory.instance_views[0].items():
+            if inst.category_id not in category:
+                continue
+            views = inst.instance_views
+            max_coverage_view = np.argmax([view.object_coverage for view in views])
+            if mode == "best_pose":
+                if views[max_coverage_view].object_coverage > best_metric:
+                    best_metric = views[max_coverage_view].object_coverage
+                    best_view = views[max_coverage_view]
+                    best_inst_key = inst_key
+            elif mode == "closest_pose":
+                if np.linalg.norm(views[max_coverage_view].pose[:2]- location.cpu()) < best_metric or best_metric == 0:
+                    best_metric = np.linalg.norm(views[max_coverage_view].pose[:2]- location.cpu())
+                    best_view = views[max_coverage_view]
+                    best_inst_key = inst_key
+
+        pose = best_view.pose
+        curr_x, curr_y, curr_o, gy1, _, gx1, _ = pose.tolist()
+
+        inst_map_idx = instance_map == best_inst_key
+        inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
+        goal_map = (instance_map[inst_map_idx] == best_inst_key).to(torch.float)
+        
+        #! The output goal pose is the actual index in global map
+        goal_pose = [[curr_o, curr_y * 100.0 / 5 , curr_x * 100.0 / 5]]
+
+        logger.info(f">>> Goal instance {best_inst_key} best past pose is: {goal_pose}, with coverage {best_metric}. Returning goal_pose in addition to goal_map.")
+        return goal_map, goal_pose
 
     def remove_close_frontiers(
         self, frontier_map: torch.Tensor, location: torch.Tensor
@@ -372,7 +448,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         Args:
             frontier_map (torch.Tensor): shape [1, 1, H, W] binary map of frontiers
-            location (torch.Tensor): shape [2] -> (x, y) indices in grid
+            location (torch.Tensor): shape [2] -> (y, x) indices in grid
             radius (float): distance threshold (in pixels)
 
         Returns:

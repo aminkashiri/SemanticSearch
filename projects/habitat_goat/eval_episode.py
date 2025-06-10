@@ -25,19 +25,8 @@ from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
 from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
+from home_robot.utils.logger import get_logger
 
-class Tee:
-    def __init__(self, filename):
-        self.file = open(filename + ".txt", "w")
-        self.stdout = sys.__stdout__
-
-    def write(self, message):
-        self.stdout.write(message)
-        self.file.write(message)
-
-    def flush(self):
-        self.stdout.flush()
-        self.file.flush()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -51,8 +40,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--baseline_config_path",
         type=str,
-        # default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
-        default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
+        default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
+        # default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
         help="Path to config yaml",
     )
     parser.add_argument(
@@ -61,12 +50,12 @@ if __name__ == "__main__":
         default=0,
         help="Scene indices (for parallel eval)",
     )
-    parser.add_argument(
-        "--log",
-        type=str,
-        default="output",
-        help="Name of log file",
-    )
+    # parser.add_argument(
+    #     "--log",
+    #     type=str,
+    #     default="output",
+    #     help="Name of log file",
+    # )
     parser.add_argument(
         "opts",
         default=None,
@@ -78,11 +67,10 @@ if __name__ == "__main__":
     print(json.dumps(vars(args), indent=4))
     print("-" * 100)
 
-    sys.stdout = Tee(args.log)
-    sys.stderr = sys.stdout
-
+    logger = get_logger()
 
     config = get_config(args.habitat_config_path, args.baseline_config_path)
+
 
     all_scenes = os.listdir(
         os.path.dirname(
@@ -96,10 +84,14 @@ if __name__ == "__main__":
     #     scene_start = args.scene_idx * 5
     #     config.habitat.dataset.content_scenes = all_scenes[scene_start:scene_start+5]
 
-    # config.habitat.dataset.content_scenes = [
-    #     "4ok3usBNeis"
-    # ]  # TODO: for debugging. REMOVE later.
-    config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
+    config.habitat.dataset.content_scenes = [
+        "4ok3usBNeis"
+    ]  # TODO: for debugging. REMOVE later.
+    # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
+
+
+    logger.info("Starting code")
+    logger.info(f"Using scenes: {config.habitat.dataset.content_scenes}")
 
     config.NUM_ENVIRONMENTS = 1
     config.PRINT_IMAGES = 1
@@ -133,6 +125,8 @@ if __name__ == "__main__":
         episode = env.habitat_env.current_episode
         episode_id = episode.episode_id
 
+        logger.info(f"Evaluating scene {scene_id} episode {episode_id}")
+
         if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
             with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
                 metrics = json.load(fp)
@@ -163,9 +157,16 @@ if __name__ == "__main__":
         all_subtask_metrics = []
         pbar = tqdm(total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True)
 
+        old_task_idx = -1
         while not env.episode_over:
             current_task_idx = env.habitat_env.task.current_task_idx
+            if current_task_idx != old_task_idx:
+                logger.info(
+                    f"Starting task {current_task_idx} in scene {scene_id} episode {episode_id}"
+                )
+                old_task_idx = current_task_idx
             t += 1
+            logger.info(f"step: {t}")
             obs = env.get_observation()
             if t == 1:
                 obs_tasks = []
@@ -180,6 +181,7 @@ if __name__ == "__main__":
                 pprint(obs_tasks)
 
             action, info = agent.act(obs, stop)
+            logger.info(f"Action taken: {action}")
             env.apply_action(action, info=info)
             pbar.set_description(f"{scene_id}_{episode_id}_{current_task_idx}")
             pbar.update(1)
@@ -191,7 +193,7 @@ if __name__ == "__main__":
                 ctr += 1
 
                 if ctr > 20:
-                    print("Agent was stuck. Stopping episode.")
+                    logger.info("Agent was stuck. Stopping episode.")
                     # action = DiscreteNavigationAction.STOP
                     stop = True
                     ctr = 0
@@ -206,9 +208,9 @@ if __name__ == "__main__":
                 stop = False
                 ep_metrics = env.get_episode_metrics()
                 ep_metrics.pop("goat_top_down_map", None)
-                print("-------------------------")
-                print(f"{scene_id}_{episode_id}_{current_task_idx}", ep_metrics)
-                print("-------------------------")
+                logger.info("-------------------------")
+                logger.info(f"{scene_id}_{episode_id}_{current_task_idx} {ep_metrics}")
+                logger.info("-------------------------")
 
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
@@ -257,7 +259,7 @@ if __name__ == "__main__":
 
             pdb.set_trace()
 
-        print("---------------------------------")
+        logger.info(f"------------------------ Episode {scene_ep_id} over ------------------------")
 
         with open(os.path.join(results_dir, "per_episode_metrics.json"), "w") as fp:
             json.dump(metrics, fp, indent=4)

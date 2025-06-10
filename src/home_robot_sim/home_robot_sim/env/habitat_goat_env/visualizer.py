@@ -21,6 +21,9 @@ from home_robot.perception.constants import LanguageNavCategories
 from home_robot.perception.constants import PaletteIndices as PI
 from home_robot.perception.constants import RearrangeDETICCategories
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 
 class VIS_LAYOUT:
     HEIGHT = 480
@@ -473,8 +476,9 @@ class Visualizer:
             cv2.imshow("Visualization", image_vis)
             cv2.waitKey(1)
         if self.print_images:
+            # logger.debug(f"SAVING 8.snapshot")
             cv2.imwrite(
-                os.path.join(self.vis_dir, f"{timestep:03d}_5.snapshot.png"),
+                os.path.join(self.vis_dir, f"{timestep}_8.snapshot.png"),
                 image_vis,
             )
 
