@@ -236,9 +236,6 @@ class FMMPlanner:
         #!myTODO: Input this from env 
         print_images = True
 
-        sub_h, sub_w = subset.shape
-        dist_vis = np.zeros((sub_h * 2, sub_w * 2,3))
-
         vis_list = []
         vis_list.append(subset.copy())
 
@@ -419,15 +416,26 @@ class FMMPlanner:
         # Now mask out anything here based on distance to the goal mask
         mask = self.traversible
         dist_map = planner.fmm_dist * mask
-        dist_map[dist_map == 0] = dist_map.max()
+        dist_map[dist_map == 0] = dist_map.max() #! max is either obstacle, or unreachable. 
+        dist_map[dist_map == dist_map.max()] = distance + 1 #! This makes sure that max cells are never chosen as dilated goals.
 
-        if min_distance_only:
-            min_dist_idx = dist_map.argmin()
-            goal_pt = np.unravel_index(min_dist_idx, dist_map.shape)
-            navigable_goal_map = np.zeros_like(goal)
-            navigable_goal_map[goal_pt[0], goal_pt[1]] = 1
+        #! set multigoal always sets masked cell to max+1, and it that is 1, it means max is 0, which means we found no possible path to goal.
+        if np.max(dist_map) != 1.0:
+            if min_distance_only:
+                min_dist_idx = dist_map.argmin()
+                goal_pt = np.unravel_index(min_dist_idx, dist_map.shape)
+                navigable_goal_map = np.zeros_like(goal)
+                navigable_goal_map[goal_pt[0], goal_pt[1]] = 1
+            else:
+                logger.info(f"Number of traversible points within distance {distance} is {np.sum(dist_map < distance)}")
+                logger.info(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
+                logger.info(f"len unique values: {len(np.unique(dist_map))}")
+                navigable_goal_map = dist_map < distance
         else:
-            navigable_goal_map = dist_map < distance
+            logger.error(f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY")
+            raise Exception(
+                f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
+            )
 
         if self.print_images:
             _navigable_goal_map = navigable_goal_map.copy()
