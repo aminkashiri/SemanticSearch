@@ -579,8 +579,12 @@ class DiscretePlanner:
         short_term_goal = int(stg_x), int(stg_y)
 
         if self.print_images:
-            _navigable_goal_map = navigable_goal_map.copy()
-            _navigable_goal_map = _navigable_goal_map.astype(np.uint8)
+            if plan_to_dilated_goal:
+                _navigable_goal_map = dilated_goal_map.copy().astype(np.uint8)
+            else:
+                _navigable_goal_map = navigable_goal_map.copy().astype(np.uint8)
+            _navigable_goal_map = navigable_goal_map.copy().astype(np.uint8)
+            _navigable_goal_map = _navigable_goal_map
 
             white = np.ones((_navigable_goal_map.shape + (3,)), dtype=np.uint8) * 255
             white[traversible == 0] = [0, 0, 0]
