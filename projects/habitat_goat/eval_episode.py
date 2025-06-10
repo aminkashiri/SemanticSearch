@@ -34,14 +34,14 @@ if __name__ == "__main__":
         "--habitat_config_path",
         type=str,
         # default="goat/modular_goat_hm3d.yaml",
-        default="goat/modular_goat_hm3d_fixed.yaml",
+        default="goat/modular_goat_hm3d_fixed.yaml", #only difference is min depth set to 0
         help="Path to config yaml",
     )
     parser.add_argument(
         "--baseline_config_path",
         type=str,
-        default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
-        # default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
+        # default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
+        default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
         help="Path to config yaml",
     )
     parser.add_argument(
@@ -84,10 +84,11 @@ if __name__ == "__main__":
     #     scene_start = args.scene_idx * 5
     #     config.habitat.dataset.content_scenes = all_scenes[scene_start:scene_start+5]
 
-    config.habitat.dataset.content_scenes = [
-        "4ok3usBNeis"
-    ]  # TODO: for debugging. REMOVE later.
+    # config.habitat.dataset.content_scenes = [
+    #     "4ok3usBNeis"
+    # ]  # TODO: for debugging. REMOVE later.
     # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
+    config.habitat.dataset.content_scenes = all_scenes[:2]
 
 
     logger.info("Starting code")
