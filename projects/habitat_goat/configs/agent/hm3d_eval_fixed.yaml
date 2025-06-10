@@ -3,7 +3,7 @@ BASE_TASK_CONFIG_PATH: configs/task/hm3d_challenge2022_val.yaml
 NO_GPU: 0                 # 1: ignore IDs above and run on CPU, 0: run on GPUs with IDs above
 NUM_ENVIRONMENTS: 35      # number of environments (per agent process)
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: openvocab_v0.1.1_gt_semantics_600    # experiment name
+EXP_NAME: fixed_geodesic
 VISUALIZE: 0              # 1: render observation and predicted semantic map, 0: no visualization
 PRINT_IMAGES: 1           # 1: save visualization as images, 0: no image saving
 GROUND_TRUTH_SEMANTICS: 1 # 1: use ground-truth semantics (for debugging / ablations)
@@ -68,7 +68,7 @@ AGENT:
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 5                    # maximum distance of the short-term goal selected by the planner
     discrete_actions: True         # discrete motion planner output space or not
-    planner_type: "old"             # ("old", "new") where "new" is the latest one being used for spot in real world
+    planner_type: "fixed"             # ("old", "new", "fixed") where "new" is the latest one being used for spot in real world, and fixed is old with a better logic
 
   SUPERGLUE:
     max_keypoints: 1024
@@ -81,7 +81,7 @@ AGENT:
     score_thresh_image: 24.5  # real-world experiments used 6.0
     score_thresh_lang: 0.24
     match_projection_threshold: 0.2   # confidence must be at least this high to project as goal point.
-    goto_past_pose: False
+    goto_past_pose: True
     batching: False
 
   DETIC:

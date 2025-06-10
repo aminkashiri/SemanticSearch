@@ -143,12 +143,20 @@ class GoatAgent(Agent):
             "planner_type" in config.AGENT.PLANNER
             and config.AGENT.PLANNER.planner_type == "old"
         ):
-            print("Using old planner")
+            logger.info("Using old planner")
             from home_robot.navigation_planner.old_discrete_planner import (
                 DiscretePlanner,
             )
+        elif (
+            "planner_type" in config.AGENT.PLANNER
+            and config.AGENT.PLANNER.planner_type == "fixed"
+        ):
+            logger.info("Using fixed planner")
+            from home_robot.navigation_planner.fixed_discrete_planner import (
+                DiscretePlanner,
+            )
         else:
-            print("Using new planner")
+            logger.info("Using new planner")
             from home_robot.navigation_planner.discrete_planner import DiscretePlanner
 
         self.planner = DiscretePlanner(
@@ -207,7 +215,7 @@ class GoatAgent(Agent):
         self.goal_pose = None
         self.goal_filtering = config.AGENT.SEMANTIC_MAP.goal_filtering
         self.prev_task_type = None
-        self.exploration_strategy = config.AGENT.exploration_strategy
+        self.planner_type = config.AGENT.PLANNER.planner_type
 
     # ------------------------------------------------------------------
     # Inference methods to interact with vectorized simulation
@@ -551,7 +559,7 @@ class GoatAgent(Agent):
             # self.semantic_map.local_map[0, MC.EXPLORED_MAP] *= 0
             # self.semantic_map.global_map[0, MC.EXPLORED_MAP] *= 0
 
-            if self.exploration_strategy == "fixed":
+            if self.planner_type == "fixed":
                 if self.navigate_to_best[0]:
                     #! If we are fully explored and we are here again, we should just stop
                     logger.info("Already fully explored, stopping")
