@@ -117,7 +117,7 @@ def record_video(
     print(f"Recording video {episode_name}")
 
     # Semantic map vis
-    fnames = natsorted(glob.glob(f"{image_dir}/snapshot*.png"))
+    fnames = natsorted(glob.glob(f"{image_dir}/*snapshot*.png"))
     imgs = [cv2.imread(fname) for fname in fnames]
     images_to_video(
         [cv2.cvtColor(img, cv2.COLOR_RGB2BGR) for img in imgs],
@@ -292,7 +292,7 @@ class NavVisualizer:
         except Exception as e:
             import pdb; pdb.set_trace()
         for i in range(nframes):
-            name = f"snapshot_{timestep}_{i}.png"
+            name = f"{timestep}_8.snapshot_{i}.png"
             cv2.imwrite(os.path.join(self.vis_dir, name), frame)
 
     def pad_frame(self, frame: np.ndarray, width: int) -> np.ndarray:

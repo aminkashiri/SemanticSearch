@@ -25,6 +25,9 @@ from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
 
 from home_robot.perception.constants import df as hm3d_mapping_df
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 # all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
 all_ovon_categories_path = "./data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
 with open(all_ovon_categories_path, "r") as f:
@@ -32,7 +35,7 @@ with open(all_ovon_categories_path, "r") as f:
 
 # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
 all_ovon_categories = sorted(list(set(all_ovon_categories.keys())))
-print("All OVON categories:", {i+1: all_ovon_categories[i] for i in range(len(all_ovon_categories))})
+logger.debug(f"All OVON categories: { {i+1: all_ovon_categories[i] for i in range(len(all_ovon_categories))} }")
 # all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
 
 all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]

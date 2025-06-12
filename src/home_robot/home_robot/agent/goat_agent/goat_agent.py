@@ -176,7 +176,8 @@ class GoatAgent(Agent):
             map_downsample_factor=config.AGENT.PLANNER.map_downsample_factor,
             map_update_frequency=config.AGENT.PLANNER.map_update_frequency,
             discrete_actions=config.AGENT.PLANNER.discrete_actions,
-            geodesic_dilation=True if config.AGENT.exploration_strategy == "fixed" and config.AGENT.get("goal_dilation_method") == "geodesic" else False, 
+            geodesic_dilation=True if config.AGENT.PLANNER.get("goal_dilation_method") == "geodesic" else False, 
+            min_goal_distance_cm= config.AGENT.PLANNER.min_goal_distance_cm,
         )
         self.one_hot_encoding = torch.eye(
             config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
@@ -320,6 +321,8 @@ class GoatAgent(Agent):
             score_thresh=score_thresh,
             seq_obstacle_locations=obstacle_locations,
             seq_free_locations=free_locations,
+            vis_dir=self.planner.vis_dir,
+            timestep=self.total_timesteps[0]+1
         )
         self.semantic_map.local_pose = seq_local_pose[:, -1]
         self.semantic_map.global_pose = seq_global_pose[:, -1]
@@ -330,6 +333,7 @@ class GoatAgent(Agent):
         goal_map = self.goal_map.squeeze(1).cpu().numpy()
 
         if self.found_goal[0].item():
+            logger.warning(f"Look if this logic is correct")
             goal_map = self._prep_goal_map_input()
 
         # found_goal = self.found_goal.squeeze(1).cpu()
@@ -470,7 +474,7 @@ class GoatAgent(Agent):
 
     def act(self, obs: Observations, stop=False) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
-        logger.info(f"-------------------- Subtask step {self.sub_task_timesteps[0][self.current_task_idx]+1} --------------------")
+        logger.info(f"---------------- Subtask step {self.sub_task_timesteps[0][self.current_task_idx]+1} ----------------")
         current_task = obs.task_observations["tasks"][self.current_task_idx]
         task_type = current_task["type"]
 
@@ -759,7 +763,7 @@ class GoatAgent(Agent):
             )
         ):
             if self.force_match_against_memory:
-                print("Force a match against the memory")
+                logger.info("Force a match against the memory")
             self.force_match_against_memory = False
             (all_rgb_keypoints, all_matches, all_confidences, instance_ids) = self._match_against_memory(
                 task_type, current_task
@@ -783,7 +787,7 @@ class GoatAgent(Agent):
         )
 
     def _match_against_memory(self, task_type: str, current_task: Dict):
-        print("--------Matching against memory!--------")
+        logger.info("--------Matching against memory!--------")
         if task_type == "languagenav":
             (
                 all_rgb_keypoints,

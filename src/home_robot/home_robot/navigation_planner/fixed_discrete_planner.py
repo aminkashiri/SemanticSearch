@@ -676,22 +676,22 @@ class DiscretePlanner:
                     self.collision_map[r, c] = 1
 
     def visualize_input(self, frontier_map, obstacle_map, goal_map, start):
-        fm = np.flipud(frontier_map.squeeze())
-        om = np.flipud(obstacle_map.squeeze())
-        gm = np.flipud(goal_map.squeeze())
+        fm = frontier_map.squeeze()
+        om = obstacle_map.squeeze()
+        gm = goal_map.squeeze()
         H, W = fm.shape
         vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
         vis_map[om == 1] = [0, 0, 0]
         vis_map[fm == 1] = [
+            0,
+            0,
             255,
-            0,
-            0,
         ]  # Frontier is red, but sometimes replaced by goal which is blue if we have no other goal.
-        vis_map[gm == 1] = [0, 0, 255]  # Goal is blue
+        vis_map[gm == 1] = [255, 0, 0]  # Goal is blue
         vis_map[np.logical_and(gm == 1, om == 1)] = [255, 0, 255]  # purple
         vis_map[start[0], start[1]] = [0, 255, 0]
-        # logger.debug(f"SAVING 1.planning_input.png")
+        # logger.debug(f"SAVING 1.planning_input.png start (local pose) is: {start}")
         cv2.imwrite(
             os.path.join(self.vis_dir, f"{self.timestep}_1.planning_input.png"),
-            vis_map[..., ::-1].astype(int),
+            np.flipud(vis_map)
         )

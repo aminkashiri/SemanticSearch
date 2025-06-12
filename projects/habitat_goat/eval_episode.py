@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from pprint import pprint
+import pprint
 
 import numpy as np
 from tqdm import tqdm
@@ -78,7 +78,8 @@ if __name__ == "__main__":
         )
         + "/content/"
     )
-    all_scenes = sorted([x.split(".")[0] for x in all_scenes])
+    all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
+    logger.debug(f"All scenes: {all_scenes}")
 
     # if args.scene_idx != -1:
     #     scene_start = args.scene_idx * 5
@@ -88,7 +89,7 @@ if __name__ == "__main__":
     #     "4ok3usBNeis"
     # ]  # TODO: for debugging. REMOVE later.
     # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
-    config.habitat.dataset.content_scenes = all_scenes[:2]
+    config.habitat.dataset.content_scenes = all_scenes[:10]
 
 
     logger.info("Starting code")
@@ -167,7 +168,8 @@ if __name__ == "__main__":
                 )
                 old_task_idx = current_task_idx
             t += 1
-            logger.info(f"step: {t}")
+            logger.info(f"-------------------- Episode step {t} --------------------")
+            logger.info(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
             obs = env.get_observation()
             if t == 1:
                 obs_tasks = []
@@ -179,7 +181,7 @@ if __name__ == "__main__":
                         obs_task[key] = value
                     obs_tasks.append(obs_task)
 
-                pprint(obs_tasks)
+                logger.debug(f"tasks are: {pprint.pformat(obs_tasks)}")
 
             action, info = agent.act(obs, stop)
             logger.info(f"Action taken: {action}")

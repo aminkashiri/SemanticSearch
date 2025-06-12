@@ -80,7 +80,7 @@ class GoatAgentModule(nn.Module):
             ), #! myTODO: Hardcoded 3
         )
         self.policy = LanguageNavFrontierExplorationPolicy(
-            exploration_strategy=config.AGENT.exploration_strategy, goto_past_pose=config.AGENT.SUPERGLUE.goto_past_pose,
+            exploration_strategy=config.AGENT.exploration_strategy, goto_past_pose=config.AGENT.SUPERGLUE.goto_past_pose
         )
         self.goal_policy_config = config.AGENT.SUPERGLUE
         self.instance_goal_found = False
@@ -124,6 +124,8 @@ class GoatAgentModule(nn.Module):
         score_thresh=0.0,
         seq_obstacle_locations=None,
         seq_free_locations=None,
+        vis_dir=None,
+        timestep: Optional[int] = None,
     ):
         """Update maps and poses with a sequence of observations, and predict
         high-level goals from map features.
@@ -169,6 +171,7 @@ class GoatAgentModule(nn.Module):
             seq_origins: sequence of local map origins of shape
              (batch_size, sequence_length, 3)
         """
+        self.policy.vis_dir = vis_dir
         # t0 = time.time()
 
         # Reset the last channel of the local map each step when found_goal=False
@@ -211,7 +214,7 @@ class GoatAgentModule(nn.Module):
 
         map_features = seq_map_features.flatten(0, 1)
         # Compute the frontier map here
-        frontier_map = self.policy.get_frontier_map(map_features)
+        frontier_map = self.policy.get_frontier_map(map_features, timestep)
 
 
         location = seq_local_pose[0,0][:2]
@@ -270,6 +273,7 @@ class GoatAgentModule(nn.Module):
                 location=location,
                 instance_memory=self.instance_memory,
                 num_sem_categories=self.semantic_map_module.num_sem_categories,
+                timestep=timestep,
             )
 
             seq_goal_map = goal_map.view(

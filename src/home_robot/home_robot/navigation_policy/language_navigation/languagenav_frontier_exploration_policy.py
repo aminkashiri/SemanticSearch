@@ -16,6 +16,9 @@ from scipy.ndimage import label
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
+import cv2
+import os
+
 
 class LanguageNavSemanticFrontierExplorationPolicy(nn.Module):
     """
@@ -206,38 +209,6 @@ class LanguageNavSemanticFrontierExplorationPolicy(nn.Module):
         return goal_map
 
 
-def visualize_maps(
-    frontier_map, obstacle_map, known_map, robot_pos=None, title="Frontier Debug View"
-):
-    """
-    Visualizes the frontier map alongside obstacles and explored area.
-
-    Args:
-        frontier_map (torch.Tensor or np.ndarray): binary map of frontiers (1 = frontier)
-        obstacle_map (torch.Tensor or np.ndarray): binary map of obstacles (1 = obstacle)
-        known_map (torch.Tensor or np.ndarray): binary map of known/explored cells (1 = known)
-        robot_pos (tuple or None): (x, y) position to plot (optional)
-    """
-    import matplotlib
-    matplotlib.use("TkAgg")
-    import matplotlib.pyplot as plt
-
-    frontier_map = frontier_map.squeeze().cpu().numpy()
-    obstacle_map = obstacle_map.squeeze().cpu().numpy()
-    known_map = known_map.squeeze().cpu().numpy()
-
-    H, W = known_map.shape
-    vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
-
-    vis_map[obstacle_map == 1] = [0, 0, 0]
-    vis_map[frontier_map == 1] = [255, 0, 0]
-
-    vis_map[known_map == 1] = [117, 117, 117]
-
-    plt.imshow(vis_map)
-    plt.title(title)
-    plt.axis("off")
-    plt.show()
 
 
 class LanguageNavFrontierExplorationPolicy(nn.Module):
@@ -280,14 +251,14 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         return 1
 
     def reach_single_category(
-        self, map_features, category, reject_visited_targets, location=None, instance_memory=None, num_sem_categories=None
+        self, map_features, category, reject_visited_targets, location=None, instance_memory=None, num_sem_categories=None, timestep=None
     ):
         # if the goal is found, reach it
         goal_map, found_goal, goal_pose = self.reach_goal_if_in_map(
             map_features, category, reject_visited_targets=reject_visited_targets, instance_memory=instance_memory, num_sem_categories=num_sem_categories, location=location
         )
         # otherwise, do frontier exploration
-        goal_map = self.explore_otherwise(map_features, goal_map, found_goal, location)
+        goal_map = self.explore_otherwise(map_features, goal_map, found_goal, location, timestep=timestep)
         if found_goal[0]==True:
             logger.info(f"Found goal category {category[0]} in the map, returning it as goal.")
         else:
@@ -305,6 +276,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         location=None,
         instance_memory=None,
         num_sem_categories=None,
+        timestep=None,
     ):
         """
         Arguments:
@@ -320,7 +292,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         # Here, the goal is specified by a single object
         return self.reach_single_category(
-            map_features, object_category, reject_visited_targets, location=location, instance_memory=instance_memory, num_sem_categories=num_sem_categories
+            map_features, object_category, reject_visited_targets, location=location, instance_memory=instance_memory, num_sem_categories=num_sem_categories, timestep=timestep
         )
 
     def cluster_filtering(self, m):
@@ -454,6 +426,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         Returns:
             torch.Tensor: updated frontier_map with close frontiers removed
         """
+        logger.debug("Removing close frontiers from the frontier map.")
         assert frontier_map.dim() == 4, "Frontier map must be of shape [1,1,H,W]"
         _, _, H, W = frontier_map.shape
         device = frontier_map.device
@@ -463,14 +436,17 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         dist = torch.sqrt((x_coords - location[1]) ** 2 + (y_coords - location[0]) ** 2)
         close_mask = dist <= self.close_frontier_radius
-        frontier_map = (
+        new_frontier_map = (
             frontier_map.clone()
         )
-        frontier_map[0, 0][close_mask] = 0
+        new_frontier_map[0, 0][close_mask] = 0
+        if not (new_frontier_map[0, 0].cpu() == 1).any().item():
+            logger.warning("No frontiers left after removing close frontiers, returning original frontier map.")
+            return frontier_map
 
-        return frontier_map
+        return new_frontier_map
 
-    def get_frontier_map_fixed(self, map_features):
+    def get_frontier_map_fixed(self, map_features, timestep=None):
         """
         Detect frontiers: free cells adjacent to unknown areas.
 
@@ -521,23 +497,24 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         unknown_neighbors = F.conv2d(unknown, kernel, padding=1)
         frontier_map = (free_space & (unknown_neighbors > 0)).float()
         frontier_map = remove_small_frontiers(frontier_map, min_size=15)
-        # visualize_maps(
-        #     frontier_map=frontier_map,
-        #     obstacle_map=obstacle_map,
-        #     known_map=known_map,
-        #     # robot_pos=(50, 50),  # optional
-        #     # title="Map with Frontiers"
-        # )
+        self.print_maps(
+            frontier_map=frontier_map,
+            obstacle_map=obstacle_map,
+            known_map=known_map,
+            timestep=timestep,
+            # robot_pos=(50, 50),  # optional
+            # title="Map with Frontiers"
+        )
         return frontier_map
 
-    def get_frontier_map(self, map_features):
+    def get_frontier_map(self, map_features, timestep=None):
         # Select unexplored area
         if self.exploration_strategy == "seen_frontier":
             frontier_map = (map_features[:, [MC.EXPLORED_MAP], :, :] == 0).float()
         elif self.exploration_strategy == "been_close_to_frontier":
             frontier_map = (map_features[:, [MC.BEEN_CLOSE_MAP], :, :] == 0).float()
         elif self.exploration_strategy == "fixed":
-            return self.get_frontier_map_fixed(map_features)
+            return self.get_frontier_map_fixed(map_features, timestep)
 
         # Dilate explored area
         frontier_map = 1 - binary_dilation(
@@ -550,9 +527,9 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         )
         return frontier_map
 
-    def explore_otherwise(self, map_features, goal_map, found_goal, location=None):
+    def explore_otherwise(self, map_features, goal_map, found_goal, location=None, timestep=None):
         """Explore closest unexplored region otherwise."""
-        frontier_map = self.get_frontier_map(map_features)
+        frontier_map = self.get_frontier_map(map_features, timestep)
         if location is not None:
             frontier_map = self.remove_close_frontiers(frontier_map, location)
         batch_size = map_features.shape[0]
@@ -561,3 +538,31 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
                 goal_map[e] = frontier_map[e]
 
         return goal_map
+
+    def print_maps(
+        self, frontier_map, obstacle_map, known_map, robot_pos=None, title="Frontier Debug View", timestep=None
+    ):
+        """
+        Visualizes the frontier map alongside obstacles and explored area.
+
+        Args:
+            frontier_map (torch.Tensor or np.ndarray): binary map of frontiers (1 = frontier)
+            obstacle_map (torch.Tensor or np.ndarray): binary map of obstacles (1 = obstacle)
+            known_map (torch.Tensor or np.ndarray): binary map of known/explored cells (1 = known)
+            robot_pos (tuple or None): (x, y) position to plot (optional)
+        """
+        frontier_map = frontier_map.squeeze().cpu().numpy()
+        obstacle_map = obstacle_map.squeeze().cpu().numpy()
+        known_map = known_map.squeeze().cpu().numpy()
+
+        H, W = known_map.shape
+        vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
+
+        vis_map[obstacle_map == 1] = [0, 0, 0]
+        vis_map[known_map == 1] = [117, 117, 117]
+        vis_map[frontier_map == 1] = [255, 0, 0]
+
+        cv2.imwrite(
+            os.path.join(self.vis_dir, f"{timestep}_0.frontiers.png"),
+            np.flipud(vis_map)
+        )
