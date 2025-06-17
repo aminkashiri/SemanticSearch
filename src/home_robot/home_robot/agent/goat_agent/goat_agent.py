@@ -330,11 +330,7 @@ class GoatAgent(Agent):
         self.semantic_map.origins = seq_origins[:, -1]
 
 
-        goal_map = self.goal_map.squeeze(1).cpu().numpy()
-
-        if self.found_goal[0].item():
-            logger.warning(f"Look if this logic is correct")
-            goal_map = self._prep_goal_map_input()
+        goal_map = self._prep_goal_map_input()
 
         # found_goal = self.found_goal.squeeze(1).cpu()
 
@@ -554,7 +550,7 @@ class GoatAgent(Agent):
             self.sub_task_timesteps[0][self.current_task_idx]
             >= self.max_steps[self.current_task_idx]
         ) or stop:
-            print("Reached max number of steps for subgoal, or stuck somewhere, calling STOP")
+            logger.warning("Reached max number of steps for subgoal, or stuck somewhere, calling STOP")
             action = DiscreteNavigationAction.STOP
 
         if could_not_find_path and not planner_stop and action != DiscreteNavigationAction.STOP:
@@ -859,28 +855,29 @@ class GoatAgent(Agent):
         if not self.goal_filtering:
             return goal_map
 
-        for e in range(goal_map.shape[0]):
-            if not self.found_goal[e]:
-                continue
+        if not self.found_goal[0]:
+            logger.debug("Found goal is False (goal is frontier), don't changing goal_map.")
+            return goal_map
+        logger.debug("Clustering Goal map and selecting the largest cluster.")
 
-            # cluster goal points
-            try:
-                c = DBSCAN(eps=4, min_samples=1)
-                data = np.array(goal_map[e].nonzero()).T
-                c.fit(data)
+        # cluster goal points
+        try:
+            c = DBSCAN(eps=4, min_samples=1)
+            data = np.array(goal_map[e].nonzero()).T
+            c.fit(data)
 
-                # mask all points not in the largest cluster
-                mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
-                mode_mask = (c.labels_ != mode).nonzero()
-                x = data[mode_mask]
-                goal_map_ = np.copy(goal_map[e])
-                goal_map_[x] = 0.0
+            # mask all points not in the largest cluster
+            mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
+            mode_mask = (c.labels_ != mode).nonzero()
+            x = data[mode_mask]
+            goal_map_ = np.copy(goal_map[e])
+            goal_map_[x] = 0.0
 
-                # adopt masked map if non-empty
-                if goal_map_.sum() > 0:
-                    goal_map[e] = goal_map_
-            except Exception as e:
-                print(e)
-                return goal_map
+            # adopt masked map if non-empty
+            if goal_map_.sum() > 0:
+                goal_map[e] = goal_map_
+        except Exception as e:
+            logger.debug(f"Faced an error {e} while clustering goal_map")
+            return goal_map
 
         return goal_map

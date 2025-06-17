@@ -126,6 +126,7 @@ class DiscretePlanner:
         self.map_update_frequency = map_update_frequency
 
         self.geodesic_dilation = geodesic_dilation
+        logger.info(f"Initiliazing fixed discrete planner with geodesic dilation = {geodesic_dilation}")
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -183,6 +184,8 @@ class DiscretePlanner:
             closest_goal_map: (M, M) binary array denoting closest goal
              location in the goal map in geodesic distance
         """
+        #! Note: All the maps are local maps
+
         # Reset timestep using argument; useful when there are timesteps where the discrete planner is not invoked
         assert timestep is not None
         self.timestep = timestep
@@ -195,25 +198,39 @@ class DiscretePlanner:
         planning_window = [gx1, gx2, gy1, gy2]
 
         #! This is actually correct as far as I get. lmb is [y1,y2,x1,x2], so this makes sense.
-        start = [
+        local_start_pose = [
             int(start_y * 100.0 / self.map_resolution - gx1),
             int(start_x * 100.0 / self.map_resolution - gy1),
         ]
 
-        logger.info(f"---- Starting planning with start pose: {start} ---- ")
-        logger.info(f"> Sensor pose: {sensor_pose.tolist()}")
+        logger.info(f"---- Starting planning with local start pose (pixels): {local_start_pose} ---- ")
+        logger.info(f"> global pose: {sensor_pose.tolist()}")
         logger.info(f"> Found goal: {found_goal}")
         logger.info(f"> Goal points provided: {np.any(goal_map > 0)}")
 
-        start = pu.threshold_poses(start, obstacle_map.shape)
-        start = np.array(start)
+        if not np.any(goal_map > 0):
+            logger.warning("Goal map is empty, returning replan=True, stop=False. The agent tries to go to the most similar goal, and if nothing, stops.")
+            return (
+                DiscreteNavigationAction.TURN_LEFT,
+                None,
+                None,
+                None,
+                True, # replan
+                False, # stop
+            )
+
+        start_thresholded = pu.threshold_poses(local_start_pose, obstacle_map.shape)
+        if start_thresholded[0] != local_start_pose[0] or start_thresholded[1] != local_start_pose[1]:
+            logger.warning(f"location is changed because it was out of map. Init location: {local_start_pose}, new location: {start_thresholded}")
+        local_start_pose = start_thresholded
+        local_start_pose = np.array(local_start_pose)
 
         if self.print_images:
-            self.visualize_input(frontier_map, obstacle_map, goal_map, start)
+            self.visualize_input(frontier_map, obstacle_map, goal_map, local_start_pose)
 
         self.curr_pose = [start_x, start_y, start_o]
         self.visited_map[gx1:gx2, gy1:gy2][
-            start[0] - 0 : start[0] + 1, start[1] - 0 : start[1] + 1
+            local_start_pose[0] - 0 : local_start_pose[0] + 1, local_start_pose[1] - 0 : local_start_pose[1] + 1
         ] = 1
 
         # Check collisions if we have just moved and are uncertain
@@ -233,19 +250,19 @@ class DiscretePlanner:
         ) = self._get_short_term_goal(
             obstacle_map,
             np.copy(goal_map),
-            start,
+            local_start_pose,
             planning_window,
-            frontier_map=frontier_map,
             goal_pose=goal_pose,
         )
 
         # Short term goal is in cm, start_x and start_y are in m
-        logger.debug(f"Current pose: {start}")
+        logger.debug(f"Current local pose: {local_start_pose}")
         logger.debug(f"Short term goal: {short_term_goal}")
-        logger.debug(f"Delta = {short_term_goal[0] - start[0]} , {short_term_goal[1] - start[1]}")
-        dist_to_short_term_goal = np.linalg.norm(start - np.array(short_term_goal[:2]))
-        logger.debug(f"Distance (m): { dist_to_short_term_goal * self.map_resolution * CM_TO_METERS}")
         logger.debug(f"Replan: {replan}")
+        if replan != True:
+            logger.debug(f"Delta = {short_term_goal[0] - local_start_pose[0]} , {short_term_goal[1] - local_start_pose[1]}")
+            dist_to_short_term_goal = np.linalg.norm(local_start_pose - np.array(short_term_goal[:2]))
+            logger.debug(f"Distance (m): { dist_to_short_term_goal * self.map_resolution * CM_TO_METERS}")
 
         i = 0
         while replan and not stop:
@@ -275,9 +292,8 @@ class DiscretePlanner:
                 ) = self._get_short_term_goal(
                     obstacle_map,
                     np.copy(goal_map),
-                    start,
+                    local_start_pose,
                     planning_window,
-                    frontier_map=frontier_map,
                     goal_pose=goal_pose,
                     postfix=f"_replan_{i}",
                 )
@@ -286,42 +302,54 @@ class DiscretePlanner:
                     f"Obstacle dilation already at minimum: {self.min_obs_dilation_selem_radius}, but still couldn't find a path to the goal."
                 )
                 #! Note that found goal means we have at least found some goal category (not necessarily an instance)
+                #! If found_goal == False, and we are here, this means we can not find a path even to a frontier, so we should stop.
                 if found_goal == True:
-                    logger.info(
-                        "Explore frontier map instead of goal map, as we couldn't find a path to the goal."
-                    )
-                    (
-                        short_term_goal,
-                        closest_goal_map,
-                        replan,
-                        stop,
-                        closest_goal_pt,
-                        dilated_obstacles,
-                    ) = self._get_short_term_goal(
-                        obstacle_map,
-                        np.copy(frontier_map),
-                        start,
-                        planning_window,
-                        frontier_map=frontier_map,
-                        goal_pose=goal_pose,
-                        postfix="_frontier",
-                    )
-                    found_goal = False
+                    #! myTODO: Before trying frontier, see if we can go to past pose. 
+                    if frontier_map.any():
+                        logger.info(
+                            "Explore frontier map instead of goal map, as we couldn't find a path to the goal."
+                        )
+                        (
+                            short_term_goal,
+                            closest_goal_map,
+                            replan,
+                            stop,
+                            closest_goal_pt,
+                            dilated_obstacles,
+                        ) = self._get_short_term_goal(
+                            obstacle_map,
+                            np.copy(frontier_map),
+                            local_start_pose,
+                            planning_window,
+                            postfix="_frontier",
+                        )
+                        found_goal = False
+                        if replan:
+                            logger.info("Could not find a path to the frontier goal either, returning replan=True, to try to go to best match or stop.")
+                    else:
+                        logger.info("No frontier map available, returning replan = True, stop = False, to try to go to best match or stop.")
+                        replan = True
                     if replan:
-                        logger.info("Could not find a path to the frontier goal either, returning stop.")
                         #  TODO separate out STOP_SUCCESS and STOP_FAILURE actions
                         return (
-                            DiscreteNavigationAction.STOP,
+                            # DiscreteNavigationAction.STOP,
+                            DiscreteNavigationAction.TURN_LEFT,
                             closest_goal_map,
                             short_term_goal,
                             dilated_obstacles,
                             replan,
-                            stop,
+                            False, # stop
                         )
                 else:
-                    logger.info(f"Could not find a path to any frontier goal either with min obs dilation {self.min_obs_dilation_selem_radius}, returning stop.")
+                    #! If we are here, it means we are in the min obs dilation, and we are trying to go to a frontier (which means we have not found the goal).
+                    #! So we return replan (which is True) with a no op action, and the code tries to go to best match if any.
+                    logger.info(f"Could not find a path to the any frontier goal with min obs dilation {self.min_obs_dilation_selem_radius}, and have not found the goal.")
+                    logger.info(f"Try to go to best match if any and then stop.")
+
+                    assert replan == True and stop == False
                     return (
-                        DiscreteNavigationAction.STOP,
+                        # DiscreteNavigationAction.STOP,
+                        DiscreteNavigationAction.TURN_LEFT,
                         closest_goal_map,
                         short_term_goal,
                         dilated_obstacles,
@@ -335,13 +363,13 @@ class DiscretePlanner:
 
         # If we found a short term goal worth moving towards...
         stg_x, stg_y = short_term_goal
-        relative_stg_x, relative_stg_y = stg_x - start[0], stg_y - start[1]
+        relative_stg_x, relative_stg_y = stg_x - local_start_pose[0], stg_y - local_start_pose[1]
         angle_st_goal = math.degrees(math.atan2(relative_stg_x, relative_stg_y))
         relative_angle_to_stg = pu.normalize_angle(angle_agent - angle_st_goal)
 
         # Compute angle to the final goal
         goal_x, goal_y = closest_goal_pt
-        angle_goal = math.degrees(math.atan2(goal_x - start[0], goal_y - start[1]))
+        angle_goal = math.degrees(math.atan2(goal_x - local_start_pose[0], goal_y - local_start_pose[1]))
 
         if goal_pose is None:
             # Compute angle to the final goal
@@ -355,7 +383,7 @@ class DiscretePlanner:
 
         if debug:
             # Actual metric distance to goal
-            distance_to_goal = np.linalg.norm(np.array([goal_x, goal_y]) - start)
+            distance_to_goal = np.linalg.norm(np.array([goal_x, goal_y]) - local_start_pose)
             distance_to_goal_cm = distance_to_goal * self.map_resolution
             # Display information
             print("Found reachable goal:", found_goal)
@@ -494,7 +522,6 @@ class DiscretePlanner:
         goal_map: np.ndarray,
         start: List[int],
         planning_window: List[int],
-        frontier_map=None,
         goal_pose: List[float] = None,
         postfix: str = "",
     ) -> Tuple[Tuple[int, int], np.ndarray, bool, bool]:
@@ -556,17 +583,26 @@ class DiscretePlanner:
         )
 
         #! This is dilation logic.
-        navigable_goal_map = planner._dilate_goal(
+        navigable_goal_map = planner._find_within_distance_to_multi_goal(
             goal_map,
             self.min_goal_distance_cm / self.map_resolution,
             timestep=self.timestep
         )
         if not np.any(navigable_goal_map):
             logger.info(
-                f"Couldn't find any navigable goal points in the map. Using frontier map instead."
+                f"Couldn't find any navigable goal points in the map. returning replan=True, stop=False, to try again with next best option (lower dilation, frontier, best goal)."
             )
-            frontier_map = add_boundary(frontier_map, value=0)
-            navigable_goal_map = frontier_map
+            return (
+                None,
+                None,
+                True, # replan
+                False,# stop
+                None,
+                dilated_obstacles,
+            )
+            # frontier_map = add_boundary(frontier_map, value=0)
+            # navigable_goal_map = frontier_map
+
 
         self.dd = planner.set_multi_goal(
             navigable_goal_map,
@@ -602,7 +638,7 @@ class DiscretePlanner:
             white[start[0] + 1, start[1] + 1] = [0, 255, 0]
             white[int(stg_x) + 1, int(stg_y) + 1] = [255, 0, 0]
 
-            # logger.debug(f"SAVING 7.stg")
+            # logger.debug(f"SAVING 7.stg, start (local pose) is: {start}")
             cv2.imwrite(
                 os.path.join(self.vis_dir, f"{self.timestep}_7.stg{postfix}.png"),
                 np.flipud(white),

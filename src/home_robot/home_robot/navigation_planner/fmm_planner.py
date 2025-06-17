@@ -271,6 +271,12 @@ class FMMPlanner:
         # Subset will contain negative distance to goal
         replan = subset[stg_x, stg_y] > -0.0001
 
+        if stg_x == self.du and stg_y == self.du:
+            logger.debug(f"Short term goal is the same as current state, stopping.")
+            replan = False
+            stop = True
+
+
         return (
             (stg_x + state[0] - self.du) * scale,
             (stg_y + state[1] - self.du) * scale,
@@ -290,7 +296,10 @@ class FMMPlanner:
         vis_img[new_goal_map == 1] = [0, 255, 0]
 
         # blue
-        vis_img[pose_xy[0], pose_xy[1]] = [255, 0, 0]
+        try:
+            vis_img[pose_xy[0], pose_xy[1]] = [255, 0, 0]
+        except:
+            logger.warning(f"Don't visualizing pose, because it is out of bound (GOAL is not in local map)")
 
         vis_img = np.flipud(vis_img)
 
@@ -319,7 +328,7 @@ class FMMPlanner:
             int(goal_pose[1] - planning_window[0] + 1),
             int(goal_pose[2] - planning_window[2])+1]
         )
-        logger.info(f"Changing goal map to closest traversible from past pose. Global goal pose is : {goal_pose}, local pose is : {pose_xy}")
+        logger.info(f"Changing goal map to closest traversible from past pose. Global goal pose is : {goal_pose}, local goal pose is : {pose_xy}")
 
         # Find closest goal_map cell to goal_pose
         goal_indices = np.argwhere(goal_map == 1)
@@ -339,10 +348,15 @@ class FMMPlanner:
         for x, y in line_coords:
             if self.traversible[x, y] == 1:
                 new_goal_map = np.zeros_like(goal_map)
-                new_goal_map[x, y] = 1
-                logger.info(f"Setting traversible goal to {x, y}")
-                self.visualize_converting_goal_to_pose(goal_map, self.traversible, pose_xy, new_goal_map, timestep)
-                return new_goal_map
+                if 0 < x and x<goal_map.shape[0] and 0 < y and y < goal_map.shape[1]:
+                    new_goal_map[x, y] = 1
+                    logger.info(f"Setting traversible goal to {x, y}")
+                    self.visualize_converting_goal_to_pose(goal_map, self.traversible, pose_xy, new_goal_map, timestep)
+                    return new_goal_map
+                else:
+                    logger.warning(f"Best pose is outside of local planning window, returning the original goal_map.")
+                    return goal_map
+
         logger.info(f"No traversible point found from closest goal, returning original goal_map.")
 
         return goal_map
@@ -436,6 +450,9 @@ class FMMPlanner:
             raise Exception(
                 f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
             )
+
+        initial_navigable_goal_map = np.logical_and(self.traversible, goal)
+        navigable_goal_map = np.logical_or(initial_navigable_goal_map, navigable_goal_map)
 
         if self.print_images:
             _navigable_goal_map = navigable_goal_map.copy()
