@@ -228,7 +228,7 @@ class GoatMatching(Matching):
         all_confidences = []
 
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
-        print("Computing matching score with each view...")
+        logger.debug("Computing matching score with each view...")
         for i in tqdm(range(len(rgb_image_batched))):
             if goal_image_keypoints is None:
                 goal_image_keypoints = {}
@@ -323,7 +323,7 @@ class GoatMatching(Matching):
             assert rgb_image_keypoints is None
 
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
-        print("Computing matching score with each view...")
+        logger.debug("Computing matching score with each view...")
 
         if isinstance(goal_image, np.ndarray):
             goal_image_processed = self._preprocess_image(goal_image)
@@ -425,7 +425,7 @@ class GoatMatching(Matching):
         ):
             inst_idx = sorted_inst_ids[idx]
             idx += 1
-            print(
+            logger.debug(
                 f"Trying to localize instance {inst_idx + 1} with score {scores[inst_idx]}"
             )
             if instance_ids is None:
@@ -433,7 +433,7 @@ class GoatMatching(Matching):
             else:
                 best_instance_id = instance_ids[inst_idx]
             if instance_ids[inst_idx] == -1:
-                print("instance_ids[inst_idx] == -1")
+                logger.debug("instance_ids[inst_idx] == -1")
                 continue
             inst_map_idx = instance_map == best_instance_id
             inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
@@ -443,16 +443,17 @@ class GoatMatching(Matching):
                 if goal_map_temp.any():
                     instance_goal_found = True
                     goal_inst = best_instance_id
-                    print(f"Instance {goal_inst} will be the goal")
+                    logger.debug(f"Instance {goal_inst} will be the goal")
                     return instance_goal_found, goal_inst
                 else:
-                    print("Instance was seen, but not present in local map.")
+                    logger.debug("Instance was seen, but not present in local map.")
             else:
+                #! TODODODODODOOD myTODO . FILL TODAY. THIS IS NOT OK. EVEN IF I CHECK IT IS IN THE LOCAL MAP, IT MIGHT NOT BE WHEN CHECKING FOR POSE
                 # we are ok with object not being on map when using agent pose as target
                 return True, best_instance_id
 
         if idx == len(sorted_inst_ids):
-            print("Goal image does not match any instance.")
+            logger.debug("Goal image does not match any instance.")
 
         return instance_goal_found, goal_inst
 
@@ -473,7 +474,7 @@ class GoatMatching(Matching):
                     agg_scores.append(np.median(inst_view_scores))
                 else:
                     raise NotImplementedError
-                print(f"Instance {inst_idx+1} score: {max(inst_view_scores)}")
+                logger.debug(f"Instance {inst_idx+1} score: {max(inst_view_scores)}")
         return agg_scores
 
     def get_goal_map_from_goal_instance(

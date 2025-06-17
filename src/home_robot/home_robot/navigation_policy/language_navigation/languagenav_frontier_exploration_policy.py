@@ -394,6 +394,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
                     best_view = views[max_coverage_view]
                     best_inst_key = inst_key
             elif mode == "closest_pose":
+                #! myTODO: This doesn't work with blacklisting logic.
                 if np.linalg.norm(views[max_coverage_view].pose[:2]- location.cpu()) < best_metric or best_metric == 0:
                     best_metric = np.linalg.norm(views[max_coverage_view].pose[:2]- location.cpu())
                     best_view = views[max_coverage_view]

@@ -68,7 +68,9 @@ AGENT:
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 5                    # maximum distance of the short-term goal selected by the planner
     discrete_actions: True         # discrete motion planner output space or not
-    planner_type: "fixed"             # ("old", "new", "fixed") where "new" is the latest one being used for spot in real world, and fixed is old with a better logic
+    planner_type: fixed             # ("old", "new", "fixed") where "new" is the latest one being used for spot in real world, and fixed is old with a better logic
+    goal_dilation_method : geodesic
+    min_goal_distance_cm: 10
 
   SUPERGLUE:
     max_keypoints: 1024
