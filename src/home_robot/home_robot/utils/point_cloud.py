@@ -11,19 +11,19 @@ import torch
 import trimesh.transformations as tra
 
 
-def numpy_to_pcd(xyz: np.ndarray, rgb: np.ndarray = None) -> o3d.geometry.PointCloud:
+def numpy_to_pcd(xyz: np.ndarray, rgb: np.ndarray = None) -> o3d.cuda.pybind.geometry.PointCloud:
     """Create an open3d pointcloud from a single xyz/rgb pair"""
     xyz = xyz.reshape(-1, 3)
     if rgb is not None:
         rgb = rgb.reshape(-1, 3)
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(xyz)
+    pcd = o3d.cuda.pybind.geometry.PointCloud()
+    pcd.points = o3d.cuda.pybind.utility.Vector3dVector(xyz)
     if rgb is not None:
-        pcd.colors = o3d.utility.Vector3dVector(rgb)
+        pcd.colors = o3d.cuda.pybind.utility.Vector3dVector(rgb)
     return pcd
 
 
-def pcd_to_numpy(pcd: o3d.geometry.PointCloud) -> (np.ndarray, np.ndarray):
+def pcd_to_numpy(pcd: o3d.cuda.pybind.geometry.PointCloud) -> (np.ndarray, np.ndarray):
     """Convert an open3d point cloud into xyz, rgb numpy arrays and return them."""
     xyz = np.asarray(pcd.points)
     rgb = np.asarray(pcd.colors)
@@ -49,7 +49,7 @@ def show_point_cloud(
 
 
 def show_pcd(
-    pcd: o3d.geometry.PointCloud,
+    pcd: o3d.cuda.pybind.geometry.PointCloud,
     orig: np.ndarray = None,
     R: np.ndarray = None,
     save: str = None,
@@ -63,14 +63,56 @@ def show_pcd(
     geoms = create_visualization_geometries(
         pcd=pcd, orig=orig, R=R, grasps=grasps, size=size
     )
-    o3d.visualization.draw_geometries(geoms)
+    print(type(geoms))
+    for g in geoms:
+        print(type(g))
+        print(g)
+    
+    print("Points attribute type:", type(geoms[0].points))
+    print("Number of points:", len(geoms[0].points))
+    points_np = np.asarray(geoms[0].points)
+    print("Points shape:", points_np.shape)
+    print("Any NaNs?", np.isnan(points_np).any())
+    print("Any Infs?", np.isinf(points_np).any())
+    print("Has colors?", geoms[0].has_colors())
+    print("Has normals?", geoms[0].has_normals())
+
+    pcd_cuda = geoms[0]
+    if pcd_cuda.has_points():
+        print("First 5 points:\n", np.asarray(pcd_cuda.points)[:5])
+
+    if pcd_cuda.has_colors():
+        print("Colors type:", type(pcd_cuda.colors))
+        print("Number of colors:", len(pcd_cuda.colors))
+        print("First 5 colors:\n", np.asarray(pcd_cuda.colors)[:5])
+    else:
+        print("Point cloud has no colors")
+    
+    print("Points:")
+    print(np.asarray(pcd_cuda.points))
+    print("Points shape:", np.asarray(pcd_cuda.points).shape)
+
+    print("Colors:")
+    print(np.asarray(pcd_cuda.colors))
+    print("Colors shape:", np.asarray(pcd_cuda.colors).shape)
+    # pcd_cuda.colors = o3d.utility.Vector3dVector()
+
+    print("Has colors after:", pcd_cuda.has_colors())
+
+    o3d.io.write_point_cloud("debug.ply", pcd_cuda)
+    pcd_cuda = o3d.io.read_point_cloud("debug.ply")
+    print("Write to disk")
+
+    # o3d.visualization.draw_geometries([geoms[0]])
+    o3d.visualization.draw_geometries([pcd_cuda])
+    print("------------- 3")
 
     if save is not None:
         save_geometries_as_image(geoms, output_path=save)
 
 
 def create_visualization_geometries(
-    pcd: Optional[o3d.geometry.PointCloud] = None,
+    pcd: Optional[o3d.cuda.pybind.geometry.PointCloud] = None,
     xyz: Optional[np.ndarray] = None,
     rgb: Optional[np.ndarray] = None,
     orig: Optional[np.ndarray] = None,
@@ -106,7 +148,7 @@ def create_visualization_geometries(
 
     geoms = [pcd]
     if orig is not None:
-        coords = o3d.geometry.TriangleMesh.create_coordinate_frame(
+        coords = o3d.cuda.pybind.geometry.TriangleMesh.create_coordinate_frame(
             origin=orig, size=size
         )
         if R is not None:
@@ -114,7 +156,7 @@ def create_visualization_geometries(
         geoms.append(coords)
 
     if arrow_pos is not None:
-        arrow = o3d.geometry.TriangleMesh.create_arrow()
+        arrow = o3d.cuda.pybind.geometry.TriangleMesh.create_arrow()
         arrow = arrow.scale(
             arrow_size,
             center=np.zeros(
@@ -132,7 +174,7 @@ def create_visualization_geometries(
         geoms.append(arrow)
 
     if sphere_pos is not None:
-        sphere = o3d.geometry.TriangleMesh.create_sphere(radius=sphere_size)
+        sphere = o3d.cuda.pybind.geometry.TriangleMesh.create_sphere(radius=sphere_size)
 
         if sphere_color is not None:
             sphere = sphere.paint_uniform_color(sphere_color)
@@ -142,7 +184,7 @@ def create_visualization_geometries(
 
     if grasps is not None:
         for grasp in grasps:
-            coords = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            coords = o3d.cuda.pybind.geometry.TriangleMesh.create_coordinate_frame(
                 size=0.05, origin=grasp[:3, 3]
             )
             coords = coords.rotate(grasp[:3, :3])

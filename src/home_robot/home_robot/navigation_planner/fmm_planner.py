@@ -14,8 +14,8 @@ from numpy import ma
 
 import matplotlib.cm as cm
 from matplotlib.colors import Normalize, TwoSlopeNorm
-from bresenham import bresenham
 
+from home_robot.utils.visualization import visualize_map
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
@@ -52,7 +52,6 @@ class FMMPlanner:
         vis_dir: str = "data/images/planner",
         print_images=True,
         debug=False,
-        geodesic_dilation=False,
         vis_postfix: str = "",
     ):
         """
@@ -84,7 +83,6 @@ class FMMPlanner:
         self.fmm_dist = None
         self.debug = debug
         # self.goal_map = None
-        self.geodesic_dilation = geodesic_dilation
         self.vis_postfix = vis_postfix
 
     def set_goal(self, goal, auto_improve: bool = False):
@@ -232,10 +230,6 @@ class FMMPlanner:
             subset.shape[0] == 2 * self.du + 1 and subset.shape[1] == 2 * self.du + 1
         ), "Planning error: unexpected subset shape {}".format(subset.shape)
 
-
-        #!myTODO: Input this from env 
-        print_images = True
-
         vis_list = []
         vis_list.append(subset.copy())
 
@@ -246,10 +240,9 @@ class FMMPlanner:
         vis_list.append(np.flipud(mask[...,None].copy()*255))
         vis_list.append(subset.copy())
 
-        logger.debug(f"[FMM] Distance to fmm navigable goal pt = {subset[self.du, self.du] * 5}")
 
         stop = subset[self.du, self.du] < self.goal_tolerance
-        logger.debug(f"subset[self.du, self.du] {subset[self.du, self.du]}")
+        logger.debug(f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}")
         logger.debug(f"self.goal_tolerance {self.goal_tolerance}")
         logger.debug(f"stop {stop}")
 
@@ -258,7 +251,7 @@ class FMMPlanner:
         ratio1 = subset / dist_mask
         subset[ratio1 < -1.5] = 1
 
-        if print_images:
+        if self.print_images:
             try:
                 self.visualize_get_short_term_goal(vis_list, timestep)
             except Exception as e:
@@ -268,98 +261,16 @@ class FMMPlanner:
 
         (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
 
-        # Subset will contain negative distance to goal
-        replan = subset[stg_x, stg_y] > -0.0001
-
-        if stg_x == self.du and stg_y == self.du:
-            logger.debug(f"Short term goal is the same as current state, stopping.")
-            replan = False
-            stop = True
-
+        # Rechable if stg distance is less than current location (negative).
+        reachable = subset[stg_x, stg_y] < -0.0001
 
         return (
             (stg_x + state[0] - self.du) * scale,
             (stg_y + state[1] - self.du) * scale,
-            replan,
+            reachable,
             stop,
         )
 
-    def visualize_converting_goal_to_pose(self, goal_map, traversible, pose_xy, new_goal_map, timestep):
-        h, w = traversible.shape
-        vis_img = np.ones((h, w, 3), dtype=np.uint8) * 255 
-        vis_img[traversible == 0] = [0, 0, 0]
-
-        # red
-        vis_img[goal_map == 1] = [0, 0, 255]
-
-        # green
-        vis_img[new_goal_map == 1] = [0, 255, 0]
-
-        # blue
-        try:
-            vis_img[pose_xy[0], pose_xy[1]] = [255, 0, 0]
-        except:
-            logger.warning(f"Don't visualizing pose, because it is out of bound (GOAL is not in local map)")
-
-        vis_img = np.flipud(vis_img)
-
-        # logger.debug(f"SAVING 2.interpolate_goal")
-        cv2.imwrite(
-            os.path.join(self.vis_dir, f"{timestep}_2.interpolate_goal.png"),
-            vis_img,
-        )
-
-    def change_goal_map_to_closest_traversible_from_past_pose(self, goal_map, goal_pose, planning_window, timestep):
-        logger.info(f"Changing goal map to closest traversible from past pose if needed.")
-        if goal_pose is None:
-            logger.info(f"No goal pose provided, returning original goal_map.")
-            return goal_map
-
-        #! myTODO: Commneted this because sometimes, goal point are considered traversible (they are not obstacles, because they have a height more than the robot)
-        #! However, you can not easily go to them, and agent starts trying to find a path to the other side of a wall or sth similar.  
-        # If there is any goal cell that is also traversible, return goal_map itself
-        traversible_goal = np.logical_and(goal_map == 1, self.traversible == 1)
-        if np.any(traversible_goal):
-            logger.info(f"Goal map already has traversible cells, but doing nothing.")
-            # return goal_map
-
-        #! The goal pose is the actual index in global map
-        pose_xy = np.array([
-            int(goal_pose[1] - planning_window[0] + 1),
-            int(goal_pose[2] - planning_window[2])+1]
-        )
-        logger.info(f"Changing goal map to closest traversible from past pose. Global goal pose is : {goal_pose}, local goal pose is : {pose_xy}")
-
-        # Find closest goal_map cell to goal_pose
-        goal_indices = np.argwhere(goal_map == 1)
-        if goal_indices.size == 0:
-            raise Exception("No goal cells found in goal_map, should not happen.")
-
-        # Find closest goal cell in goal_map to the goal_pose
-        dists = np.linalg.norm(goal_indices - pose_xy[None, :], axis=1)
-        closest_goal_idx = goal_indices[np.argmin(dists)]
-        gx, gy = closest_goal_idx
-        logger.info(f"Closest goal index in goal_map to goal_pose is ({gx}, {gy})")
-
-        # Generate Bresenham line from closest_goal_idx to goal_pose  
-        line_coords = list(bresenham(int(gx), int(gy),pose_xy[0], pose_xy[1]))
-
-        # Walk from closest goal_map cell to goal_pose and find first traversible point
-        for x, y in line_coords:
-            if self.traversible[x, y] == 1:
-                new_goal_map = np.zeros_like(goal_map)
-                if 0 < x and x<goal_map.shape[0] and 0 < y and y < goal_map.shape[1]:
-                    new_goal_map[x, y] = 1
-                    logger.info(f"Setting traversible goal to {x, y}")
-                    self.visualize_converting_goal_to_pose(goal_map, self.traversible, pose_xy, new_goal_map, timestep)
-                    return new_goal_map
-                else:
-                    logger.warning(f"Best pose is outside of local planning window, returning the original goal_map.")
-                    return goal_map
-
-        logger.info(f"No traversible point found from closest goal, returning original goal_map.")
-
-        return goal_map
  
 
     @staticmethod
@@ -404,22 +315,19 @@ class FMMPlanner:
                     )
         return mask
 
-    def _find_within_distance_to_multi_goal(
+    def dilate_goal(
         self,
         goal: np.ndarray,
         distance: float,
-        min_distance_only=False,
         timestep=0,
     ) -> np.ndarray:
         """
         Find the nearest point to a goal which is traversible
         """
-        logger.info(f"Dilating goal map")
-
+        logger.debug(f"Dilating goal map")
         
-        #! myTODO: Finish fixing goal dilation
         planner = FMMPlanner(
-            self.traversible if self.geodesic_dilation else np.ones_like(self.traversible),
+            self.traversible,
             print_images=self.print_images,
             vis_dir=self.vis_dir,
             vis_postfix=self.vis_postfix
@@ -435,16 +343,10 @@ class FMMPlanner:
 
         #! set multigoal always sets masked cell to max+1, and it that is 1, it means max is 0, which means we found no possible path to goal.
         if np.max(dist_map) != 1.0:
-            if min_distance_only:
-                min_dist_idx = dist_map.argmin()
-                goal_pt = np.unravel_index(min_dist_idx, dist_map.shape)
-                navigable_goal_map = np.zeros_like(goal)
-                navigable_goal_map[goal_pt[0], goal_pt[1]] = 1
-            else:
-                logger.info(f"Number of traversible points within distance {distance} is {np.sum(dist_map < distance)}")
-                logger.info(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
-                logger.info(f"len unique values: {len(np.unique(dist_map))}")
-                navigable_goal_map = dist_map < distance
+            logger.debug(f"Number of traversible points within distance {distance} (in pixels) is {np.sum(dist_map < distance)}")
+            logger.debug(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
+            logger.debug(f"len unique values: {len(np.unique(dist_map))}")
+            dilated_goal_map = dist_map < distance
         else:
             logger.error(f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY")
             raise Exception(
@@ -452,21 +354,16 @@ class FMMPlanner:
             )
 
         initial_navigable_goal_map = np.logical_and(self.traversible, goal)
-        navigable_goal_map = np.logical_or(initial_navigable_goal_map, navigable_goal_map)
+        dilated_goal_map = np.logical_or(initial_navigable_goal_map, dilated_goal_map)
 
         if self.print_images:
-            _navigable_goal_map = navigable_goal_map.copy()
-            _navigable_goal_map = _navigable_goal_map.astype(np.uint8)
-            _traversible = self.traversible.astype(np.uint8)
-
-            white = np.ones((_navigable_goal_map.shape + (3,)), dtype=np.uint8) * 255
-            white[_traversible == 0] = [0, 0, 0]
-            white[_navigable_goal_map == 1] = [255, 0, 255] # purple
-            white[goal == 1] = [0, 0, 255] # Initial goal in red
-            white = np.flipud(white)
-            # logger.debug(f"SAVING 4.dilate")
-            cv2.imwrite(
-                os.path.join(self.vis_dir, f"{timestep}_4.dilate_goal{self.vis_postfix}.png"),
-                white,
+            visualize_map(
+                dilated_goal_map.shape, 
+                self.vis_dir,
+                f"{timestep}_4.dilate_goal{self.vis_postfix}.png",
+                traversible=self.traversible.astype(np.uint8),
+                goal_map=goal,
+                dilated_goal_map=dilated_goal_map.astype(np.uint8)
             )
-        return navigable_goal_map
+
+        return dilated_goal_map

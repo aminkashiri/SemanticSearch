@@ -124,29 +124,16 @@ def get_rel_pose_change(pos2, pos1):
 
 
 def get_new_pose(pose, rel_pose_change):
-    x, y, o = pose
-    dx, dy, do = rel_pose_change
-    global_dx = dx * np.sin(np.deg2rad(o)) + dy * np.cos(np.deg2rad(o))
-    global_dy = dx * np.cos(np.deg2rad(o)) - dy * np.sin(np.deg2rad(o))
-    x += global_dy
-    y += global_dx
-    o += np.rad2deg(do)
-    if o > 180.0:
-        o -= 360.0
-    return x, y, o
-
-
-def get_new_pose_batch(pose, rel_pose_change):
     const = 57.29577951308232
-    pose[:, 1] += rel_pose_change[:, 0] * torch.sin(
-        pose[:, 2] / const
-    ) + rel_pose_change[:, 1] * torch.cos(pose[:, 2] / const)
-    pose[:, 0] += rel_pose_change[:, 0] * torch.cos(
-        pose[:, 2] / const
-    ) - rel_pose_change[:, 1] * torch.sin(pose[:, 2] / const)
-    pose[:, 2] += rel_pose_change[:, 2] * const
-    pose[:, 2] = torch.fmod(pose[:, 2] - 180.0, 360.0) + 180.0
-    pose[:, 2] = torch.fmod(pose[:, 2] + 180.0, 360.0) - 180.0
+    pose[1] += rel_pose_change[0] * torch.sin(
+        pose[2] / const
+    ) + rel_pose_change[1] * torch.cos(pose[2] / const)
+    pose[0] += rel_pose_change[0] * torch.cos(
+        pose[2] / const
+    ) - rel_pose_change[1] * torch.sin(pose[2] / const)
+    pose[2] += rel_pose_change[2] * const
+    pose[2] = torch.fmod(pose[2] - 180.0, 360.0) + 180.0
+    pose[2] = torch.fmod(pose[2] + 180.0, 360.0) - 180.0
     return pose
 
 

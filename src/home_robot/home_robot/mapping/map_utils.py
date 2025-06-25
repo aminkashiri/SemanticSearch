@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 import torch
 from torch import Tensor
+import numpy as np
 
 
 class MapSizeParameters:
@@ -16,65 +17,58 @@ class MapSizeParameters:
         self.local_map_size = self.local_map_size_cm // self.resolution
 
 
-def init_map_and_pose_for_env(
-    e: int,
-    local_map: Tensor,
-    global_map: Tensor,
-    local_pose: Tensor,
-    global_pose: Tensor,
-    lmb: Tensor,
-    origins: Tensor,
+def init_map_and_pose(
     map_size_parameters: MapSizeParameters,
+    device: torch.device,
+    num_channels
 ):
     """Initialize global and local map and sensor pose variables
     for a given environment.
     """
     p = map_size_parameters
-    global_pose[e].fill_(0.0)
-    global_pose[e, :2] = p.global_map_size_cm / 100.0 / 2.0
+    global_pose = torch.zeros(3, device=device)
+    global_pose.fill_(0.0)
+    global_pose[:2] = p.global_map_size_cm / 100.0 / 2.0
 
     # Initialize starting agent locations
-    x, y = (global_pose[e, :2] * 100 / p.resolution).int()
-    global_map[e].fill_(0.0)
-    global_map[e, 2:4, y - 1 : y + 2, x - 1 : x + 2] = 1.0
+    x, y = (global_pose[:2] * 100 / p.resolution).int()
+    global_map = torch.zeros(
+        num_channels,
+        p.global_map_size,
+        p.global_map_size,
+        device=device,
+    )
+    global_map.fill_(0.0)
+    global_map[2:4, y - 1 : y + 2, x - 1 : x + 2] = 1.0
 
-    recenter_local_map_and_pose_for_env(
-        e,
-        local_map,
+    return [global_map, global_pose] + get_local_parameters_from_global_pose(
         global_map,
-        local_pose,
         global_pose,
-        lmb,
-        origins,
         map_size_parameters,
     )
 
 
-def recenter_local_map_and_pose_for_env(
-    e: int,
-    local_map: Tensor,
+def get_local_parameters_from_global_pose(
     global_map: Tensor,
-    local_pose: Tensor,
     global_pose: Tensor,
-    lmb: Tensor,
-    origins: Tensor,
     map_size_parameters: MapSizeParameters,
 ):
-    """Re-center local map by updating its boundaries, origins, and
-    content, and the local pose for a given environment.
+    """
+    Using a global pose, finds lmb, origins, local_map, and local_pose.
     """
     p = map_size_parameters
-    global_loc = (global_pose[e, :2] * 100 / p.resolution).int()
-    lmb[e] = get_local_map_boundaries(global_loc, map_size_parameters)
-    origins[e] = torch.tensor(
+    global_loc = (global_pose[:2] * 100 / p.resolution).int()
+    lmb = get_local_map_boundaries(global_loc, map_size_parameters)
+    origins = torch.tensor(
         [
-            lmb[e][2] * p.resolution / 100.0,
-            lmb[e][0] * p.resolution / 100.0,
+            lmb[2] * p.resolution / 100.0,
+            lmb[0] * p.resolution / 100.0,
             0.0,
-        ]
+        ], device=global_map.device
     )
-    local_map[e] = global_map[e, :, lmb[e, 0] : lmb[e, 1], lmb[e, 2] : lmb[e, 3]]
-    local_pose[e] = global_pose[e] - origins[e]
+    local_map = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+    local_pose = global_pose - origins
+    return [local_map, local_pose, lmb, origins]
 
 
 def get_local_map_boundaries(

@@ -81,6 +81,9 @@ def get_grid(
         `rot_grid` FloatTensor(bs, grid_h, grid_w, 2)
         `trans_grid` FloatTensor(bs, grid_h, grid_w, 2)
     """
+    pose = pose.unsqueeze(0)
+    grid_size = (1,) + grid_size
+
     x = pose[:, 0]
     y = pose[:, 1]
     t = pose[:, 2]
