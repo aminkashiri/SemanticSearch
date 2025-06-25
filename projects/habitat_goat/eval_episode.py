@@ -41,7 +41,7 @@ if __name__ == "__main__":
         "--baseline_config_path",
         type=str,
         # default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
-        default="projects/habitat_goat/configs/agent/hm3d_eval_fixed.yaml",
+        default="projects/habitat_goat/configs/agent/hm3d_eval_new.yaml",
         help="Path to config yaml",
     )
     parser.add_argument(
@@ -89,7 +89,9 @@ if __name__ == "__main__":
     #     "4ok3usBNeis"
     # ]  # TODO: for debugging. REMOVE later.
     # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
-    config.habitat.dataset.content_scenes = all_scenes[:10]
+    config.habitat.dataset.content_scenes = all_scenes[:5]
+    # config.habitat.dataset.content_scenes = ['BAbdmeyTvMZ']
+
 
 
     logger.info("Starting code")

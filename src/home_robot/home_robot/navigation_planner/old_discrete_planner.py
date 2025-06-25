@@ -548,7 +548,7 @@ class DiscretePlanner:
                 traversible, goal_map, start, dilated_goal_map=dilated_goal_map
             )
         else:
-            navigable_goal_map = planner._find_within_distance_to_multi_goal(
+            navigable_goal_map = planner.dilate_goal(
                 goal_map,
                 self.min_goal_distance_cm / self.map_resolution,
                 timestep=self.timestep,

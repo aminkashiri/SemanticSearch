@@ -88,16 +88,15 @@ class InstanceMemory:
     timesteps: list of timesteps
     """
 
-    images: List[torch.Tensor] = []
-    instance_views: List[Dict[int, Instance]] = []
-    point_cloud: List[torch.Tensor] = []
-    unprocessed_views: List[Dict[int, InstanceView]] = []
-    local_id_to_global_id_map: List[Dict[int, int]] = []
-    timesteps: List[int] = []
+    images: torch.Tensor = None
+    instance_views: Dict[int, Instance] = dict()
+    point_cloud: torch.Tensor = None
+    unprocessed_views: Dict[int, InstanceView] = dict()
+    local_id_to_global_id_map: Dict[int, int] = dict()
+    timesteps: int = 0
 
     def __init__(
         self,
-        num_envs: int,
         du_scale: int,
         debug_visualize: bool = False,
         config=None,
@@ -106,7 +105,6 @@ class InstanceMemory:
         padding_cropped_instances=0,
         category_id_to_category_name=None,
     ):
-        self.num_envs = num_envs
         self.du_scale = du_scale
         self.debug_visualize = debug_visualize
         self.mask_cropped_instances = mask_cropped_instances
@@ -126,22 +124,22 @@ class InstanceMemory:
         self.reset()
 
     def reset(self):
-        self.images = [None for _ in range(self.num_envs)]
-        self.point_cloud = [None for _ in range(self.num_envs)]
-        self.instance_views = [{} for _ in range(self.num_envs)]
-        self.unprocessed_views = [{} for _ in range(self.num_envs)]
-        self.local_id_to_global_id_map = [{} for _ in range(self.num_envs)]
-        self.timesteps = [0 for _ in range(self.num_envs)]
+        self.images = None
+        self.point_cloud = None
+        self.instance_views = dict()
+        self.unprocessed_views = dict()
+        self.local_id_to_global_id_map = dict()
+        self.timesteps = 0
 
     def update_instance_id(
-        self, env_id: int, local_instance_id: int, global_instance_id: int
+        self, local_instance_id: int, global_instance_id: int
     ):
         # fetch instance view from the list of unprocessed views
         # if global_instance_id already exists, add a new instance view to it
         # otherwise, create a new global instance with the given global_instance_id
 
         # get instance view
-        instance_view = self.unprocessed_views[env_id].get(local_instance_id, None)
+        instance_view = self.unprocessed_views.get(local_instance_id, None)
         if instance_view is None and self.debug_visualize:
             print(
                 "instance view with local instance id",
@@ -150,17 +148,17 @@ class InstanceMemory:
             )
 
         # get global instance
-        global_instance = self.instance_views[env_id].get(global_instance_id, None)
+        global_instance = self.instance_views.get(global_instance_id, None)
         if global_instance is None:
             # create a new global instance
             global_instance = Instance()
             global_instance.category_id = instance_view.category_id
             global_instance.instance_views.append(instance_view)
-            self.instance_views[env_id][global_instance_id] = global_instance
+            self.instance_views[global_instance_id] = global_instance
         else:
             # add instance view to global instance
             global_instance.instance_views.append(instance_view)
-        self.local_id_to_global_id_map[env_id][local_instance_id] = global_instance_id
+        self.local_id_to_global_id_map[local_instance_id] = global_instance_id
         if self.debug_visualize:
             category_name = (
                 f"cat_{instance_view.category_id}"
@@ -173,7 +171,7 @@ class InstanceMemory:
             os.makedirs(instance_write_path, exist_ok=True)
 
             step = instance_view.timestep
-            full_image = self.images[env_id][step]
+            full_image = self.images[step]
             full_image = full_image.numpy().astype(np.uint8).transpose(1, 2, 0)
             full_image = full_image[..., ::-1]
             # overlay mask on image
@@ -184,7 +182,7 @@ class InstanceMemory:
             cv2.imwrite(
                 os.path.join(
                     instance_write_path,
-                    f"step_{self.timesteps[env_id]}_local_id_{local_instance_id}.png",
+                    f"step_{self.timesteps}_local_id_{local_instance_id}.png",
                 ),
                 masked_image,
             )
@@ -195,9 +193,8 @@ class InstanceMemory:
             #     global_instance_id,
             # )
 
-    def process_instances_for_env(
+    def _process_instances(
         self,
-        env_id: int,
         semantic_map: torch.Tensor,
         instance_map: torch.Tensor,
         point_cloud: torch.Tensor,
@@ -208,20 +205,20 @@ class InstanceMemory:
         # create a dict for mapping instance ids to categories
         instance_id_to_category_id = {}
 
-        self.unprocessed_views[env_id] = {}
-        self.local_id_to_global_id_map[env_id] = {}
+        self.unprocessed_views = {}
+        self.local_id_to_global_id_map = {}
         # append image to list of images
-        if self.images[env_id] is None:
-            self.images[env_id] = image.unsqueeze(0).detach().cpu()
+        if self.images is None:
+            self.images = image.unsqueeze(0).detach().cpu()
         else:
-            self.images[env_id] = torch.cat(
-                [self.images[env_id], image.unsqueeze(0).detach().cpu()], dim=0
+            self.images = torch.cat(
+                [self.images, image.unsqueeze(0).detach().cpu()], dim=0
             )
-        if self.point_cloud[env_id] is None:
-            self.point_cloud[env_id] = point_cloud.unsqueeze(0).detach().cpu()
+        if self.point_cloud is None:
+            self.point_cloud = point_cloud.unsqueeze(0).detach().cpu()
         else:
-            self.point_cloud[env_id] = torch.cat(
-                [self.point_cloud[env_id], point_cloud.unsqueeze(0).detach().cpu()],
+            self.point_cloud = torch.cat(
+                [self.point_cloud, point_cloud.unsqueeze(0).detach().cpu()],
                 dim=0,
             )
 
@@ -298,7 +295,7 @@ class InstanceMemory:
             # get instance view
             instance_view = InstanceView(
                 bbox=bbox,
-                timestep=self.timesteps[env_id],
+                timestep=self.timesteps,
                 cropped_image=cropped_image,
                 embedding=embedding,
                 mask=instance_mask,
@@ -309,19 +306,17 @@ class InstanceMemory:
             )
 
             # append instance view to list of instance views
-            self.unprocessed_views[env_id][instance_id.item()] = instance_view
+            self.unprocessed_views[instance_id.item()] = instance_view
+
+            #! myTODO: Add a variable to control if we should save these or not.
             # save cropped image with timestep in filename
-            if self.debug_visualize:
-                os.makedirs(f"{self.save_dir}/all", exist_ok=True)
-                cv2.imwrite(
-                    f"{self.save_dir}/all/{self.timesteps[env_id] + 1}_{instance_id.item()}.png",
-                    cropped_image[:,:,::-1],
-                )
+            # os.makedirs(f"{self.save_dir}/all", exist_ok=True)
+            # cv2.imwrite(
+            #     f"{self.save_dir}/all/{self.timesteps + 1}_{instance_id.item()}.png",
+            #     cropped_image[:,:,::-1],
+            # )
 
-        self.timesteps[env_id] += 1
-
-    def get_unprocessed_instances_per_env(self, env_id: int):
-        return self.unprocessed_views[env_id]
+        self.timesteps += 1
 
     def process_instances(
         self,
@@ -331,23 +326,13 @@ class InstanceMemory:
         pose: torch.Tensor,
         image: torch.Tensor,
     ):
-        instance_map = instance_channels.argmax(dim=1).int()
-        semantic_map = semantic_channels.argmax(dim=1).int()
-        for env_id in range(self.num_envs):
-            self.process_instances_for_env(
-                env_id,
-                semantic_map[env_id],
-                instance_map[env_id],
-                point_cloud[env_id],
-                pose[env_id],
-                image[env_id],
-                semantic_map.shape[1],
-            )
-
-    def reset_for_env(self, env_id: int):
-        self.instance_views[env_id] = {}
-        self.images[env_id] = None
-        self.point_cloud[env_id] = None
-        self.unprocessed_views[env_id] = {}
-        self.timesteps[env_id] = 0
-        self.local_id_to_global_id_map[env_id] = {}
+        instance_map = instance_channels.argmax(dim=0).int()
+        semantic_map = semantic_channels.argmax(dim=0).int()
+        self._process_instances(
+            semantic_map,
+            instance_map,
+            point_cloud,
+            pose,
+            image,
+            semantic_map.shape[0],
+        )

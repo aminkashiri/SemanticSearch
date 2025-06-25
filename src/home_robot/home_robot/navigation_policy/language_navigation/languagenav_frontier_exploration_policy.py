@@ -218,7 +218,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
     unexplored region) otherwise.
     """
 
-    def __init__(self, exploration_strategy: str, close_frontier_radius: float = 20.0, goto_past_pose=False):
+    def __init__(self, exploration_strategy: str, close_frontier_radius: float = 10.0, goto_past_pose=False):
         super().__init__()
         assert exploration_strategy in [
             "seen_frontier",
@@ -243,12 +243,8 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         )
 
         self.close_frontier_radius = close_frontier_radius
-
         self.goto_past_pose = goto_past_pose 
 
-    @property
-    def goal_update_steps(self):
-        return 1
 
     def reach_single_category(
         self, map_features, category, reject_visited_targets, location=None, instance_memory=None, num_sem_categories=None, timestep=None
@@ -295,29 +291,6 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
             map_features, object_category, reject_visited_targets, location=location, instance_memory=instance_memory, num_sem_categories=num_sem_categories, timestep=timestep
         )
 
-    def cluster_filtering(self, m):
-        # m is a 480x480 goal map
-        if not m.any():
-            return m
-        device = m.device
-
-        # cluster goal points
-        k = DBSCAN(eps=4, min_samples=1)
-        m = m.cpu().numpy()
-        data = np.array(m.nonzero()).T
-        k.fit(data)
-
-        # mask all points not in the largest cluster
-        mode = scipy.stats.mode(k.labels_, keepdims=True).mode.item()
-        mode_mask = (k.labels_ != mode).nonzero()
-        x = data[mode_mask]
-
-        m_filtered = np.copy(m)
-        m_filtered[x] = 0.0
-        m_filtered = torch.tensor(m_filtered, device=device)
-
-        return m_filtered
-
     def reach_goal_if_in_map(
         self,
         map_features,
@@ -335,35 +308,34 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         device = map_features.device
 
         goal_map = torch.zeros((batch_size, height, width), device=device)
-        found_goal_current = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        found_goal_current = False
 
-        for e in range(batch_size):
-            # if the category goal was not found previously
-            if not found_goal_current[e]:
-                # the category to navigate to
-                category_map = map_features[
-                    e, goal_category[e] + 2 * MC.NON_SEM_CHANNELS, :, :
-                ]
+        # if the category goal was not found previously
+        if not found_goal_current:
+            # the category to navigate to
+            category_map = map_features[
+                goal_category + 2 * MC.NON_SEM_CHANNELS, :, :
+            ]
 
-                if reject_visited_targets:
-                    # remove the target objects that the agent has already been close to
-                    category_map = category_map * (
-                        1 - map_features[e, MC.BLACKLISTED_TARGETS_MAP, :, :]
-                    )
-                # if the desired category is found with required constraints, set goal for navigation
-                if (category_map == 1).sum() > 0:
-                    logger.debug("Found goal category in the map.")
+            if reject_visited_targets:
+                # remove the target objects that the agent has already been close to
+                category_map = category_map * (
+                    1 - map_features[MC.BLACKLISTED_TARGETS_MAP, :, :]
+                )
+            # if the desired category is found with required constraints, set goal for navigation
+            if (category_map == 1).sum() > 0:
+                logger.debug("Found goal category in the map.")
 
-                    found_goal_current[e] = True
+                found_goal_current = True
 
-                    if self.goto_past_pose:
-                        logger.debug("Returning past pose for the goal.")
-                        goal_map[e], goal_pose = self.get_goal_map_for_category(goal_category[e], instance_memory, map_features, num_sem_categories, location)
-                    else:
-                        logger.debug("Returning goal cells as the goal map.")
-                        goal_map[e] = category_map == 1
+                if self.goto_past_pose:
+                    logger.debug("Returning past pose for the goal.")
+                    goal_map[0], goal_pose = self.get_goal_map_for_category(goal_category[0], instance_memory, map_features, num_sem_categories, location)
                 else:
-                    logger.debug("Did not find goal category in the map.")
+                    logger.debug("Returning goal cells as the goal map.")
+                    goal_map[0] = category_map == 1
+            else:
+                logger.debug("Did not find goal category in the map.")
         return goal_map, found_goal_current, goal_pose
     
     def get_goal_map_for_category(self, category, instance_memory, local_map, num_sem_categories, location, mode="closest_pose"):
@@ -410,7 +382,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         #! The output goal pose is the actual index in global map
         goal_pose = [[curr_o, curr_y * 100.0 / 5 , curr_x * 100.0 / 5]]
 
-        logger.info(f">>> Goal instance {best_inst_key} best past pose is: {goal_pose}, with coverage {best_metric}. Returning goal_pose in addition to goal_map.")
+        logger.debug(f">>> Goal instance {best_inst_key} best past pose is: {goal_pose}, with coverage {best_metric}. Returning goal_pose in addition to goal_map.")
         return goal_map, goal_pose
 
     def remove_close_frontiers(
@@ -420,7 +392,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         Remove frontiers closer than 'radius' to 'location' from the frontier map.
 
         Args:
-            frontier_map (torch.Tensor): shape [1, 1, H, W] binary map of frontiers
+            frontier_map (torch.Tensor): shape [ H, W] binary map of frontiers
             location (torch.Tensor): shape [2] -> (y, x) indices in grid
             radius (float): distance threshold (in pixels)
 
@@ -428,8 +400,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
             torch.Tensor: updated frontier_map with close frontiers removed
         """
         logger.debug("Removing close frontiers from the frontier map.")
-        assert frontier_map.dim() == 4, "Frontier map must be of shape [1,1,H,W]"
-        _, _, H, W = frontier_map.shape
+        H, W = frontier_map.shape
         device = frontier_map.device
 
         y_coords = torch.arange(H, device=device).unsqueeze(1).expand(H, W)
@@ -437,17 +408,15 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
 
         dist = torch.sqrt((x_coords - location[1]) ** 2 + (y_coords - location[0]) ** 2)
         close_mask = dist <= self.close_frontier_radius
-        new_frontier_map = (
-            frontier_map.clone()
-        )
-        new_frontier_map[0, 0][close_mask] = 0
-        if not (new_frontier_map[0, 0].cpu() == 1).any().item():
+        new_frontier_map = frontier_map.clone()
+        new_frontier_map[close_mask] = 0
+        if not (new_frontier_map.cpu() == 1).any().item():
             logger.warning("No frontiers left after removing close frontiers, returning original frontier map.")
             return frontier_map
 
         return new_frontier_map
 
-    def get_frontier_map_fixed(self, map_features, timestep=None):
+    def get_frontier_map_fixed(self, local_map, local_loc, timestep=None):
         """
         Detect frontiers: free cells adjacent to unknown areas.
 
@@ -460,62 +429,58 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         """
 
         def remove_small_frontiers(frontier_tensor, min_size=10):
-            frontier_map = frontier_tensor[0, 0].cpu().numpy()
+            frontier_map = frontier_tensor.cpu().numpy()
             labeled_map, num_features = label(frontier_map)
             cleaned_map = np.zeros_like(frontier_map)
             for region_id in range(1, num_features + 1):
                 region = labeled_map == region_id
                 if np.sum(region) >= min_size:
                     cleaned_map[region] = 1
-            cleaned_map = (
-                torch.tensor(cleaned_map, dtype=frontier_tensor.dtype)
-                .unsqueeze(0)
-                .unsqueeze(0)
-                .to(frontier_tensor.device)
-            )
+            cleaned_map = torch.tensor(cleaned_map, dtype=frontier_tensor.dtype).to(frontier_tensor.device)
             return cleaned_map
 
         import torch.nn.functional as F
 
-        known_map = (map_features[:, [MC.EXPLORED_MAP], :, :] != 0).float()
-        obstacle_map = (map_features[:, [MC.OBSTACLE_MAP], :, :] != 0).float()
+        known_map = (local_map[MC.EXPLORED_MAP, :, :] != 0).float()
+        obstacle_map = (local_map[MC.OBSTACLE_MAP, :, :] != 0).float()
         assert known_map.shape[:2] == obstacle_map.shape[:2]
-        assert known_map.shape[:2] == (1, 1)
 
         device = known_map.device
         free_space = (known_map == 1) & (obstacle_map == 0)
 
         unknown = (known_map == 0).to(torch.float32)
 
-        kernel = (
-            torch.tensor(
+        kernel = torch.tensor(
                 [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=torch.float32, device=device
-            )
-            .unsqueeze(0)
-            .unsqueeze(0)
-        )
+            ).unsqueeze(0).unsqueeze(0)
 
-        unknown_neighbors = F.conv2d(unknown, kernel, padding=1)
+        unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0)
         frontier_map = (free_space & (unknown_neighbors > 0)).float()
-        frontier_map = remove_small_frontiers(frontier_map, min_size=15)
+        frontier_map2 = remove_small_frontiers(frontier_map, min_size=10)
+        frontier_map3 = self.remove_close_frontiers(
+            frontier_map2, local_loc
+        )
+        #! myTODO: Visualize after and before removing close frontiers
         self.print_maps(
             frontier_map=frontier_map,
+            frontier_map2=frontier_map2,
+            frontier_map3=frontier_map3,
             obstacle_map=obstacle_map,
             known_map=known_map,
             timestep=timestep,
             # robot_pos=(50, 50),  # optional
             # title="Map with Frontiers"
         )
-        return frontier_map
+        return frontier_map3
 
-    def get_frontier_map(self, map_features, timestep=None):
+    def get_frontier_map(self, local_map, local_loc, timestep=None):
         # Select unexplored area
         if self.exploration_strategy == "seen_frontier":
-            frontier_map = (map_features[:, [MC.EXPLORED_MAP], :, :] == 0).float()
+            frontier_map = (local_map[:, [MC.EXPLORED_MAP], :, :] == 0).float()
         elif self.exploration_strategy == "been_close_to_frontier":
-            frontier_map = (map_features[:, [MC.BEEN_CLOSE_MAP], :, :] == 0).float()
+            frontier_map = (local_map[:, [MC.BEEN_CLOSE_MAP], :, :] == 0).float()
         elif self.exploration_strategy == "fixed":
-            return self.get_frontier_map_fixed(map_features, timestep)
+            return self.get_frontier_map_fixed(local_map, local_loc, timestep)
 
         # Dilate explored area
         frontier_map = 1 - binary_dilation(
@@ -541,7 +506,7 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
         return goal_map
 
     def print_maps(
-        self, frontier_map, obstacle_map, known_map, robot_pos=None, title="Frontier Debug View", timestep=None
+        self, frontier_map, obstacle_map, known_map, robot_pos=None, title="Frontier Debug View", timestep=None, frontier_map2=None, frontier_map3=None
     ):
         """
         Visualizes the frontier map alongside obstacles and explored area.
@@ -552,16 +517,23 @@ class LanguageNavFrontierExplorationPolicy(nn.Module):
             known_map (torch.Tensor or np.ndarray): binary map of known/explored cells (1 = known)
             robot_pos (tuple or None): (x, y) position to plot (optional)
         """
-        frontier_map = frontier_map.squeeze().cpu().numpy()
-        obstacle_map = obstacle_map.squeeze().cpu().numpy()
-        known_map = known_map.squeeze().cpu().numpy()
+        #! myTODO: Can use visualize_map function from home_robot.visualization.visualize_map
+        frontier_map = frontier_map.cpu().numpy()
+        frontier_map2 = frontier_map2.cpu().numpy()
+        frontier_map3 = frontier_map3.cpu().numpy()
+        obstacle_map = obstacle_map.cpu().numpy()
+        known_map = known_map.cpu().numpy()
 
         H, W = known_map.shape
         vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
-
         vis_map[obstacle_map == 1] = [0, 0, 0]
         vis_map[known_map == 1] = [117, 117, 117]
-        vis_map[frontier_map == 1] = [255, 0, 0]
+
+        vis_map = np.concatenate([vis_map]*3, axis=1)
+
+        vis_map[:,:W,:][frontier_map == 1] = [255, 0, 0]
+        vis_map[:,W:2*W,:][frontier_map2 == 1] = [255, 0, 0]
+        vis_map[:,2*W:3*W,:][frontier_map3 == 1] = [255, 0, 0]
 
         cv2.imwrite(
             os.path.join(self.vis_dir, f"{timestep}_0.frontiers.png"),

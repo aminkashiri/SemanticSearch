@@ -31,9 +31,13 @@ import numpy as np
 from bresenham import bresenham  # pip install bresenham
 
 from home_robot.utils.logger import get_logger
+
 logger = get_logger()
 
-def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_beams=360):
+
+def compute_known_cells_map(
+    obstacle_map, robot_pos, max_range, gaze_width, num_beams=360
+):
     """
     Perform 2D raycasting to compute known vs unknown cells.
 
@@ -48,15 +52,18 @@ def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_
     """
     H, W = obstacle_map.shape
     from scipy.ndimage import binary_dilation
+
     obstacle_map = np.where(obstacle_map >= 1, 1, 0)
     structure = np.ones((3, 3), dtype=np.uint8)
     obstacle_map = binary_dilation(obstacle_map, structure=structure).astype(np.uint8)
     known_map = np.zeros_like(obstacle_map, dtype=np.uint8)  # 0 = unknown, 1 = known
 
     cx, cy = robot_pos
-    center_angle = 0 # Constant facing downard
+    center_angle = 0  # Constant facing downard
     half_fov_rad = np.radians(gaze_width / 2)
-    angles = np.linspace(center_angle - half_fov_rad, center_angle + half_fov_rad, num_beams)
+    angles = np.linspace(
+        center_angle - half_fov_rad, center_angle + half_fov_rad, num_beams
+    )
 
     for angle in angles:
         dx = np.cos(angle)
@@ -76,42 +83,32 @@ def compute_known_cells_map(obstacle_map, robot_pos, max_range, gaze_width, num_
     return known_map
 
 
-
-def get_fp_exp_pred(
-    self, all_height_proj, fp_map_pred, feat, init_grid, current_pose, XYZ_cm_std
-):
+def get_fp_exp_pred(self, fp_map_pred):
     if self.exploration_type == "raycast":
         fp_exp_pred = compute_known_cells_map(
-            fp_map_pred[0, 0].cpu().numpy(),
+            fp_map_pred.cpu().numpy(),
             (0, fp_map_pred.shape[-1] // 2),
             self.gaze_distance * 100 / self.resolution,
             self.gaze_width,
             num_beams=360,
         )
-        fp_exp_pred = torch.from_numpy(fp_exp_pred).to(dtype=fp_map_pred.dtype, device=fp_map_pred.device).unsqueeze(0).unsqueeze(0)
-        # import matplotlib
-        # matplotlib.use("TkAgg")
-        # plt.subplot(221)
-        # plt.imshow(fp_exp_pred[0, 0].cpu())
-        # plt.subplot(222)
-        # plt.imshow(fp_map_pred[0, 0].cpu())
-        # plt.show()
-
+        fp_exp_pred = torch.from_numpy(fp_exp_pred).to(
+            dtype=fp_map_pred.dtype, device=fp_map_pred.device
+        )
         return fp_exp_pred
     elif self.exploration_type == "default":
-        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_map_pred.copy()
         fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
     elif self.exploration_type == "hull":
-        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_map_pred.copy()
         fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
         fp_exp_pred = fp_exp_pred.clip(0, 1)
         # set the current agent position as 1
-        fp_exp_pred[:, :, 0, fp_exp_pred.shape[-1] // 2] = 1
+        fp_exp_pred[0, fp_exp_pred.shape[-1] // 2] = 1
 
         # fill convex hull
-        filled = fill_convex_hull(fp_exp_pred[0, 0].cpu())
-        assert fp_exp_pred.shape[:2] == (1, 1)
-        fp_exp_pred[0, 0] = torch.tensor(filled)
+        filled = fill_convex_hull(fp_exp_pred.cpu())
+        fp_exp_pred = torch.tensor(filled)
 
     # uses a fixed cone infront of the camerea
     elif self.exploration_type == "gaze":
@@ -122,10 +119,10 @@ def get_fp_exp_pred(
         view_image = draw_circle_segment(
             view_image, (0, fp_exp_pred.shape[-1] // 2), dist, 0, self.gaze_width
         )
-        fp_exp_pred[..., :, :] = view_image
+        fp_exp_pred = view_image
     # uses depth point projections but limits the fov and distance using the code
     elif self.exploration_type == "gaze_projected":
-        fp_exp_pred = all_height_proj[:, 0:1, :, :]
+        fp_exp_pred = fp_map_pred.copy()
         fp_exp_pred = fp_exp_pred / self.exp_pred_threshold
         view_image = torch.zeros(fp_map_pred.shape[-2:])
         # get the desired radius in cells
@@ -182,9 +179,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         max_depth: float = 3.5,
         must_explore_close: bool = False,
         min_obs_height_cm: int = 25,
-        dilate_obstacles: bool = True,
-        dilate_iter: int = 1,
-        dilate_size: int = 3,
         target_blacklisting_radius: int = None,
         record_instance_ids: bool = False,
         evaluate_instance_tracking: bool = False,
@@ -275,10 +269,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.shift_loc = [self.vision_range * self.xy_resolution // 2, 0, np.pi / 2.0]
 
         # For cleaning up maps
-        self.dilate_obstacles = dilate_obstacles
-        self.dilate_kernel = np.ones((dilate_size, dilate_size))
-        self.dilate_size = dilate_size
-        self.dilate_iter = dilate_iter
         self.record_instance_ids = record_instance_ids
         self.padding_for_instance_overlap = padding_for_instance_overlap
         self.dilation_for_instances = dilation_for_instances
@@ -292,19 +282,17 @@ class Categorical2DSemanticMapModule(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        seq_obs: Tensor,
-        seq_pose_delta: Tensor,
-        seq_dones: Tensor,
-        seq_update_global: Tensor,
-        seq_camera_poses: Tensor,
+        obs: Tensor,
+        pose_delta: Tensor,
+        camera_poses: Tensor,
         init_local_map: Tensor,
         init_global_map: Tensor,
         init_local_pose: Tensor,
         init_global_pose: Tensor,
         init_lmb: Tensor,
         init_origins: Tensor,
-        seq_obstacle_locations: Optional[Tensor] = None,
-        seq_free_locations: Optional[Tensor] = None,
+        obstacle_locations: Optional[Tensor] = None,
+        free_locations: Optional[Tensor] = None,
         blacklist_target: bool = False,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, IntTensor, Tensor]:
         """Update maps and poses with a sequence of observations and generate map
@@ -312,125 +300,79 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         Arguments:
             seq_obs: sequence of frames containing (RGB, depth, segmentation)
-             of shape (batch_size, sequence_length, 3 + 1 + num_sem_categories,
+             of shape (3 + 1 + num_sem_categories,
              frame_height, frame_width)
             seq_pose_delta: sequence of delta in pose since last frame of shape
-             (batch_size, sequence_length, 3)
-            seq_dones: sequence of (batch_size, sequence_length) binary flags
-             that indicate episode restarts
-            seq_update_global: sequence of (batch_size, sequence_length) binary
-             flags that indicate whether to update the global map and pose
-            seq_camera_poses: sequence of (batch_size, 4, 4) extrinsic camera
-             matrices
+             (3)
+            seq_dones: binary flag that indicate episode restarts
+            seq_camera_poses: sequence of (4, 4) extrinsic camera matrices
             init_local_map: initial local map before any updates of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
+             (MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
             init_global_map: initial global map before any updates of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
+             (MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
             init_local_pose: initial local pose before any updates of shape
-             (batch_size, 3)
+             (3)
             init_global_pose: initial global pose before any updates of shape
-             (batch_size, 3)
-            init_lmb: initial local map boundaries of shape (batch_size, 4)
-            init_origins: initial local map origins of shape (batch_size, 3)
+             (3)
+            init_lmb: initial local map boundaries of shape (4)
+            init_origins: initial local map origins of shape (3)
 
         Returns:
             seq_map_features: sequence of semantic map features of shape
-             (batch_size, sequence_length, 2 * MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
+             (2 * MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
             final_local_map: final local map after all updates of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
+             (MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
             final_global_map: final global map after all updates of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
+             (MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
             seq_local_pose: sequence of local poses of shape
-             (batch_size, sequence_length, 3)
+             (3)
             seq_global_pose: sequence of global poses of shape
-             (batch_size, sequence_length, 3)
+             (3)
             seq_lmb: sequence of local map boundaries of shape
-             (batch_size, sequence_length, 4)
+             (4)
             seq_origins: sequence of local map origins of shape
-             (batch_size, sequence_length, 3)
+             (3)
         """
-        logger.info(f"Updating maps and current position")
-        batch_size, sequence_length = seq_obs.shape[:2]
-        device, dtype = seq_obs.device, seq_obs.dtype
+        logger.debug(f"Updating maps and current position")
 
-        map_features_channels = 2 * MC.NON_SEM_CHANNELS + self.num_sem_categories
-        if self.record_instance_ids:
-            map_features_channels += self.num_sem_categories
-        if self.evaluate_instance_tracking:
-            map_features_channels += self.max_instances + 1
-        seq_map_features = torch.zeros(
-            batch_size,
-            sequence_length,
-            map_features_channels,
-            self.local_map_size,
-            self.local_map_size,
-            device=device,
-            dtype=dtype,
-        )
-        seq_local_pose = torch.zeros(batch_size, sequence_length, 3, device=device)
-        seq_global_pose = torch.zeros(batch_size, sequence_length, 3, device=device)
-        seq_lmb = torch.zeros(
-            batch_size, sequence_length, 4, device=device, dtype=torch.int32
-        )
-        seq_origins = torch.zeros(batch_size, sequence_length, 3, device=device)
-
-        local_map, local_pose = init_local_map.clone(), init_local_pose.clone()
         global_map, global_pose = init_global_map.clone(), init_global_pose.clone()
         lmb, origins = init_lmb.clone(), init_origins.clone()
-        for t in range(sequence_length):
-            # Reset map and pose for episodes done at time step t
-            for e in range(batch_size):
-                if seq_dones[e, t]:
-                    mu.init_map_and_pose_for_env(
-                        e,
-                        local_map,
-                        global_map,
-                        local_pose,
-                        global_pose,
-                        lmb,
-                        origins,
-                        self.map_size_parameters,
-                    )
+        local_map, local_pose = self._update_local_map_and_pose(
+            obs,
+            pose_delta,
+            init_local_map.clone(),
+            init_local_pose.clone(),
+            camera_poses,
+            origins,
+            lmb,
+            obstacle_locations,
+            free_locations,
+            blacklist_target,
+        )
+        # updates in place
+        self._update_global_map_and_pose(
+            local_map, global_map, local_pose, global_pose, lmb, origins
+        )
+        local_map, local_pose, lmb, origins = mu.get_local_parameters_from_global_pose(
+            global_map,
+            global_pose,
+            self.map_size_parameters,
+        )
 
-            local_map, local_pose = self._update_local_map_and_pose(
-                seq_obs[:, t],
-                seq_pose_delta[:, t],
-                local_map,
-                local_pose,
-                seq_camera_poses,
-                origins,
-                lmb,
-                (
-                    seq_obstacle_locations[:, t]
-                    if seq_obstacle_locations is not None
-                    else None
-                ),
-                seq_free_locations[:, t] if seq_free_locations is not None else None,
-                blacklist_target,
-            )
-            for e in range(batch_size):
-                if seq_update_global[e, t]:
-                    self._update_global_map_and_pose_for_env(
-                        e, local_map, global_map, local_pose, global_pose, lmb, origins
-                    )
+        #! myTODO: It doesn't look like this is used anywhere, so I'm commenting it out.
+        # map_features = self._get_map_features(local_map, global_map)
 
-            seq_local_pose[:, t] = local_pose
-            seq_global_pose[:, t] = global_pose
-            seq_lmb[:, t] = lmb
-            seq_origins[:, t] = origins
-            seq_map_features[:, t] = self._get_map_features(local_map, global_map)
-
-            logger.info(f"Updated global pose is: {seq_global_pose[0, 0]}")
-            logger.info(f"Updated local pose is: {seq_local_pose[0, 0]}")
-            logger.info(f"Updated local map boundaries are: {seq_lmb[0,0]}")
+        logger.debug(f"Updated global pose is: {global_pose}")
+        logger.debug(f"Updated local pose is: {local_pose}")
+        logger.debug(f"Updated local map boundaries are: {lmb}")
         return (
-            seq_map_features,
+            # map_features,
             local_map,
             global_map,
-            seq_local_pose,
-            seq_global_pose,
-            seq_lmb,
-            seq_origins,
+            local_pose,
+            global_pose,
+            lmb,
+            origins,
         )
 
     def _aggregate_instance_map_channels_per_category(
@@ -441,7 +383,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # first extract instance channels
         top_down_instance_one_hot = curr_map[
-            :,
             (MC.NON_SEM_CHANNELS + self.num_sem_categories) : (
                 MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels
             ),
@@ -450,70 +391,67 @@ class Categorical2DSemanticMapModule(nn.Module):
         ]
         # now we convert the top down instance map to get a map for storing instances per channel
         top_down_instances_per_category = torch.zeros(
-            curr_map.shape[0],
             self.num_sem_categories,
+            curr_map.shape[1],
             curr_map.shape[2],
-            curr_map.shape[3],
             device=curr_map.device,
             dtype=curr_map.dtype,
         )
 
         if num_instance_channels > 0:
-            # loop over envs
-            # TODO Can we vectorize this across envs? (Only needed if we use multiple envs)
-            for i in range(top_down_instance_one_hot.shape[0]):
-                # create category id to instance id list mapping
-                category_id_to_instance_id_list = defaultdict(list)
-                # retrieve unprocessed instances
-                unprocessed_instances = (
-                    self.instance_memory.get_unprocessed_instances_per_env(i)
+            # create category id to instance id list mapping
+            category_id_to_instance_id_list = defaultdict(list)
+            # retrieve unprocessed instances
+            unprocessed_instances = self.instance_memory.unprocessed_views
+            # loop over unprocessed instances
+            for instance_id, instance in unprocessed_instances.items():
+                category_id_to_instance_id_list[instance.category_id].append(
+                    instance_id
                 )
-                # loop over unprocessed instances
-                for instance_id, instance in unprocessed_instances.items():
-                    category_id_to_instance_id_list[instance.category_id].append(
-                        instance_id
-                    )
 
-                # loop over categories
-                # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
-                for category_id in category_id_to_instance_id_list.keys():
-                    if len(category_id_to_instance_id_list[category_id]) == 0:
-                        continue
-                    # get the instance ids for this category
-                    instance_ids = category_id_to_instance_id_list[category_id]
-                    # create a tensor by slicing top_down_instance_one_hot using the instance ids
-                    instance_one_hot = top_down_instance_one_hot[i, instance_ids]
-                    # add a channel with all values equal to 1e-5 as the first channel
-                    instance_one_hot = torch.cat(
-                        (
-                            1e-5 * torch.ones_like(instance_one_hot[:1]),
-                            instance_one_hot,
-                        ),
-                        dim=0,
-                    )
-                    # get the instance id map using argmax
-                    instance_id_map = instance_one_hot.argmax(dim=0)
-                    # add a zero to start of instance ids
-                    instance_id = [0] + instance_ids
-                    # update the ids using the list of instance ids
-                    instance_id_map = torch.tensor(
-                        instance_id, device=instance_id_map.device
-                    )[instance_id_map]
-                    # update the per category instance map
-                    top_down_instances_per_category[i, category_id] = instance_id_map
+            # loop over categories
+            # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
+            for category_id in category_id_to_instance_id_list.keys():
+                if len(category_id_to_instance_id_list[category_id]) == 0:
+                    continue
+                # get the instance ids for this category
+                instance_ids = category_id_to_instance_id_list[category_id]
+                # create a tensor by slicing top_down_instance_one_hot using the instance ids
+                instance_one_hot = top_down_instance_one_hot[instance_ids]
+                # add a channel with all values equal to 1e-5 as the first channel
+                instance_one_hot = torch.cat(
+                    (
+                        1e-5 * torch.ones_like(instance_one_hot[:1]),
+                        instance_one_hot,
+                    ),
+                    dim=0,
+                )
+                # get the instance id map using argmax
+                instance_id_map = instance_one_hot.argmax(dim=0)
+                # add a zero to start of instance ids
+                instance_id = [0] + instance_ids
+                # update the ids using the list of instance ids
+                instance_id_map = torch.tensor(
+                    instance_id, device=instance_id_map.device
+                )[instance_id_map]
+                # update the per category instance map
+                top_down_instances_per_category[category_id] = instance_id_map
+
+        assert not curr_map[
+            MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels :,
+        ].any()
 
         curr_map = torch.cat(
             (
-                curr_map[:, : MC.NON_SEM_CHANNELS + self.num_sem_categories],
+                curr_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories],
                 top_down_instances_per_category,
                 curr_map[
-                    :,
                     MC.NON_SEM_CHANNELS
                     + self.num_sem_categories
                     + num_instance_channels :,
                 ],
             ),
-            dim=1,
+            dim=0,
         )
 
         return curr_map
@@ -565,7 +503,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         obstacle_locations: Optional[Tensor] = None,
         free_locations: Optional[Tensor] = None,
         blacklist_target: bool = False,
-        debug: bool = False,
     ) -> Tuple[Tensor, Tensor]:
         """Update local map and sensor pose given a new observation using parameter-free
         differentiable projective geometry.
@@ -584,39 +521,36 @@ class Categorical2DSemanticMapModule(nn.Module):
              and location of shape (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
             current_pose: current pose updated with pose delta of shape (batch_size, 3)
         """
-        batch_size, obs_channels, h, w = obs.size()
+        obs_channels, h, w = obs.size()
         device, dtype = obs.device, obs.dtype
         if camera_pose is not None:
             # TODO: make consistent between sim and real
             # hab_angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="YZX")
             # angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="ZYX")
-            angles = torch.Tensor(
-                [tra.euler_from_matrix(p[:3, :3].cpu(), "rzyx") for p in camera_pose]
-            )
+            # angles = torch.Tensor(
+            #     [tra.euler_from_matrix(p[:3, :3].cpu(), "rzyx") for p in camera_pose]
+            # )
+            angles = torch.Tensor(tra.euler_from_matrix(camera_pose[:3, :3], "rzyx"))
 
             # For habitat - pull x angle
             # tilt = angles[:, -1]
             # For real robot
-            tilt = angles[:, 1]
+            tilt = angles[1]
             # angles gives roll, pitch, yaw
-            yaw = angles[:, -1]
+            yaw = angles[-1]
 
             # Get the agent pose
             # hab_agent_height = camera_pose[:, 1, 3] * 100
-            agent_pos = camera_pose[:, :3, 3] * 100
-            agent_height = agent_pos[:, 2]
+            agent_pos = camera_pose[:3, 3] * 100
+            agent_height = agent_pos[2]
 
-            if debug:
-                print("tilt", tilt)
-                print("agent_height", agent_height)
-                print()
         else:
             yaw = 0
-            tilt = torch.zeros(batch_size)
+            tilt = torch.zeros(0)
             agent_height = self.agent_height
 
         yaw = torch.tensor(yaw)
-        depth = obs[:, 3, :, :].float()
+        depth = obs[3, :, :].float()
         depth[depth > self.max_depth] = 0
 
         point_cloud_t = du.get_point_cloud_from_z_t(
@@ -624,11 +558,18 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         if self.debug_mode:
+            # import matplotlib
+            # matplotlib.use("TkAgg")
+            # import matplotlib.pyplot as plt
+            # i = np.random.random((100,100,3))
+            # plt.imshow(i)
+            # plt.show()
             from home_robot.utils.point_cloud import show_point_cloud
 
-            rgb = obs[:, :3, :: self.du_scale, :: self.du_scale].permute(0, 2, 3, 1)
-            xyz = point_cloud_t[0].reshape(-1, 3)
-            rgb = rgb[0].reshape(-1, 3)
+            rgb = obs[:3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
+            print("Point cloud shape: ", point_cloud_t.shape)
+            xyz = point_cloud_t.reshape(-1, 3)
+            rgb = rgb.reshape(-1, 3)
             print("-> Showing point cloud in camera coords")
             show_point_cloud(
                 (xyz / 100.0).cpu().numpy(),
@@ -647,7 +588,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             print("agent angles =", angles)
             print("agent tilt   =", tilt)
             print("agent height =", agent_height, "preset =", self.agent_height)
-            xyz = point_cloud_base_coords[0].reshape(-1, 3)
+            xyz = point_cloud_base_coords.reshape(-1, 3)
             print("-> Showing point cloud in base coords")
             show_point_cloud(
                 (xyz / 100.0).cpu().numpy(),
@@ -660,7 +601,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         if self.debug_mode:
-            xyz = point_cloud_base_coords[0].reshape(-1, 3)
+            xyz = point_cloud_base_coords.reshape(-1, 3)
             print("-> Showing point cloud in map coords")
             show_point_cloud(
                 (xyz / 100.0).cpu().numpy(),
@@ -679,7 +620,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             voxel_channels += self.max_instances + 1
 
         init_grid = torch.zeros(
-            batch_size,
             voxel_channels,
             self.vision_range,
             self.vision_range,
@@ -688,20 +628,18 @@ class Categorical2DSemanticMapModule(nn.Module):
             dtype=torch.float32,
         )
         feat = torch.ones(
-            batch_size,
             voxel_channels,
             self.screen_h // self.du_scale * self.screen_w // self.du_scale,
             device=device,
             dtype=torch.float32,
         )
 
-        semantic_channels = obs[:, 4 : 4 + self.num_sem_categories, :, :]
+        semantic_channels = obs[4 : 4 + self.num_sem_categories, :, :]
 
-        current_pose = pu.get_new_pose_batch(prev_pose.clone(), pose_delta)
+        current_pose = pu.get_new_pose(prev_pose.clone(), pose_delta)
 
         if self.record_instance_ids:
             instance_channels = obs[
-                :,
                 4
                 + self.num_sem_categories : 4
                 + self.num_sem_categories
@@ -713,15 +651,15 @@ class Categorical2DSemanticMapModule(nn.Module):
                 self.instance_memory.process_instances(
                     semantic_channels,
                     instance_channels,
-                    point_cloud_t,
-                    torch.concat([current_pose + origins, lmb], axis=1)
+                    point_cloud_t.squeeze(0),
+                    torch.concat([current_pose + origins, lmb], axis=0)
                     .cpu()
                     .float(),  # store the global pose
-                    image=obs[:, :3, :, :],
+                    image=obs[:3, :, :],
                 )
 
-        feat[:, 1:, :] = nn.AvgPool2d(self.du_scale)(obs[:, 4:, :, :]).view(
-            batch_size, obs_channels - 4, h // self.du_scale * w // self.du_scale
+        feat[1:, :] = nn.AvgPool2d(self.du_scale)(obs[4:, :, :]).view(
+            obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
 
         XYZ_cm_std = point_cloud_map_coords.float()
@@ -745,14 +683,16 @@ class Categorical2DSemanticMapModule(nn.Module):
             XYZ_cm_std.shape[2] * XYZ_cm_std.shape[3],
         )
 
-        voxels = du.splat_feat_nd(init_grid, feat, XYZ_cm_std).transpose(2, 3)
+        voxels = du.splat_feat_nd(init_grid, feat, XYZ_cm_std).transpose(1, 2)
 
         agent_height_proj = voxels[
             ..., self.min_mapped_height : self.max_mapped_height
-        ].sum(4)
-        all_height_proj = voxels.sum(4)
+        ].sum(3)
+        all_height_proj = voxels.sum(3)
+        #* Shape is: [voxech_channels, height, width]
 
-        fp_map_pred = agent_height_proj[:, 0:1, :, :]
+
+        fp_map_pred = agent_height_proj[0, :, :]
 
         # +rows is away from the camera, with the camra origin at row 0
         # +cols is to the right of the image frame, the camera origin is at num_cols/2
@@ -761,15 +701,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         # self.local_map_size_cm
         # plt.imshow(fp_exp_pred[0,0].cpu())
         # plt.pause(0.01)
-        fp_exp_pred = get_fp_exp_pred(
-            self,
-            all_height_proj,
-            fp_map_pred,
-            feat,
-            init_grid,
-            current_pose,
-            XYZ_cm_std,
-        )
+        fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
@@ -779,7 +711,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             num_channels += self.max_instances + 1
 
         agent_view = torch.zeros(
-            batch_size,
             num_channels,
             self.local_map_size_cm // self.xy_resolution,
             self.local_map_size_cm // self.xy_resolution,
@@ -787,59 +718,41 @@ class Categorical2DSemanticMapModule(nn.Module):
             dtype=dtype,
         )
 
-        # Update agent view from the fp_map_pred
-        if self.dilate_obstacles:
-            for i in range(fp_map_pred.shape[0]):
-                env_map = fp_map_pred[i, 0].cpu().numpy()
-                # TODO: remove if not used
-                # env_map_eroded = cv2.erode(
-                #     env_map, self.dilate_kernel, self.dilate_iter
-                # )
-                # filt = cv2.filter2D(env_map, -1, self.dilate_kernel)
-                median_filtered = cv2.medianBlur(env_map, self.dilate_size)
-
-                # TODO: remove debug code
-                # plt.subplot(121); plt.imshow(env_map)
-                # plt.subplot(122); plt.imshow(env_map_eroded)
-                # plt.show()
-                # breakpoint()
-                # fp_map_pred[i, 0] = torch.tensor(env_map_eroded)
-                fp_map_pred[i, 0] = torch.tensor(median_filtered)
-
         x1 = self.local_map_size_cm // (self.xy_resolution * 2) - self.vision_range // 2
         x2 = x1 + self.vision_range
         y1 = self.local_map_size_cm // (self.xy_resolution * 2)
         y2 = y1 + self.vision_range
-        agent_view[:, MC.OBSTACLE_MAP : MC.OBSTACLE_MAP + 1, y1:y2, x1:x2] = fp_map_pred
-        agent_view[:, MC.EXPLORED_MAP : MC.EXPLORED_MAP + 1, y1:y2, x1:x2] = fp_exp_pred
+        agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
+        agent_view[MC.EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
 
-        agent_view[:, MC.NON_SEM_CHANNELS :, y1:y2, x1:x2] = (
-            all_height_proj[:, 1:] / self.cat_pred_threshold
+        agent_view[MC.NON_SEM_CHANNELS :, y1:y2, x1:x2] = (
+            all_height_proj[1:] / self.cat_pred_threshold
         )
 
         st_pose = current_pose.clone().detach()
-        st_pose[:, :2] = -(
+        st_pose[:2] = -(
             (
-                st_pose[:, :2] * 100.0 / self.xy_resolution
+                st_pose[:2] * 100.0 / self.xy_resolution
                 - self.local_map_size_cm // (self.xy_resolution * 2)
             )
             / (self.local_map_size_cm // (self.xy_resolution * 2))
         )
-        st_pose[:, 2] = 90.0 - (st_pose[:, 2])
+        st_pose[2] = 90.0 - (st_pose[2])
 
         # st_pose is current pose, last term in degrees
         # account for camera yaw here by rotating the new map based on camera yaw
         st_pose_adjusted = st_pose.clone()
         # yaw has to be inverted here, below rotates the map clockwise
-        st_pose_adjusted[:, 2] -= yaw.to(st_pose_adjusted.device) * 180 / np.pi
+        st_pose_adjusted[2] -= yaw.to(st_pose_adjusted.device) * 180 / np.pi
 
         rot_mat, trans_mat = ru.get_grid(st_pose_adjusted, agent_view.size(), dtype)
-        rotated = F.grid_sample(agent_view, rot_mat, align_corners=True)
+        rotated = F.grid_sample(agent_view.unsqueeze(0), rot_mat, align_corners=True)
         translated = F.grid_sample(rotated, trans_mat, align_corners=True)
         # plt.imshow(rotated[0, 0].cpu())
 
         # Clamp to [0, 1] after transform agent view to map coordinates
         translated = torch.clamp(translated, min=0.0, max=1.0).float()
+        translated = translated.squeeze(0)
 
         # update instance channels
         if self.record_instance_ids:
@@ -857,12 +770,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         # Update obstacles in current map
         # TODO Implement this properly for num_environments > 1
         if obstacle_locations is not None:
-            translated[
-                0, 0, obstacle_locations[0, :, 0], obstacle_locations[0, :, 1]
-            ] = 1
+            translated[obstacle_locations[:, 0], obstacle_locations[:, 1]] = 1
         if free_locations is not None:
-            translated[0, 0, free_locations[0, :, 0], free_locations[0, :, 1]] = 0
-            prev_map[0, 0, free_locations[0, :, 0], free_locations[0, :, 1]] = 0
+            translated[free_locations[:, 0], free_locations[:, 1]] = 0
+            prev_map[free_locations[:, 0], free_locations[:, 1]] = 0
 
         # Aggregate by taking the max of the previous map and current map — this is robust
         # to false negatives in one frame but makes it impossible to remove false positives
@@ -890,81 +801,71 @@ class Categorical2DSemanticMapModule(nn.Module):
         if self.record_instance_ids:
             # overwrite channels containing instance IDs
             current_map[
-                :,
                 MC.NON_SEM_CHANNELS
                 + self.num_sem_categories : MC.NON_SEM_CHANNELS
                 + 2 * self.num_sem_categories,
             ] = translated[
-                :,
                 MC.NON_SEM_CHANNELS
                 + self.num_sem_categories : MC.NON_SEM_CHANNELS
                 + 2 * self.num_sem_categories,
             ]
 
         # Reset current location
-        current_map[:, MC.CURRENT_LOCATION, :, :].fill_(0.0)
-        curr_loc = current_pose[:, :2]
+        current_map[MC.CURRENT_LOCATION, :, :].fill_(0.0)
+        curr_loc = current_pose[:2]
         curr_loc = (curr_loc * 100.0 / self.xy_resolution).int()
 
-        for e in range(batch_size):
-            x, y = curr_loc[e]
+        x, y = curr_loc
+        current_map[
+            MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2,
+            y - 2 : y + 3,
+            x - 2 : x + 3,
+        ].fill_(1.0)
+        # if self.old_x and self.old_y:
+        #     # Draw a line from the previous location to the current location
+        #     self.draw_line(current_map[e, MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2], x, y, self.old_x, self.old_y)
+
+        # self.old_x = x
+        # self.old_y = y
+
+        # Set a disk around the agent to explored
+        # This is around the current agent - we just sort of assume we know where we are
+        if self.exploration_type != "raycast":
+            radius = self.explored_radius
+        else:
+            radius = 0
+        explored_disk = torch.from_numpy(skimage.morphology.disk(radius))
+        current_map[
+            MC.EXPLORED_MAP,
+            y - radius : y + radius + 1,
+            x - radius : x + radius + 1,
+        ][explored_disk == 1] = 1
+
+        # Record the region the agent has been close to using a disc centered at the agent
+        radius = self.been_close_to_radius // self.resolution
+        been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
+
+        current_map[
+            MC.BEEN_CLOSE_MAP,
+            y - radius : y + radius + 1,
+            x - radius : x + radius + 1,
+        ][been_close_disk == 1] = 1
+
+        if blacklist_target:
+            # Record the region the agent has been close to using a disc centered at the agent
+            radius = self.target_blacklisting_radius // self.resolution
+            been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
+
             current_map[
-                e,
-                MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2,
-                y - 2 : y + 3,
-                x - 2 : x + 3,
-            ].fill_(1.0)
-            # if self.old_x and self.old_y:
-            #     # Draw a line from the previous location to the current location
-            #     self.draw_line(current_map[e, MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2], x, y, self.old_x, self.old_y)
+                MC.BLACKLISTED_TARGETS_MAP,
+                y - radius : y + radius + 1,
+                x - radius : x + radius + 1,
+            ][been_close_disk == 1] = 1
 
-            # self.old_x = x
-            # self.old_y = y
-
-            # Set a disk around the agent to explored
-            # This is around the current agent - we just sort of assume we know where we are
-            try:
-                if self.exploration_type != "raycast":
-                    radius = self.explored_radius
-                else:
-                    radius = 0
-                explored_disk = torch.from_numpy(skimage.morphology.disk(radius))
-                current_map[
-                    e,
-                    MC.EXPLORED_MAP,
-                    y - radius : y + radius + 1,
-                    x - radius : x + radius + 1,
-                ][explored_disk == 1] = 1
-
-                # Record the region the agent has been close to using a disc centered at the agent
-                radius = self.been_close_to_radius // self.resolution
-                been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
-
-                current_map[
-                    e,
-                    MC.BEEN_CLOSE_MAP,
-                    y - radius : y + radius + 1,
-                    x - radius : x + radius + 1,
-                ][been_close_disk == 1] = 1
-
-                if blacklist_target:
-                    # Record the region the agent has been close to using a disc centered at the agent
-                    radius = self.target_blacklisting_radius // self.resolution
-                    been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
-
-                    current_map[
-                        e,
-                        MC.BLACKLISTED_TARGETS_MAP,
-                        y - radius : y + radius + 1,
-                        x - radius : x + radius + 1,
-                    ][been_close_disk == 1] = 1
-
-            except IndexError:
-
-                pass
         # debug_maps = True
         if debug_maps:
             import matplotlib
+
             matplotlib.use("TkAgg")
             current_map = current_map.cpu()
             explored = current_map[0, MC.EXPLORED_MAP].numpy()
@@ -1001,10 +902,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             # print("rgs.shape", rgb.shape)
             plt.imshow(rgb.cpu().numpy().astype(np.uint8))
             plt.subplot(338)
-            plt.imshow(depth[0].cpu().numpy())
+            plt.imshow(depth.cpu().numpy())
             plt.axis("off")
             plt.subplot(339)
-            seg = np.zeros_like(depth[0].cpu().numpy())
+            seg = np.zeros_like(depth.cpu().numpy())
             for i in range(4, obs_channels):
                 seg += (i - 4) * obs[0, i].cpu().numpy()
             #     print("class =", i, np.sum(obs[0, i].cpu().numpy()), "pts")
@@ -1012,19 +913,17 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.axis("off")
             plt.show()
 
-
         if self.must_explore_close:
-            current_map[:, MC.EXPLORED_MAP] = (
-                current_map[:, MC.EXPLORED_MAP] * current_map[:, MC.BEEN_CLOSE_MAP]
+            current_map[MC.EXPLORED_MAP] = (
+                current_map[MC.EXPLORED_MAP] * current_map[MC.BEEN_CLOSE_MAP]
             )
             current_map[:, MC.OBSTACLE_MAP] = (
-                current_map[:, MC.OBSTACLE_MAP] * current_map[:, MC.BEEN_CLOSE_MAP]
+                current_map[MC.OBSTACLE_MAP] * current_map[MC.BEEN_CLOSE_MAP]
             )
         return current_map, current_pose
 
     def _update_global_map_instances_for_one_channel(
         self,
-        env_id: int,
         global_instances: Tensor,
         local_map: Tensor,
         x_range: tuple,
@@ -1094,7 +993,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         global_instances_within_local = global_instances[x_start:x_end, y_start:y_end]
 
         instance_mapping = self._get_local_to_global_instance_mapping(
-            env_id,
             extended_dilated_local_map,
             global_instances_within_local,
             max_instance_id,
@@ -1117,7 +1015,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
     def _get_local_to_global_instance_mapping(
         self,
-        env_id: int,
         extended_local_labels: Tensor,
         global_instances_within_local: Tensor,
         max_instance_id: int,
@@ -1161,13 +1058,13 @@ class Categorical2DSemanticMapModule(nn.Module):
                 max_instance_id += 1
             # update the id in instance memory
             self.instance_memory.update_instance_id(
-                env_id, int(local_instance_id.item()), global_instance_id
+                int(local_instance_id.item()), global_instance_id
             )
         instance_mapping[0.0] = 0
         return instance_mapping
 
     def _update_global_map_instances(
-        self, e: int, global_map: Tensor, local_map: Tensor, lmb: Tensor
+        self, global_map: Tensor, local_map: Tensor, lmb: Tensor
     ) -> Tensor:
         """
         Update instance channels in the global map from instance channels in the local map:
@@ -1180,20 +1077,17 @@ class Categorical2DSemanticMapModule(nn.Module):
             lmb (Tensor): The tensor containing the ranges of indices for the local map in the global map.
 
         Returns:
-            Tensor: The updated global map tensor.
+            Used to return global map, but if we are updating it in place, we don't need to return anything.
         """
         # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
         for i in range(self.num_sem_categories):
             if (
-                torch.sum(
-                    local_map[e, MC.NON_SEM_CHANNELS + i + self.num_sem_categories]
-                )
+                torch.sum(local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories])
                 > 0
             ):
                 max_instance_id = (
                     torch.max(
                         global_map[
-                            e,
                             MC.NON_SEM_CHANNELS
                             + self.num_sem_categories : MC.NON_SEM_CHANNELS
                             + 2 * self.num_sem_categories,
@@ -1204,22 +1098,18 @@ class Categorical2DSemanticMapModule(nn.Module):
                 )
                 # if the local map has any object instances, update the global map with instance ids
                 instances = self._update_global_map_instances_for_one_channel(
-                    e,
-                    global_map[e, MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
-                    local_map[e, MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
-                    (lmb[e, 0], lmb[e, 1]),
-                    (lmb[e, 2], lmb[e, 3]),
+                    global_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
+                    local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
+                    (lmb[0], lmb[1]),
+                    (lmb[2], lmb[3]),
                     max_instance_id,
                 )
-                global_map[e, i + MC.NON_SEM_CHANNELS + self.num_sem_categories] = (
+                global_map[i + MC.NON_SEM_CHANNELS + self.num_sem_categories] = (
                     instances
                 )
 
-        return global_map
-
-    def _update_global_map_and_pose_for_env(
+    def _update_global_map_and_pose(
         self,
-        e: int,
         local_map: Tensor,
         global_map: Tensor,
         local_pose: Tensor,
@@ -1232,36 +1122,20 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
 
         if self.record_instance_ids:
-            global_map = self._update_global_map_instances(
-                e, global_map, local_map, lmb
-            )
+            self._update_global_map_instances(global_map, local_map, lmb)
             global_map[
-                e,
                 : MC.NON_SEM_CHANNELS + self.num_sem_categories,
-                lmb[e, 0] : lmb[e, 1],
-                lmb[e, 2] : lmb[e, 3],
-            ] = local_map[e, : MC.NON_SEM_CHANNELS + self.num_sem_categories]
+                lmb[0] : lmb[1],
+                lmb[2] : lmb[3],
+            ] = local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
             global_map[
-                e,
                 MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :,
-                lmb[e, 0] : lmb[e, 1],
-                lmb[e, 2] : lmb[e, 3],
-            ] = local_map[e, MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :]
+                lmb[0] : lmb[1],
+                lmb[2] : lmb[3],
+            ] = local_map[MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :]
         else:
-            global_map[e, :, lmb[e, 0] : lmb[e, 1], lmb[e, 2] : lmb[e, 3]] = local_map[
-                e
-            ]
-        global_pose[e] = local_pose[e] + origins[e]
-        mu.recenter_local_map_and_pose_for_env(
-            e,
-            local_map,
-            global_map,
-            local_pose,
-            global_pose,
-            lmb,
-            origins,
-            self.map_size_parameters,
-        )
+            global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
+        global_pose[:] = local_pose + origins
 
     def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
         """Get global and local map features.
@@ -1284,7 +1158,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             map_features_channels += self.max_instances + 1
 
         map_features = torch.zeros(
-            local_map.size(0),
             map_features_channels,
             self.local_map_size,
             self.local_map_size,
@@ -1293,18 +1166,18 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         # Local obstacles, explored area, and current and past position
-        map_features[:, 0 : MC.NON_SEM_CHANNELS, :, :] = local_map[
-            :, 0 : MC.NON_SEM_CHANNELS, :, :
+        map_features[0 : MC.NON_SEM_CHANNELS, :, :] = local_map[
+            0 : MC.NON_SEM_CHANNELS, :, :
         ]
         # Global obstacles, explored area, and current and past position
-        map_features[:, MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :] = (
+        map_features[MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :] = (
             nn.MaxPool2d(self.global_downscaling)(
-                global_map[:, 0 : MC.NON_SEM_CHANNELS, :, :]
+                global_map[0 : MC.NON_SEM_CHANNELS, :, :]
             )
         )
         # Local semantic categories
-        map_features[:, 2 * MC.NON_SEM_CHANNELS :, :, :] = local_map[
-            :, MC.NON_SEM_CHANNELS :, :, :
+        map_features[2 * MC.NON_SEM_CHANNELS :, :, :] = local_map[
+            MC.NON_SEM_CHANNELS :, :, :
         ]
 
         if debug_maps:

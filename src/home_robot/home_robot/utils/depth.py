@@ -44,6 +44,8 @@ def get_point_cloud_from_z_t(Y_t, camera_matrix, device, scale=1):
         Z is positive up in the image
         XYZ is ...xHxWx3
     """
+    Y_t = Y_t.unsqueeze(0)
+
     grid_x, grid_z = torch.meshgrid(
         torch.arange(Y_t.shape[-1], device=device),
         torch.arange(Y_t.shape[-2] - 1, -1, -1, device=device),
@@ -116,6 +118,13 @@ def splat_feat_nd(init_grid, feat, coords):
     Returns:
         grid: B X nF X W X H X D X ..
     """
+
+    #! myTODO: This is a hack, and later I can simplify this.
+    # Add batch dimension
+    init_grid = init_grid.unsqueeze(0)  # 1 x nF x W x H x D x ..
+    feat = feat.unsqueeze(0)           # 1 x nF x nPt
+    # coords = coords.unsqueeze(0)       # 1 x nDims x nPt
+
     wts_dim = []
     pos_dim = []
     grid_dims = init_grid.shape[2:]
@@ -163,4 +172,4 @@ def splat_feat_nd(init_grid, feat, coords):
 
     grid_flat = torch.round(grid_flat)
 
-    return grid_flat.view(init_grid.shape)
+    return grid_flat.view(init_grid.shape).squeeze(0)

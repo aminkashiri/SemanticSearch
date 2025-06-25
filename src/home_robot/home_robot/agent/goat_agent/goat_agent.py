@@ -31,10 +31,18 @@ from .goat_agent_module import GoatAgentModule
 from .goat_matching import GoatMatching
 
 from home_robot.utils.logger import get_logger
+import psutil
+
 logger = get_logger()
 
-# For visualizing exploration issues
-debug_frontier_map = False
+from home_robot.navigation_policy.language_navigation.languagenav_frontier_exploration_policy import (
+    LanguageNavFrontierExplorationPolicy,
+)
+from home_robot.navigation_planner.fixed_discrete_planner import (
+    DiscretePlanner,
+)
+
+from home_robot.utils.visualization import visualize_map
 
 
 class GoatAgent(Agent):
@@ -53,12 +61,6 @@ class GoatAgent(Agent):
         self.store_all_categories_in_map = getattr(
             config.AGENT, "store_all_categories", False
         )
-        if config.AGENT.panorama_start:
-            self.panorama_start_steps = int(360 / config.ENVIRONMENT.turn_angle)
-        else:
-            self.panorama_start_steps = 0
-
-        self.panorama_rotate_steps = int(360 / config.ENVIRONMENT.turn_angle)
 
         self.goal_matching_vis_dir = f"{config.DUMP_LOCATION}/goal_grounding_vis"
         Path(self.goal_matching_vis_dir).mkdir(parents=True, exist_ok=True)
@@ -70,12 +72,11 @@ class GoatAgent(Agent):
 
         if self.record_instance_ids:
             self.instance_memory = InstanceMemory(
-                self.num_environments,
                 config.AGENT.SEMANTIC_MAP.du_scale,
                 # debug_visualize=config.PRINT_IMAGES,
                 config=config,
                 mask_cropped_instances=False,
-                padding_cropped_instances=200
+                padding_cropped_instances=200,
             )
 
         ## imagenav stuff
@@ -96,10 +97,7 @@ class GoatAgent(Agent):
             instance_memory=self.instance_memory,
         )
 
-        if self.goal_policy_config.batching:
-            self.image_matching_function = self.matching.match_image_batch_to_image
-        else:
-            self.image_matching_function = self.matching.match_image_to_image
+        self.image_matching_function = self.matching.match_image_to_image
 
         self._module = GoatAgentModule(
             config, matching=self.matching, instance_memory=self.instance_memory
@@ -116,10 +114,8 @@ class GoatAgent(Agent):
             self.module = DataParallel(self._module, device_ids=[self.device_id])
 
         self.visualize = config.VISUALIZE or config.PRINT_IMAGES
-        self.use_dilation_for_stg = config.AGENT.PLANNER.use_dilation_for_stg
         self.semantic_map = Categorical2DSemanticMapState(
             device=self.device,
-            num_environments=self.num_environments,
             num_sem_categories=config.AGENT.SEMANTIC_MAP.num_sem_categories,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
@@ -139,32 +135,17 @@ class GoatAgent(Agent):
         )
         self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
 
-        if (
-            "planner_type" in config.AGENT.PLANNER
-            and config.AGENT.PLANNER.planner_type == "old"
-        ):
-            logger.info("Using old planner")
-            from home_robot.navigation_planner.old_discrete_planner import (
-                DiscretePlanner,
-            )
-        elif (
-            "planner_type" in config.AGENT.PLANNER
-            and config.AGENT.PLANNER.planner_type == "fixed"
-        ):
-            logger.info("Using fixed planner")
-            from home_robot.navigation_planner.fixed_discrete_planner import (
-                DiscretePlanner,
-            )
+
+        if config.AGENT.panorama_start:
+            panorama_start_steps = int(360 / config.ENVIRONMENT.turn_angle)
         else:
-            logger.info("Using new planner")
-            from home_robot.navigation_planner.discrete_planner import DiscretePlanner
+            panorama_start_steps = 0
 
         self.planner = DiscretePlanner(
             turn_angle=config.ENVIRONMENT.turn_angle,
             collision_threshold=config.AGENT.PLANNER.collision_threshold,
             step_size=config.AGENT.PLANNER.step_size,
             obs_dilation_selem_radius=config.AGENT.PLANNER.obs_dilation_selem_radius,
-            goal_dilation_selem_radius=config.AGENT.PLANNER.goal_dilation_selem_radius,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             visualize=config.VISUALIZE,
@@ -176,18 +157,15 @@ class GoatAgent(Agent):
             map_downsample_factor=config.AGENT.PLANNER.map_downsample_factor,
             map_update_frequency=config.AGENT.PLANNER.map_update_frequency,
             discrete_actions=config.AGENT.PLANNER.discrete_actions,
-            geodesic_dilation=True if config.AGENT.PLANNER.get("goal_dilation_method") == "geodesic" else False, 
-            min_goal_distance_cm= config.AGENT.PLANNER.min_goal_distance_cm,
+            min_goal_distance_cm=config.AGENT.PLANNER.min_goal_distance_cm,
+            panorama_start_steps=panorama_start_steps,
         )
         self.one_hot_encoding = torch.eye(
             config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
         )
 
-        self.goal_update_steps = self._module.goal_update_steps
         self.sub_task_timesteps = None
         self.total_timesteps = None
-        self.timesteps_before_goal_update = None
-        self.episode_panorama_start_steps = None
         self.last_poses = None
         self.reject_visited_targets = False
         self.blacklist_target = False
@@ -203,39 +181,25 @@ class GoatAgent(Agent):
             exp_name=config.EXP_NAME,
         )
         # self.imagenav_visualizer = None
-        self.found_goal = torch.zeros(
-            self.num_environments, 1, dtype=bool, device=self.device
-        )
-        self.goal_map = torch.zeros(
-            self.num_environments,
-            1,
-            *self.semantic_map.local_map.shape[2:],
-            dtype=self.semantic_map.local_map.dtype,
-            device=self.device,
-        )
-        self.goal_pose = None
+        self.instance_map = None
+        self.view_loc = None
         self.goal_filtering = config.AGENT.SEMANTIC_MAP.goal_filtering
-        self.prev_task_type = None
-        self.planner_type = config.AGENT.PLANNER.planner_type
 
-    # ------------------------------------------------------------------
-    # Inference methods to interact with vectorized simulation
-    # environments
-    # ------------------------------------------------------------------
+        self.policy = LanguageNavFrontierExplorationPolicy(
+            exploration_strategy=config.AGENT.exploration_strategy,
+            goto_past_pose=config.AGENT.SUPERGLUE.goto_past_pose,
+        )
 
     @torch.no_grad()
     def prepare_planner_inputs(
         self,
         obs: torch.Tensor,
         pose_delta: torch.Tensor,
-        object_goal_category: torch.Tensor = None,
         camera_pose: torch.Tensor = None,
         reject_visited_targets: bool = False,
         blacklist_target: bool = False,
-        matches=None,
         confidence=None,
-        local_instance_ids=None,
-        all_matches=None,
+        frame_matches_local_instance_ids=None,
         all_confidences=None,
         instance_ids=None,
         score_thresh=0.0,
@@ -250,11 +214,11 @@ class GoatAgent(Agent):
 
                 Args:
                     obs: current frame containing (RGB, depth, segmentation) of shape
-                     (num_environments, 3 + 1 + num_sem_categories, frame_height, frame_width)
+                     (3 + 1 + num_sem_categories, frame_height, frame_width)
                     pose_delta: sensor pose delta (dy, dx, dtheta) since last frame
-                     of shape (num_environments, 3)
+                     of shape (3)
                     object_goal_category: semantic category of small object goals
-                    camera_pose: camera extrinsic pose of shape (num_environments, 4, 4)
+                    camera_pose: camera extrinsic pose of shape (4, 4)
 
                 Returns:
                     planner_inputs: list of num_environments planner inputs dicts containing
@@ -269,149 +233,85 @@ class GoatAgent(Agent):
                         semantic_map: (M, M) np.ndarray containing local semantic map
                          predictions
         """
-        dones = torch.tensor([False] * self.num_environments)
-        update_global = torch.tensor(
-            [
-                self.timesteps_before_goal_update[e] == 0
-                for e in range(self.num_environments)
-            ]
-        )
+        # * before module call obs.shape is [380+3+1+num_instances]
 
-        if obstacle_locations is not None:
-            obstacle_locations = obstacle_locations.unsqueeze(1)
-        if free_locations is not None:
-            free_locations = free_locations.unsqueeze(1)
-        if object_goal_category is not None:
-            object_goal_category = object_goal_category.unsqueeze(1)
-        # * before module call obs.shape is [1, 380+3+1]
         (
-            self.goal_map,
-            self.found_goal,
-            self.goal_pose,
-            frontier_map,
-            self.semantic_map.local_map,
-            self.semantic_map.global_map,
-            seq_local_pose,
-            seq_global_pose,
-            seq_lmb,
-            seq_origins,
-        ) = self.module(
-            obs.unsqueeze(1),
-            pose_delta.unsqueeze(1),
-            dones.unsqueeze(1),
-            update_global.unsqueeze(1),
-            camera_pose,
-            self.found_goal,
-            self.goal_map,
+            self.instance_map,
+            self.view_loc,
             self.semantic_map.local_map,
             self.semantic_map.global_map,
             self.semantic_map.local_pose,
             self.semantic_map.global_pose,
             self.semantic_map.lmb,
             self.semantic_map.origins,
-            seq_object_goal_category=object_goal_category,
+        ) = self.module(
+            obs,
+            pose_delta,
+            self.semantic_map.local_map,
+            self.semantic_map.global_map,
+            self.semantic_map.local_pose,
+            self.semantic_map.global_pose,
+            self.semantic_map.lmb,
+            self.semantic_map.origins,
+            camera_pose=camera_pose,
             reject_visited_targets=reject_visited_targets,
             blacklist_target=blacklist_target,
-            matches=matches,
             confidence=confidence,
-            local_instance_ids=local_instance_ids,
-            all_matches=all_matches,
+            frame_matches_local_instance_ids=frame_matches_local_instance_ids,
             all_confidences=all_confidences,
             instance_ids=instance_ids,
             score_thresh=score_thresh,
-            seq_obstacle_locations=obstacle_locations,
-            seq_free_locations=free_locations,
-            vis_dir=self.planner.vis_dir,
-            timestep=self.total_timesteps[0]+1
+            obstacle_locations=obstacle_locations,
+            free_locations=free_locations,
+            # timestep=self.total_timesteps+1
         )
-        self.semantic_map.local_pose = seq_local_pose[:, -1]
-        self.semantic_map.global_pose = seq_global_pose[:, -1]
-        self.semantic_map.lmb = seq_lmb[:, -1]
-        self.semantic_map.origins = seq_origins[:, -1]
 
-
-        goal_map = self._prep_goal_map_input()
-
-        # found_goal = self.found_goal.squeeze(1).cpu()
-
-        for e in range(self.num_environments):
-            if frontier_map is not None:
-                self.semantic_map.update_frontier_map(
-                    e, frontier_map[e][0].cpu().numpy()
-                )
-            if self.found_goal[e] or self.timesteps_before_goal_update[e] == 0:
-                self.semantic_map.update_global_goal_for_env(e, goal_map[e])
-                if self.timesteps_before_goal_update[e] == 0:
-                    self.timesteps_before_goal_update[e] = self.goal_update_steps
-            self.total_timesteps[e] = self.total_timesteps[e] + 1
-            self.sub_task_timesteps[e][self.current_task_idx] += 1
-            self.timesteps_before_goal_update[e] = (
-                self.timesteps_before_goal_update[e] - 1
+        if self._module.instance_goal_found:
+            visualize_map(
+                self.instance_map.shape,
+                self.planner.vis_dir,
+                f"{self.sub_task_timesteps[self.current_task_idx]+1}_01.instance_map.png",
+                traversible=1 - self.semantic_map.get_obstacle_map(),
+                goal_map=self.instance_map,
             )
 
+        self.policy.vis_dir = self.planner.vis_dir
+        frontier_map = self.policy.get_frontier_map(
+            self.semantic_map.local_map,
+            self.semantic_map.local_loc,
+            self.total_timesteps + 1,
+        )
+        self.semantic_map.frontier_map = frontier_map.cpu().numpy()
 
-        planner_inputs = [
-            {
-                "obstacle_map": self.semantic_map.get_obstacle_map(e),
-                "goal_map": self.semantic_map.get_goal_map(e),
-                "frontier_map": self.semantic_map.get_frontier_map(e),
-                "sensor_pose": self.semantic_map.get_planner_pose_inputs(e),
-                "found_goal": self.found_goal[e].item(),
-                "goal_pose": self.goal_pose[e] if self.goal_pose is not None else None
-            }
-            for e in range(self.num_environments)
-        ]
+        self._keep_only_largest_cluster_in_instance_map()
+
+        self.total_timesteps = self.total_timesteps + 1
+        self.sub_task_timesteps[self.current_task_idx] += 1
+
+        planner_inputs = {
+            "instance_goal_found": self._module.instance_goal_found,
+            "instance_map": self.instance_map,
+            "view_loc": self.view_loc,
+            "obstacle_map": self.semantic_map.get_obstacle_map(),
+            "frontier_map": self.semantic_map.frontier_map,
+            "global_pose": self.semantic_map.global_pose,
+            "lmb": self.semantic_map.lmb,
+            "total_timesteps": self.total_timesteps,
+            "timestep": self.sub_task_timesteps[self.current_task_idx],
+        }
         if self.visualize:
-            vis_inputs = [
-                {
-                    "explored_map": self.semantic_map.get_explored_map(e),
-                    "semantic_map": self.semantic_map.get_semantic_map(e),
-                    "been_close_map": self.semantic_map.get_been_close_map(e),
-                    "timestep": self.total_timesteps[e],
-                }
-                for e in range(self.num_environments)
-            ]
+            vis_inputs = {
+                "explored_map": self.semantic_map.get_explored_map(),
+                "semantic_map": self.semantic_map.get_semantic_map(),
+                "been_close_map": self.semantic_map.get_been_close_map(),
+                "timestep": self.total_timesteps,
+            }
             if self.record_instance_ids:
-                for e in range(self.num_environments):
-                    vis_inputs[e]["instance_map"] = self.semantic_map.get_instance_map(
-                        e
-                    )
+                vis_inputs["instance_map"] = self.semantic_map.get_instance_map()
         else:
-            vis_inputs = [{} for e in range(self.num_environments)]
+            vis_inputs = {}
 
         return planner_inputs, vis_inputs
-
-    def reset_vectorized(self):
-        """Initialize agent state."""
-        self.total_timesteps = [0] * self.num_environments
-        self.sub_task_timesteps = [
-            [0] * self.max_num_sub_task_episodes
-        ] * self.num_environments
-        self.timesteps_before_goal_update = [0] * self.num_environments
-        self.last_poses = [np.zeros(3)] * self.num_environments
-        self.semantic_map.init_map_and_pose()
-        self.episode_panorama_start_steps = self.panorama_start_steps
-        self.reached_goal_panorama_rotate_steps = self.panorama_rotate_steps
-        if self.instance_memory is not None:
-            self.instance_memory.reset()
-        self.reject_visited_targets = False
-        self.blacklist_target = False
-        self.current_task_idx = 0
-        self.navigate_to_best = [False] * self.num_environments
-        self.force_match_against_memory = False
-
-        if self.imagenav_visualizer is not None:
-            self.imagenav_visualizer.reset()
-
-        self.goal_image = None
-        self.goal_mask = None
-        self.goal_image_keypoints = None
-
-        self.found_goal[:] = False
-        self.goal_map[:] *= 0
-        self.prev_task_type = None
-        self.planner.reset()
-        self._module.reset()
 
     def reset_sub_episode(self) -> None:
         """Reset for a new sub-episode since pre-processing is temporally dependent."""
@@ -420,45 +320,33 @@ class GoatAgent(Agent):
         self.goal_mask = None
         self._module.reset_sub_episode()
 
-    def reset_vectorized_for_env(self, e: int):
-        """Initialize agent state for a specific environment."""
-        self.total_timesteps[e] = 0
-        self.sub_task_timesteps[e] = [0] * self.max_num_sub_task_episodes
-        self.timesteps_before_goal_update[e] = 0
-        self.last_poses[e] = np.zeros(3)
-        self.semantic_map.init_map_and_pose_for_env(e)
-        self.episode_panorama_start_steps = self.panorama_start_steps
-        self.reached_goal_panorama_rotate_steps = self.panorama_rotate_steps
+    def reset(self):
+        """Initialize agent state. Reset is at the beginning of a new episode (not each task)."""
+        self.total_timesteps = 0
+        self.sub_task_timesteps = [0] * self.max_num_sub_task_episodes
+        self.last_poses = np.zeros(3)
+        self.semantic_map.init_map_and_pose()
         if self.instance_memory is not None:
-            self.instance_memory.reset_for_env(e)
+            self.instance_memory.reset()
         self.reject_visited_targets = False
         self.blacklist_target = False
-
         self.current_task_idx = 0
+        self.navigate_to_best = False
+
+        if self.imagenav_visualizer is not None:
+            self.imagenav_visualizer.reset()
+
+        self.instance_map = None
+        self.goal_image = None
+        self.goal_mask = None
+        self.goal_image_keypoints = None
         self.planner.reset()
         self._module.reset()
-        self.goal_image = None
-        self.goal_image_keypoints = None
-        self.goal_mask = None
-
-    # ---------------------------------------------------------------------
-    # Inference methods to interact with the robot or a single un-vectorized
-    # simulation environment
-    # ---------------------------------------------------------------------
-
-    def reset(self):
-        """Initialize agent state."""
-        self.reset_vectorized()
-        self.planner.reset()
-
-        self.goal_image = None
-        self.goal_mask = None
-        self.goal_image_keypoints = None
 
     def score_thresh(self, task_type):
         # If we have fully explored the environment, set the matching threshold to 0.0
         # to go to the highest scoring instance
-        if self.navigate_to_best[0]:
+        if self.navigate_to_best:
             return 0.0
 
         if task_type == "languagenav":
@@ -468,126 +356,88 @@ class GoatAgent(Agent):
         else:
             return 0.0
 
-    def act(self, obs: Observations, stop=False) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
+    def act(
+        self, obs: Observations, stop=False
+    ) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
-        logger.info(f"---------------- Subtask step {self.sub_task_timesteps[0][self.current_task_idx]+1} ----------------")
+        logger.info(
+            f"---------------- Subtask step {self.sub_task_timesteps[self.current_task_idx]+1} ----------------"
+        )
+        logger.debug(f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB")
         current_task = obs.task_observations["tasks"][self.current_task_idx]
         task_type = current_task["type"]
-
-        # t0 = time.time()
 
         # 1 - Obs preprocessing
         (
             obs_preprocessed,
             pose_delta,
-            object_goal_category,
             img_goal,
             camera_pose,
-            keypoints,
-            matches,
             confidence,
-            local_instance_ids,
-            all_rgb_keypoints,
-            all_matches,
+            frame_matches_local_instance_ids,
             all_confidences,
             instance_ids,
         ) = self._preprocess_obs(obs, task_type)
-
-        # t1 = time.time()
-        # print(f"Obs preprocessing: {t1 - t0:.2f}")
-
-        # if self.total_timesteps[0] >= 80:
-        #     import pdb;pdb.set_trace()
 
         # 2 - Semantic mapping + policy
         planner_inputs, vis_inputs = self.prepare_planner_inputs(
             obs_preprocessed,
             pose_delta,
-            object_goal_category=object_goal_category,
             camera_pose=camera_pose,
             reject_visited_targets=self.reject_visited_targets,
-            matches=matches,
             confidence=confidence,
-            local_instance_ids=local_instance_ids,
-            all_matches=all_matches,
+            frame_matches_local_instance_ids=frame_matches_local_instance_ids,
             all_confidences=all_confidences,
             instance_ids=instance_ids,
             score_thresh=self.score_thresh(task_type),
         )
 
-        # t2 = time.time()
-        # print(f"Mapping and goal selection: {t2 - t1:.2f}")
-
         # 3 - Planning
-        closest_goal_map = None
-        dilated_obstacle_map = None
-        short_term_goal = None
-        could_not_find_path = False
-        if planner_inputs[0]["found_goal"]:
-            self.episode_panorama_start_steps = 0
-        if self.total_timesteps[0] < self.episode_panorama_start_steps:
-            #! When total_timesteps is less than the panorama start steps, we just turn right. So if turn angle is 30, at 12th step, we don't need to turn anymore.
-            action = DiscreteNavigationAction.TURN_RIGHT
-        else:
-            (
-                action,
-                closest_goal_map,
-                short_term_goal,
-                dilated_obstacle_map,
-                could_not_find_path,
-                planner_stop
-            ) = self.planner.plan(
-                **planner_inputs[0],
-                use_dilation_for_stg=self.use_dilation_for_stg,
-                timestep=self.sub_task_timesteps[0][self.current_task_idx],
-                # debug=True
-            )
+        (
+            action,
+            closest_goal_map,
+            short_term_goal,
+            dilated_obstacle_map,
+            found_path,
+            reset_module,
+        ) = self.planner.plan(**planner_inputs)
 
-        # t3 = time.time()
-        # print(f"Planning: {t3 - t2:.2f}")
+        if reset_module:
+            self.reset_sub_episode()
 
         if (
-            self.sub_task_timesteps[0][self.current_task_idx]
+            self.sub_task_timesteps[self.current_task_idx]
             >= self.max_steps[self.current_task_idx]
         ) or stop:
-            logger.warning("Reached max number of steps for subgoal, or stuck somewhere, calling STOP")
+            logger.warning(
+                "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
+            )
             action = DiscreteNavigationAction.STOP
 
-        if could_not_find_path and not planner_stop and action != DiscreteNavigationAction.STOP:
-            # This doesn't help
-            # print("Resetting explored area")
-            # self.semantic_map.local_map[0, MC.EXPLORED_MAP] *= 0
-            # self.semantic_map.global_map[0, MC.EXPLORED_MAP] *= 0
-
-            if self.planner_type == "fixed":
-                if self.navigate_to_best[0]:
-                    #! If we are fully explored and we are here again, we should just stop
-                    logger.info("Already fully explored, stopping")
-                    action = DiscreteNavigationAction.STOP
-                elif planner_inputs[0]["found_goal"]:
-                    logger.info("Couldn't find a path to the found goal, even with replan. Stopping...")
-                    action = DiscreteNavigationAction.STOP
-                else:
-                    logger.info("Couldn't find a path to frontier goal, even with replan. Setting the goal for next step to the best match in memory, even if it is less than threshold...")
-                    self.navigate_to_best[0] = True
-                    self.force_match_against_memory = True
+        if not found_path and action != DiscreteNavigationAction.STOP:
+            #! myTODO: This adds one step, I can fix this later
+            if self.navigate_to_best:
+                #! If we are fully explored and we are here again, we should just stop
+                logger.info(
+                    "Already fully explored and no path to our best match. Stopping"
+                )
+                action = DiscreteNavigationAction.STOP
             else:
-                self.fully_explored[0] = True
-                self.force_match_against_memory = True
-
-            # if self.reached_goal_candidate:
-            #     # move to next sub-task
-            #     # update semantic map
-            #     # reset timesteps
-            #     pass
+                # * No need to rest module, we already have
+                logger.info(
+                    "Map fully explored. Setting the goal for next step to the best match in memory, even if it is less than threshold..."
+                )
+                self.navigate_to_best = True
+                action = DiscreteNavigationAction.TURN_RIGHT
 
         if self.visualize:
-            vis_inputs[0]["dilated_obstacle_map"] = dilated_obstacle_map
+            #! myTODO: If I want visualiztion for both goals, I need to modify this.
+            vis_inputs["dilated_obstacle_map"] = dilated_obstacle_map
             if task_type == "imagenav":
                 collision = {"is_collision": False}
                 info = {
-                    **planner_inputs[0],
-                    **vis_inputs[0],
+                    **planner_inputs,
+                    **vis_inputs,
                     "rgb_frame": obs.rgb,
                     "semantic_frame": obs.semantic,
                     "closest_goal_map": closest_goal_map,
@@ -599,6 +449,7 @@ class GoatAgent(Agent):
                     "short_term_goal": short_term_goal,
                 }
                 if self.imagenav_visualizer is not None:
+                    info.pop("instance_goal_found", None)
                     self.imagenav_visualizer.visualize(**info)
             else:
                 goal_text_desc = {
@@ -608,18 +459,16 @@ class GoatAgent(Agent):
                     ].items()
                     if x != "image"
                 }
-                vis_inputs[0]["goal_name"] = goal_text_desc
-                vis_inputs[0]["semantic_frame"] = obs.task_observations[
-                    "semantic_frame"
-                ]
-                vis_inputs[0]["closest_goal_map"] = closest_goal_map
-                vis_inputs[0]["third_person_image"] = obs.third_person_image
-                vis_inputs[0]["short_term_goal"] = None
-                vis_inputs[0]["instance_memory"] = self.instance_memory
+                vis_inputs["goal_name"] = goal_text_desc
+                vis_inputs["semantic_frame"] = obs.task_observations["semantic_frame"]
+                vis_inputs["closest_goal_map"] = closest_goal_map
+                vis_inputs["third_person_image"] = obs.third_person_image
+                vis_inputs["short_term_goal"] = None
+                vis_inputs["instance_memory"] = self.instance_memory
 
                 info = {
-                    **planner_inputs[0],
-                    **vis_inputs[0],
+                    **planner_inputs,
+                    **vis_inputs,
                     "short_term_goal": short_term_goal,
                 }
         else:
@@ -628,15 +477,8 @@ class GoatAgent(Agent):
         if action == DiscreteNavigationAction.STOP:
             if len(obs.task_observations["tasks"]) - 1 > self.current_task_idx:
                 self.current_task_idx += 1
-                self.force_match_against_memory = False
-                self.timesteps_before_goal_update[0] = 0
-                self.total_timesteps = [0] * self.num_environments
-                self.found_goal = torch.zeros(
-                    self.num_environments, 1, dtype=bool, device=self.device
-                )
+                self.total_timesteps = 0
                 self.reset_sub_episode()
-        #! myTODO: Remove. It looks like it is not used anywhere.
-        self.prev_task_type = task_type
         return action, info
 
     def _preprocess_obs(self, obs: Observations, task_type: str):
@@ -649,26 +491,17 @@ class GoatAgent(Agent):
         )  # m to cm
 
         current_task = obs.task_observations["tasks"][self.current_task_idx]
-        current_goal_semantic_id = current_task["semantic_id"]
 
         semantic = obs.semantic
         instance_ids = None
 
         (
-            matches,
             confidences,
-            keypoints,
-            local_instance_ids,
-            all_matches,
+            frame_matches_local_instance_ids,
             all_confidences,
-            all_rgb_keypoints,
             instance_ids,
-        ) = (None, None, None, None, [], [], [], [])
+        ) = (None, None, [], [])
 
-        # print("-------- in preprocess obs/ GoatAgent --------")
-        # print("Task id: ", self.current_task_idx)
-        # print("self._module.instance_goal_found: ", self._module.instance_goal_found)
-        # print("task_type: ", task_type)
 
         if not self._module.instance_goal_found:
             if task_type == "imagenav":
@@ -683,13 +516,11 @@ class GoatAgent(Agent):
                     # self.goal_mask, _ = self.instance_seg.get_goal_mask(img_goal)
 
                 (
-                    keypoints,
-                    matches,
                     confidences,
-                    local_instance_ids,
+                    frame_matches_local_instance_ids,
                 ) = self.matching.get_matches_against_current_frame(
                     self.image_matching_function,
-                    self.total_timesteps[0],
+                    self.total_timesteps,
                     image_goal=self.goal_image,
                     goal_image_keypoints=self.goal_image_keypoints,
                     categories=[current_task["semantic_id"]],
@@ -698,26 +529,33 @@ class GoatAgent(Agent):
 
             elif task_type == "languagenav":
                 (
-                    keypoints,
-                    matches,
                     confidences,
-                    local_instance_ids,
+                    frame_matches_local_instance_ids,
                 ) = self.matching.get_matches_against_current_frame(
                     self.matching.match_language_to_image,
-                    self.total_timesteps[0],
+                    self.total_timesteps,
                     language_goal=current_task["description"],
                     categories=[current_task["semantic_id"]],
                     use_full_image=True,
                 )
-        
-        # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless. 
+            elif task_type == "objectnav":
+                (
+                    confidences,
+                    frame_matches_local_instance_ids,
+                ) = self.matching.get_matches_against_current_frame(
+                    None,
+                    self.total_timesteps,
+                    categories=[current_task["semantic_id"]],
+                )
+
+        # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless.
         # * Maybe I should change the config. But nevertheles, this works even with 380.
         semantic = self.one_hot_encoding[torch.from_numpy(semantic).to(self.device)]
 
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:
-            # * Why using instance_map which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes. 
+            # * Why using instance_map which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes.
             instances = obs.task_observations["instance_map"]
             # first create a mapping to 1, 2, ... num_instances
             instance_ids = np.unique(instances)
@@ -731,37 +569,34 @@ class GoatAgent(Agent):
             ).to(self.device)
             # create a one-hot encoding
             instances = torch.eye(len(instance_ids), device=self.device)[instances]
+
             obs_preprocessed = torch.cat([obs_preprocessed, instances], dim=-1)
 
-        obs_preprocessed = obs_preprocessed.unsqueeze(0).permute(0, 3, 1, 2)
+        obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
         pose_delta = torch.tensor(
-            pu.get_rel_pose_change(curr_pose, self.last_poses[0])
-        ).unsqueeze(0)
-        self.last_poses[0] = curr_pose
-
-        object_goal_category = torch.tensor(current_goal_semantic_id).unsqueeze(0)
+            pu.get_rel_pose_change(curr_pose, self.last_poses), device=rgb.device
+        )
+        self.last_poses = curr_pose
 
         # NOT USED AT ALL? ->
         camera_pose = obs.camera_pose
         if camera_pose is not None:
-            camera_pose = torch.tensor(np.asarray(camera_pose)).unsqueeze(0)
+            camera_pose = torch.tensor(np.asarray(camera_pose))
 
         # Match a goal against every instance in memory the moment we get it
         # or when the map just got fully explored
         if (
-            task_type in ["languagenav", "imagenav"]
-            and self.record_instance_ids
-            and (
-                self.sub_task_timesteps[0][self.current_task_idx] == 0
-                or self.force_match_against_memory
-            )
+            # task_type in ["languagenav", "imagenav"]
+            # and self.record_instance_ids
+            # and
+            self.sub_task_timesteps[self.current_task_idx] == 0
+            or self.navigate_to_best
         ):
-            if self.force_match_against_memory:
+            if self.navigate_to_best:
                 logger.info("Force a match against the memory")
-            self.force_match_against_memory = False
-            (all_rgb_keypoints, all_matches, all_confidences, instance_ids) = self._match_against_memory(
+            all_confidences, instance_ids = self._match_against_memory(
                 task_type, current_task
             )
 
@@ -769,15 +604,10 @@ class GoatAgent(Agent):
         return (
             obs_preprocessed,
             pose_delta,
-            object_goal_category,
             self.goal_image,
             camera_pose,
-            keypoints,
-            matches,
             confidences,
-            local_instance_ids,
-            all_rgb_keypoints,
-            all_matches,
+            frame_matches_local_instance_ids,
             all_confidences,
             instance_ids,
         )
@@ -786,98 +616,101 @@ class GoatAgent(Agent):
         logger.info("--------Matching against memory!--------")
         if task_type == "languagenav":
             (
-                all_rgb_keypoints,
-                all_matches,
                 all_confidences,
                 instance_ids,
             ) = self.matching.get_matches_against_memory(
                 self.matching.match_language_to_image,
-                self.total_timesteps[0],
+                self.total_timesteps,
                 language_goal=current_task["description"],
                 use_full_image=True,
                 categories=[current_task["semantic_id"]],
             )
-            stats = {
-                i: {
-                    "mean": float(scores.mean()),
-                    "median": float(np.median(scores)),
-                    "max": float(scores.max()),
-                    "min": float(scores.min()),
-                    "all": scores.flatten().tolist(),
-                }
-                for i, scores in zip(instance_ids, all_confidences)
-            }
-            with open(
-                f"{self.goal_matching_vis_dir}/goal{self.current_task_idx}_language_stats.json",
-                "w",
-            ) as f:
-                json.dump(stats, f, indent=4)
 
         elif task_type == "imagenav":
             (
-                all_rgb_keypoints,
-                all_matches,
                 all_confidences,
                 instance_ids,
             ) = self.matching.get_matches_against_memory(
                 self.image_matching_function,
-                self.sub_task_timesteps[0][self.current_task_idx],
+                self.sub_task_timesteps[self.current_task_idx],
                 image_goal=self.goal_image,
                 goal_image_keypoints=self.goal_image_keypoints,
                 use_full_image=True,
                 categories=[current_task["semantic_id"]],
             )
-            stats = {
-                i: {
-                    "mean": float(scores.sum(axis=1).mean()),
-                    "median": float(np.median(scores.sum(axis=1))),
-                    "max": float(scores.sum(axis=1).max()),
-                    "min": float(scores.sum(axis=1).min()),
-                    "all": scores.sum(axis=1).tolist(),
-                }
-                for i, scores in zip(instance_ids, all_confidences)
+        elif task_type == "objectnav":
+            (
+                all_confidences,
+                instance_ids,
+            ) = self.matching.get_matches_against_memory(
+                None,
+                self.total_timesteps,
+                categories=[current_task["semantic_id"]],
+            )
+
+        stats = {
+            i: {
+                "mean": float(scores.mean()),
+                "median": float(np.median(scores)),
+                "max": float(scores.max()),
+                "min": float(scores.min()),
+                "all": scores.flatten().tolist(),
             }
-            with open(
-                f"{self.goal_matching_vis_dir}/goal{self.current_task_idx}_image_stats.json",
-                "w",
-            ) as f:
-                json.dump(stats, f, indent=4)
+            for i, scores in zip(instance_ids, all_confidences)
+        }
+        with open(
+            f"{self.goal_matching_vis_dir}/goal{self.current_task_idx}_{task_type}_stats.json",
+            "w",
+        ) as f:
+            json.dump(stats, f, indent=4)
+        return all_confidences, instance_ids
 
-        return all_rgb_keypoints, all_matches, all_confidences, instance_ids
-
-    def _prep_goal_map_input(self) -> None:
+    def _keep_only_largest_cluster_in_instance_map(self) -> None:
         """
         Perform optional clustering of the goal channel to mitigate noisy projection
         splatter.
         """
-        goal_map = self.goal_map.squeeze(1).cpu().numpy()
+
+        if not self._module.instance_goal_found:
+            return
 
         if not self.goal_filtering:
-            return goal_map
+            return
 
-        if not self.found_goal[0]:
-            logger.debug("Found goal is False (goal is frontier), don't changing goal_map.")
-            return goal_map
         logger.debug("Clustering Goal map and selecting the largest cluster.")
+        instance_map = self.instance_map
+        init_goal_map_count = instance_map.sum()
 
         # cluster goal points
-        try:
-            c = DBSCAN(eps=4, min_samples=1)
-            data = np.array(goal_map[e].nonzero()).T
-            c.fit(data)
+        c = DBSCAN(eps=4, min_samples=1)
+        # * data is index of nonzero elements
+        data = np.array(instance_map.nonzero()).T
+        c.fit(data)
 
-            # mask all points not in the largest cluster
-            mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
-            mode_mask = (c.labels_ != mode).nonzero()
-            x = data[mode_mask]
-            goal_map_ = np.copy(goal_map[e])
-            goal_map_[x] = 0.0
+        # mask all points not in the largest cluster
+        mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
+        mode_mask = (c.labels_ != mode).nonzero()
+        x = data[mode_mask]
+        goal_map_ = np.copy(instance_map)
+        goal_map_[x] = 0.0
 
-            # adopt masked map if non-empty
-            if goal_map_.sum() > 0:
-                goal_map[e] = goal_map_
-        except Exception as e:
-            logger.debug(f"Faced an error {e} while clustering goal_map")
-            return goal_map
+        # adopt masked map if non-empty
+        if goal_map_.sum() > 0:
+            logger.debug("Changing instance map")
+            self.instance_map = goal_map_
+            logger.debug(
+                f"Goal map cells count changed from {init_goal_map_count} to {goal_map_.sum()}"
+            )
+        else:
+            logger.debug(
+                "Instance map not changed. Largest cluster is empty for some reason!"
+            )
 
-        return goal_map
+        visualize_map(
+            instance_map.shape,
+            self.planner.vis_dir,
+            f"{self.sub_task_timesteps[self.current_task_idx]+1}_02.cluster_goal.png",
+            goal_map=self.instance_map,
+            dilated_goal_map=instance_map,
+            traversible=1 - self.semantic_map.get_obstacle_map(),
+        )

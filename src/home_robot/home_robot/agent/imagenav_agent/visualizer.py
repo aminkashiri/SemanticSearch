@@ -183,10 +183,9 @@ class NavVisualizer:
     def visualize(
         self,
         obstacle_map: np.ndarray,
-        goal_map: np.ndarray,
         closest_goal_map: Optional[np.ndarray],
-        sensor_pose: np.ndarray,
-        found_goal: bool,
+        global_pose: np.ndarray,
+        lmb: np.ndarray,
         explored_map: np.ndarray,
         rgb_frame: np.ndarray,
         semantic_frame: np.ndarray,
@@ -203,7 +202,9 @@ class NavVisualizer:
         dilated_obstacle_map: Optional[np.ndarray] = None,
         instance_map: Optional[np.ndarray] = None,
         short_term_goal: Optional[np.ndarray] = None,
-        goal_pose = None,
+        view_loc = None,
+        instance_goal_found=None,
+        total_timesteps: int = 0,
     ) -> None:
         """Visualize frame input and semantic map.
 
@@ -212,8 +213,6 @@ class NavVisualizer:
             goal_map: (M, M) binary array denoting goal location
             closest_goal_map: (M, M) binary array denoting closest goal
              location in the goal map in geodesic distance
-            sensor_pose: (7,) array denoting global pose (x, y, o)
-             and local map boundaries planning window (gy1, gy2, gx1, gy2)
             found_goal: whether we found the object goal category
             explored_map: (M, M) binary local explored map prediction
             semantic_map: (M, M) local semantic map predictions
@@ -225,6 +224,13 @@ class NavVisualizer:
             visualize_goal: if True, visualize goal
             metrics: can populate for last frame
         """
+        global_pose = global_pose.cpu().float().numpy()
+        lmb = lmb.cpu().float().numpy()
+        if instance_goal_found == True:
+            goal_map = instance_map
+        else:
+            goal_map = frontier_map
+
         if not self.print_images:
             return
 
@@ -239,17 +245,18 @@ class NavVisualizer:
         obs_frame = self.make_observations(
             rgb_frame,
             last_collisions["is_collision"],
-            found_goal,
+            instance_goal_found,
             metrics,
         )
         sem_frame = self.make_sem_observations(
             semantic_frame,
             last_collisions["is_collision"],
-            found_goal,
+            instance_goal_found,
             metrics,
         )
         map_pred_frame = self.make_map_preds(
-            sensor_pose,
+            global_pose,
+            lmb,
             obstacle_map,
             explored_map,
             semantic_map,
@@ -385,7 +392,7 @@ class NavVisualizer:
         self,
         sem_img: np.ndarray,
         collision: bool,
-        found_goal: bool,
+        instance_goal_found: bool,
         metrics: Dict[str, float],
     ) -> np.ndarray:
         """
@@ -398,7 +405,7 @@ class NavVisualizer:
         new_w = int(new_h / sem_img.shape[0] * sem_img.shape[1])
         sem_img = cv2.resize(sem_img, (new_w, new_h))
 
-        if found_goal:
+        if instance_goal_found:
             sem_img = self._found_goal_detection(sem_img)
 
         sem_img = self._write_metrics(sem_img, metrics)
@@ -439,7 +446,7 @@ class NavVisualizer:
         self,
         sem_img: np.ndarray,
         collision: bool,
-        found_goal: bool,
+        instance_goal_found: bool,
         metrics: Dict[str, float],
     ) -> np.ndarray:
         """
@@ -466,7 +473,7 @@ class NavVisualizer:
 
         sem_img = cv2.resize(sem_img, (new_w, new_h))
 
-        if found_goal:
+        if instance_goal_found:
             sem_img = self._found_goal_detection(sem_img)
 
         sem_img = self._write_metrics(sem_img, metrics)
@@ -504,7 +511,8 @@ class NavVisualizer:
 
     def make_map_preds(
         self,
-        sensor_pose: np.ndarray,
+        global_pose: np.ndarray,
+        lmb: np.ndarray,
         obstacle_map: np.ndarray,
         explored_map: np.ndarray,
         semantic_map: np.ndarray,
@@ -517,7 +525,8 @@ class NavVisualizer:
             fill_val = self.num_sem_categories - 1
             semantic_map = np.zeros_like(obstacle_map) + fill_val
 
-        curr_x, curr_y, curr_o, gy1, gy2, gx1, gx2 = sensor_pose
+        curr_x, curr_y, curr_o = global_pose
+        gy1, gy2, gx1, gx2 = lmb
         gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
 
         # Update visited map with last visited area

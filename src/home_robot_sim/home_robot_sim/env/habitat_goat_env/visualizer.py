@@ -223,7 +223,8 @@ class Visualizer:
         obstacle_map: np.ndarray = None,
         goal_map: np.ndarray = None,
         closest_goal_map: Optional[np.ndarray] = None,
-        sensor_pose: np.ndarray = None,
+        global_pose: np.ndarray = None,
+        lmb: np.ndarray = None,
         found_goal: bool = None,
         explored_map: np.ndarray = None,
         semantic_map: np.ndarray = None,
@@ -254,8 +255,10 @@ class Visualizer:
             goal_map: (M, M) binary array denoting goal location
             closest_goal_map: (M, M) binary array denoting closest goal
              location in the goal map in geodesic distance
-            sensor_pose: (7,) array denoting global pose (x, y, o)
-             and local map boundaries planning window (gy1, gy2, gx1, gy2)
+            global_pose
+            lmb
+            # sensor_pose: (7,) array denoting global pose (x, y, o)
+            #  and local map boundaries planning window (gy1, gy2, gx1, gy2)
             found_goal: whether we found the object goal category
             explored_map: (M, M) binary local explored map prediction
             semantic_map: (M, M) local semantic map predictions
@@ -270,6 +273,7 @@ class Visualizer:
             semantic_category_mapping: contains category id to category mapping and color palette
             rl_obs_frame: variable sized image containing all observations passed to RL (useful for debugging)
         """
+        visualize_goal = not goal_map is None #! myTODO: Temp. Fix this viusalization.
         # Do nothing if visualization is off
         if not self.show_images and not self.print_images:
             return
@@ -317,7 +321,8 @@ class Visualizer:
         self.instance_dilation_selem = skimage.morphology.disk(1)
 
         if obstacle_map is not None:
-            curr_x, curr_y, curr_o, gy1, gy2, gx1, gx2 = sensor_pose
+            curr_x, curr_y, curr_o = global_pose.cpu().float().numpy()
+            gy1, gy2, gx1, gx2 = lmb
             gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
 
             # Update visited map with last visited area
