@@ -863,19 +863,19 @@ class GoatAgent(Agent):
         # cluster goal points
         try:
             c = DBSCAN(eps=4, min_samples=1)
-            data = np.array(goal_map[e].nonzero()).T
+            data = np.array(goal_map[0].nonzero()).T
             c.fit(data)
 
             # mask all points not in the largest cluster
             mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
             mode_mask = (c.labels_ != mode).nonzero()
             x = data[mode_mask]
-            goal_map_ = np.copy(goal_map[e])
+            goal_map_ = np.copy(goal_map[0])
             goal_map_[x] = 0.0
 
             # adopt masked map if non-empty
             if goal_map_.sum() > 0:
-                goal_map[e] = goal_map_
+                goal_map[0] = goal_map_
         except Exception as e:
             logger.debug(f"Faced an error {e} while clustering goal_map")
             return goal_map
