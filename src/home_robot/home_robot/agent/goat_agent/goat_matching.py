@@ -21,6 +21,7 @@ MIN_PIXELS = 1000
 MIN_EDGE = 15
 
 from home_robot.utils.logger import get_logger
+
 logger = get_logger()
 
 
@@ -55,6 +56,7 @@ class GoatMatching(Matching):
         language_goal=None,
         use_full_image=False,
         categories=None,
+        global_pose=None,
         **kwargs,
     ):
         """
@@ -84,20 +86,54 @@ class GoatMatching(Matching):
 
         confidences = []
         if len(detections) > 0:
-            confidences = self.match_images_to_goal(
-                detections,
-                matching_fn,
-                step,
-                use_full_image=use_full_image,
-                image_goal=image_goal,
-                language_goal=language_goal,
-                **kwargs,
-            )
+            if image_goal is None and language_goal is None:
+                # * Category goal
+                instance_ids, confidences = self.match_to_category(
+                    instance_ids, global_pose, instance_memory, use_local_id=True
+                )
+            else:
+                confidences = self.match_images_to_goal(
+                    detections,
+                    matching_fn,
+                    step,
+                    use_full_image=use_full_image,
+                    image_goal=image_goal,
+                    language_goal=language_goal,
+                    **kwargs,
+                )
         try:
-            return np.array(confidences).reshape(-1,1), np.array(instance_ids)
+            return np.array(confidences).reshape(-1, 1), np.array(instance_ids)
         except Exception as e:
             print(e)
-            import pdb;pdb.set_trace()
+            import pdb
+
+            pdb.set_trace()
+
+    def match_to_category(self, instance_ids, global_pose, instance_memory, use_local_id=False):
+        #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
+        output_instance_ids = []
+        all_confidences = []
+        for instance_id in instance_ids:
+            global_instance_id = instance_id
+            if use_local_id:
+                global_instance_id = instance_memory.local_id_to_global_id_map.get(instance_id, -1)
+                
+            if global_instance_id == -1:
+                continue
+
+            output_instance_ids.append(instance_id)
+            instance_views = instance_memory.instance_views[global_instance_id].instance_views
+            # pick a view with maximum object coverage
+            best_view = np.argmax([view.object_coverage for view in instance_views])
+            instance_pose = instance_views[best_view].pose
+
+            global_xy = global_pose[:2].cpu()
+            instance_xy = instance_pose[:2]
+
+            score = torch.norm(global_xy - instance_xy).item()
+
+            all_confidences.append(score)
+        return output_instance_ids, all_confidences
 
     def match_images_to_goal(
         self,
@@ -124,7 +160,8 @@ class GoatMatching(Matching):
                 language_goal,
             )
         else:
-            all_confidences = [1] * len(all_views)
+            raise ValueError("Shouldn't happen")
+            # all_confidences = [1] * len(all_views)
         return all_confidences
 
     def get_matches_against_memory(
@@ -135,6 +172,7 @@ class GoatMatching(Matching):
         language_goal=None,
         use_full_image=False,
         categories=None,
+        global_pose=None,
         **kwargs,
     ):
         """
@@ -142,13 +180,11 @@ class GoatMatching(Matching):
         in the instance memory.
         """
         instance_memory = self.instance_memory
-        all_confidences = []
-        instances = instance_memory.instance_views
         all_views = []
         instance_view_counts = []
         steps_per_view = []
         instance_ids = []
-        for (inst_key, inst) in instances.items():
+        for inst_key, inst in instance_memory.instance_views.items():
             if categories is not None and inst.category_id not in categories:
                 continue
             inst_views = inst.instance_views
@@ -174,20 +210,29 @@ class GoatMatching(Matching):
                 instance_ids.append(inst_key)
 
         if len(all_views) > 0:
-            all_confidences = self.match_images_to_goal(
-                all_views,
-                matching_fn,
-                step,
-                use_full_image=use_full_image,
-                image_goal=image_goal,
-                language_goal=language_goal,
-                **kwargs,
-            )
-            # unflatten based on number of views per instance
-            # all_confidences = np.concatenate(all_confidences, 0)
-            all_confidences = np.split(
-                all_confidences, np.cumsum(instance_view_counts)[:-1]
-            )
+            if image_goal is None and language_goal is None:
+                logger.warning(f"In get_matches_against_memory 1.")
+                # * Category goal
+                instance_ids, all_confidences = self.match_to_category(
+                    instance_ids, global_pose, instance_memory, use_local_id=False
+                )
+                all_confidences = np.array(all_confidences).reshape(-1, 1)
+            else:
+                logger.warning(f"In get_matches_against_memory 2.")
+                all_confidences = self.match_images_to_goal(
+                    all_views,
+                    matching_fn,
+                    step,
+                    use_full_image=use_full_image,
+                    image_goal=image_goal,
+                    language_goal=language_goal,
+                    **kwargs,
+                )
+                # unflatten based on number of views per instance
+                # all_confidences = np.concatenate(all_confidences, 0)
+                all_confidences = np.split(
+                    all_confidences, np.cumsum(instance_view_counts)[:-1]
+                )
             return all_confidences, instance_ids
         return [], []
 
@@ -221,7 +266,7 @@ class GoatMatching(Matching):
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
         logger.debug("Computing matching score with each view...")
         for i in range(len(rgb_image_batched)):
-        # for i in tqdm(range(len(rgb_image_batched))):
+            # for i in tqdm(range(len(rgb_image_batched))):
             if goal_image_keypoints is None:
                 goal_image_keypoints = {}
             if rgb_image_keypoints is None:
@@ -233,7 +278,7 @@ class GoatMatching(Matching):
                 goal_image_processed = goal_image
             if isinstance(rgb_image_batched[i], np.ndarray):
                 if rgb_image_batched[i].shape[0] == 3:
-                    rgb_image_batched[i] = rgb_image_batched[i].transpose(1,2,0)
+                    rgb_image_batched[i] = rgb_image_batched[i].transpose(1, 2, 0)
                 rgb_image_processed = self._preprocess_image(
                     rgb_image_batched[i].astype(np.uint8)
                 )
@@ -280,7 +325,12 @@ class GoatMatching(Matching):
         views = views_orig
         if views[0].shape[0] == 3:
             views = torch.stack(
-                [self.clip_preprocess(ToPILImage()(v.transpose(2,1,0).astype(np.uint8))) for v in views],
+                [
+                    self.clip_preprocess(
+                        ToPILImage()(v.transpose(2, 1, 0).astype(np.uint8))
+                    )
+                    for v in views
+                ],
                 dim=0,
             )
         else:
@@ -307,7 +357,9 @@ class GoatMatching(Matching):
         goal_inst = None
         sorted_inst_ids = np.argsort(scores)[::-1]
         idx = 0
-        logger.debug(f"Getting best match. Scores: {scores}, instance_ids: {instance_ids}, score threshold: {score_thresh}.")
+        logger.debug(
+            f"Getting best match. Scores: {scores}, instance_ids: {instance_ids}, score threshold: {score_thresh}."
+        )
         while (
             idx < len(sorted_inst_ids) and scores[sorted_inst_ids[idx]] > score_thresh
         ):
@@ -321,8 +373,10 @@ class GoatMatching(Matching):
             else:
                 best_instance_id = instance_ids[inst_idx]
             if instance_ids[inst_idx] == -1:
-                #* The reason that this might happen is sometimes someobjects are overriding that instance when projecting into 2D (object with highest point is chosen in a specifc cell).
-                logger.debug("Found the goal in current observation, but is not in instance map. Skipping.")
+                # * The reason that this might happen is sometimes someobjects are overriding that instance when projecting into 2D (object with highest point is chosen in a specifc cell).
+                logger.debug(
+                    "Found the goal in current observation, but is not in instance map. Skipping."
+                )
                 continue
             inst_map_idx = instance_map == best_instance_id
             inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
@@ -361,9 +415,7 @@ class GoatMatching(Matching):
             logger.debug(f"Instance {inst_idx+1} score: {agg_scores[-1]}")
         return agg_scores
 
-    def get_goal_map_from_goal_instance(
-        self, instance_map, lmb, goal_inst
-    ):
+    def get_goal_map_from_goal_instance(self, instance_map, lmb, goal_inst):
         #! myTODO: We are checking goal_inst and instance_goal_found here before calling the function, so I should be able to remove instance_goal_found as input.
         if goal_inst is None:
             logger.error(f"Goal instance {goal_inst} not found")
@@ -378,22 +430,22 @@ class GoatMatching(Matching):
             pose = instance_views[best_view].pose
             curr_x, curr_y, curr_o, gy1, _, gx1, _ = pose.tolist()
 
-
             # Past pose closest to the goal instance, new code
             inst_map_idx = instance_map == goal_inst
             inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
             goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
-            
+
             #! The output goal pose is the actual index in global map
-            global_view_loc = [int(curr_y * 100.0 / 5) , int(curr_x * 100.0 / 5), curr_o]
+            global_view_loc = [int(curr_y * 100.0 / 5), int(curr_x * 100.0 / 5), curr_o]
 
             # from home_robot.utils.visualization import visualize_map
             # import os
             # current_dir = os.path.dirname(os.path.abspath(__file__))
             # visualize_map(goal_map.shape, current_dir, f"goal_instance_{goal_inst}_coverage_map.png" , goal_map=goal_map.cpu().numpy())
 
-            logger.debug(f">>> Goal instance {goal_inst} best view loc is: {global_view_loc}, with coverage {instance_views[best_view].object_coverage}. Returning goal_pose in addition to goal_map.")
-
+            logger.debug(
+                f">>> Goal instance {goal_inst} best view loc is: {global_view_loc}, with coverage {instance_views[best_view].object_coverage}. Returning goal_pose in addition to goal_map."
+            )
 
         else:
             inst_map_idx = instance_map == goal_inst
@@ -404,7 +456,6 @@ class GoatMatching(Matching):
         goal_map = goal_map.cpu().numpy()
 
         return goal_map, global_view_loc
-
 
     def select_and_localize_instance(
         self,
@@ -424,11 +475,9 @@ class GoatMatching(Matching):
         instance_goal_found = False
         goal_inst = None
 
-        if all_confidences is not None and len(all_confidences) > 0:
+        if len(all_confidences) > 0:
             logger.debug(f"Matching with memory: {len(all_confidences)} instances")
-            agg_scores = self.aggregate_scores_per_instance(
-                all_confidences, agg_fn
-            )
+            agg_scores = self.aggregate_scores_per_instance(all_confidences, agg_fn)
             if len(agg_scores) > 0:
                 instance_goal_found, goal_inst = self.get_best_match(
                     agg_scores, instance_ids, instance_map, score_thresh
@@ -437,26 +486,30 @@ class GoatMatching(Matching):
             logger.info(f"Goal instance {goal_inst} found by matching with memory.")
         else:
             logger.debug(f"No matches found in the memory")
-        
 
-        if instance_goal_found is False and confidence is not None and len(confidence) > 0:
+        if (
+            instance_goal_found is False
+            and len(confidence) > 0
+        ):
             logger.debug(f"Matching with observation: {len(confidence)} instances")
             global_instance_ids = [
                 local_id_to_global_id_map.get(i, -1)
                 for i in frame_matches_local_instance_ids
             ]
-            logger.debug(f"Global instance ids: {global_instance_ids}, local instance ids: {frame_matches_local_instance_ids}")
-            agg_scores = self.aggregate_scores_per_instance(
-                confidence, agg_fn
+            logger.debug(
+                f"Global instance ids: {global_instance_ids}, local instance ids: {frame_matches_local_instance_ids}"
             )
+            agg_scores = self.aggregate_scores_per_instance(confidence, agg_fn)
+
             instance_goal_found, goal_inst = self.get_best_match(
                 agg_scores, global_instance_ids, instance_map, score_thresh
             )
             if instance_goal_found is True:
-                logger.debug(f"Goal instance {goal_inst} found in this step by matching with observation.")
+                logger.debug(
+                    f"Goal instance {goal_inst} found in this step by matching with observation."
+                )
             else:
                 logger.debug(f"No matches found with observation")
-
 
         if goal_inst is not None and instance_goal_found is True:
             logger.info(f"Localizing found goal instance")
@@ -465,5 +518,5 @@ class GoatMatching(Matching):
             )
         else:
             logger.debug(f"Didn't find any match in this step")
-        
+
         return goal_map, goal_pose, instance_goal_found, goal_inst

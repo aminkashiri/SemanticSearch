@@ -97,8 +97,6 @@ class GoatAgent(Agent):
             instance_memory=self.instance_memory,
         )
 
-        self.image_matching_function = self.matching.match_image_to_image
-
         self._module = GoatAgentModule(
             config, matching=self.matching, instance_memory=self.instance_memory
         )
@@ -134,7 +132,6 @@ class GoatAgent(Agent):
             np.ceil(agent_radius_cm / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
         self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
-
 
         if config.AGENT.panorama_start:
             panorama_start_steps = int(360 / config.ENVIRONMENT.turn_angle)
@@ -189,6 +186,13 @@ class GoatAgent(Agent):
             exploration_strategy=config.AGENT.exploration_strategy,
             goto_past_pose=config.AGENT.SUPERGLUE.goto_past_pose,
         )
+
+        self.image_matching_function = self.matching.match_image_to_image
+        self.matching_fn = {
+            "imagenav": self.image_matching_function,
+            "languagenav": self.matching.match_language_to_image,
+            "objectnav": None,
+        }
 
     @torch.no_grad()
     def prepare_planner_inputs(
@@ -279,7 +283,7 @@ class GoatAgent(Agent):
         frontier_map = self.policy.get_frontier_map(
             self.semantic_map.local_map,
             self.semantic_map.local_loc,
-            self.total_timesteps + 1,
+            self.sub_task_timesteps[self.current_task_idx]+1,
         )
         self.semantic_map.frontier_map = frontier_map.cpu().numpy()
 
@@ -304,7 +308,7 @@ class GoatAgent(Agent):
                 "explored_map": self.semantic_map.get_explored_map(),
                 "semantic_map": self.semantic_map.get_semantic_map(),
                 "been_close_map": self.semantic_map.get_been_close_map(),
-                "timestep": self.total_timesteps,
+                "timestep": self.sub_task_timesteps[self.current_task_idx],
             }
             if self.record_instance_ids:
                 vis_inputs["instance_map"] = self.semantic_map.get_instance_map()
@@ -318,7 +322,7 @@ class GoatAgent(Agent):
         self.goal_image = None
         self.goal_image_keypoints = None
         self.goal_mask = None
-        self._module.reset_sub_episode()
+        self._module.reset_current_goal()
 
     def reset(self):
         """Initialize agent state. Reset is at the beginning of a new episode (not each task)."""
@@ -337,9 +341,7 @@ class GoatAgent(Agent):
             self.imagenav_visualizer.reset()
 
         self.instance_map = None
-        self.goal_image = None
-        self.goal_mask = None
-        self.goal_image_keypoints = None
+        self.reset_sub_episode()
         self.planner.reset()
         self._module.reset()
 
@@ -476,9 +478,9 @@ class GoatAgent(Agent):
 
         if action == DiscreteNavigationAction.STOP:
             if len(obs.task_observations["tasks"]) - 1 > self.current_task_idx:
-                self.current_task_idx += 1
-                self.total_timesteps = 0
                 self.reset_sub_episode()
+                self.current_task_idx += 1
+                self.navigate_to_best = False
         return action, info
 
     def _preprocess_obs(self, obs: Observations, task_type: str):
@@ -492,65 +494,26 @@ class GoatAgent(Agent):
 
         current_task = obs.task_observations["tasks"][self.current_task_idx]
 
-        semantic = obs.semantic
-        instance_ids = None
-
         (
             confidences,
             frame_matches_local_instance_ids,
             all_confidences,
             instance_ids,
-        ) = (None, None, [], [])
-
+        ) = (
+            [],
+            [],
+            [],
+            [],
+        )
 
         if not self._module.instance_goal_found:
-            if task_type == "imagenav":
-                if self.goal_image is None:
-                    img_goal = obs.task_observations["tasks"][self.current_task_idx][
-                        "image"
-                    ]
-                    (
-                        self.goal_image,
-                        self.goal_image_keypoints,
-                    ) = self.matching.get_goal_image_keypoints(img_goal)
-                    # self.goal_mask, _ = self.instance_seg.get_goal_mask(img_goal)
-
-                (
-                    confidences,
-                    frame_matches_local_instance_ids,
-                ) = self.matching.get_matches_against_current_frame(
-                    self.image_matching_function,
-                    self.total_timesteps,
-                    image_goal=self.goal_image,
-                    goal_image_keypoints=self.goal_image_keypoints,
-                    categories=[current_task["semantic_id"]],
-                    use_full_image=False,
-                )
-
-            elif task_type == "languagenav":
-                (
-                    confidences,
-                    frame_matches_local_instance_ids,
-                ) = self.matching.get_matches_against_current_frame(
-                    self.matching.match_language_to_image,
-                    self.total_timesteps,
-                    language_goal=current_task["description"],
-                    categories=[current_task["semantic_id"]],
-                    use_full_image=True,
-                )
-            elif task_type == "objectnav":
-                (
-                    confidences,
-                    frame_matches_local_instance_ids,
-                ) = self.matching.get_matches_against_current_frame(
-                    None,
-                    self.total_timesteps,
-                    categories=[current_task["semantic_id"]],
-                )
+            confidences, frame_matches_local_instance_ids = (
+                self._match_against_current_frame(task_type, current_task, obs)
+            )
 
         # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless.
         # * Maybe I should change the config. But nevertheles, this works even with 380.
-        semantic = self.one_hot_encoding[torch.from_numpy(semantic).to(self.device)]
+        semantic = self.one_hot_encoding[torch.from_numpy(obs.semantic).to(self.device)]
 
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
@@ -612,57 +575,79 @@ class GoatAgent(Agent):
             instance_ids,
         )
 
+    def _match_against_current_frame(self, task_type, current_task, obs):
+        image_goal = None
+        language_goal = None
+
+        if task_type == "imagenav":
+            if self.goal_image is None:
+                img_goal = obs.task_observations["tasks"][self.current_task_idx][
+                    "image"
+                ]
+                self.goal_image, self.goal_image_keypoints = (
+                    self.matching.get_goal_image_keypoints(img_goal)
+                )
+                # self.goal_mask, _ = self.instance_seg.get_goal_mask(img_goal)
+            image_goal = self.goal_image
+
+        elif task_type == "languagenav":
+            language_goal = current_task["description"]
+
+        confidences, frame_matches_local_instance_ids = (
+            self.matching.get_matches_against_current_frame(
+                self.matching_fn[task_type],
+                self.total_timesteps,
+                image_goal=image_goal,
+                goal_image_keypoints=self.goal_image_keypoints,
+                language_goal=language_goal,
+                categories=[current_task["semantic_id"]],
+                use_full_image=False,
+                global_pose=self.semantic_map.global_pose,
+            )
+        )
+
+        return confidences, frame_matches_local_instance_ids
+
     def _match_against_memory(self, task_type: str, current_task: Dict):
         logger.info("--------Matching against memory!--------")
+        image_goal = None
+        language_goal = None
+        goal_image_keypoints = None
         if task_type == "languagenav":
-            (
-                all_confidences,
-                instance_ids,
-            ) = self.matching.get_matches_against_memory(
-                self.matching.match_language_to_image,
-                self.total_timesteps,
-                language_goal=current_task["description"],
-                use_full_image=True,
-                categories=[current_task["semantic_id"]],
-            )
-
+            language_goal = current_task["description"]
         elif task_type == "imagenav":
-            (
-                all_confidences,
-                instance_ids,
-            ) = self.matching.get_matches_against_memory(
-                self.image_matching_function,
-                self.sub_task_timesteps[self.current_task_idx],
-                image_goal=self.goal_image,
-                goal_image_keypoints=self.goal_image_keypoints,
-                use_full_image=True,
-                categories=[current_task["semantic_id"]],
-            )
-        elif task_type == "objectnav":
-            (
-                all_confidences,
-                instance_ids,
-            ) = self.matching.get_matches_against_memory(
-                None,
-                self.total_timesteps,
-                categories=[current_task["semantic_id"]],
-            )
+            image_goal = self.goal_image
+            goal_image_keypoints = self.goal_image_keypoints
+        (
+            all_confidences,
+            instance_ids,
+        ) = self.matching.get_matches_against_memory(
+            self.matching_fn[task_type],
+            self.total_timesteps,
+            language_goal=language_goal,
+            image_goal=image_goal,
+            goal_image_keypoints=goal_image_keypoints,
+            use_full_image=True,
+            categories=[current_task["semantic_id"]],
+            global_pose=self.semantic_map.global_pose
+        )
 
-        stats = {
-            i: {
-                "mean": float(scores.mean()),
-                "median": float(np.median(scores)),
-                "max": float(scores.max()),
-                "min": float(scores.min()),
-                "all": scores.flatten().tolist(),
+        if len(all_confidences) > 0:
+            stats = {
+                i: {
+                    "mean": float(scores.mean()),
+                    "median": float(np.median(scores)),
+                    "max": float(scores.max()),
+                    "min": float(scores.min()),
+                    "all": scores.flatten().tolist(),
+                }
+                for i, scores in zip(instance_ids, all_confidences)
             }
-            for i, scores in zip(instance_ids, all_confidences)
-        }
-        with open(
-            f"{self.goal_matching_vis_dir}/goal{self.current_task_idx}_{task_type}_stats.json",
-            "w",
-        ) as f:
-            json.dump(stats, f, indent=4)
+            with open(
+                f"{self.goal_matching_vis_dir}/goal{self.current_task_idx}_{task_type}_stats.json",
+                "w",
+            ) as f:
+                json.dump(stats, f, indent=4)
         return all_confidences, instance_ids
 
     def _keep_only_largest_cluster_in_instance_map(self) -> None:
