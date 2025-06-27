@@ -262,7 +262,7 @@ class FMMPlanner:
         (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
 
         # Rechable if stg distance is less than current location (negative).
-        reachable = subset[stg_x, stg_y] < -0.0001
+        reachable = (subset[stg_x, stg_y] < -0.0001) or stop
 
         return (
             (stg_x + state[0] - self.du) * scale,

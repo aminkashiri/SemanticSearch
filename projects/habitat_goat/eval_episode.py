@@ -92,6 +92,10 @@ if __name__ == "__main__":
     config.habitat.dataset.content_scenes = all_scenes[:5]
     # config.habitat.dataset.content_scenes = ['BAbdmeyTvMZ']
 
+    downward_steps = ["7MXmsvcQjpJ"]
+    config.habitat.dataset.content_scenes = [scene for scene in config.habitat.dataset.content_scenes if scene not in downward_steps]
+
+
 
 
     logger.info("Starting code")
@@ -171,7 +175,7 @@ if __name__ == "__main__":
                 old_task_idx = current_task_idx
             t += 1
             logger.info(f"-------------------- Episode step {t} --------------------")
-            logger.info(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
+            logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
             obs = env.get_observation()
             if t == 1:
                 obs_tasks = []

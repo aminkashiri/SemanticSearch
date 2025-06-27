@@ -73,14 +73,14 @@ class GoatAgentModule(nn.Module):
         self.goal_map = None
         self.goal_pose = None
 
-    def reset_sub_episode(self):
+    def reset_current_goal(self):
         self.instance_goal_found = False
         self.goal_inst = None
         self.goal_map = None
         self.goal_pose = None
 
     def reset(self):
-        self.reset_sub_episode()
+        self.reset_current_goal()
 
     def forward(
         self,
@@ -181,9 +181,8 @@ class GoatAgentModule(nn.Module):
                 instance_map, lmb, self.goal_inst
             )
         else:
-            logger.info(f"Searching for instance goal.")
-            logger.debug(f"candidate matches in memory: {len(all_confidences)}, candidate matches in observation: {confidence is not None}")
-            if len(all_confidences) > 0 or confidence is not None:
+            logger.debug(f"candidate matches in memory: {len(all_confidences)}, candidate matches in observation: {len(confidence) > 0}")
+            if len(all_confidences) > 0 or len(confidence) > 0:
                 (
                     self.goal_map,
                     self.goal_pose,
@@ -199,8 +198,6 @@ class GoatAgentModule(nn.Module):
                     instance_ids=instance_ids,
                     score_thresh=score_thresh,
                 )
-            else:
-                logger.info(f"No candidate matches found in memory or observation.")
         
         return (
             self.goal_map,
