@@ -574,7 +574,6 @@ class GoatAgent(Agent):
                     self.navigate_to_best[0] = True
                     self.force_match_against_memory = True
             else:
-                self.fully_explored[0] = True
                 self.force_match_against_memory = True
 
             # if self.reached_goal_candidate:
