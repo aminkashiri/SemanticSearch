@@ -877,6 +877,9 @@ class GoatAgent(Agent):
             # adopt masked map if non-empty
             if goal_map_.sum() > 0:
                 clustered_map = goal_map_
+            else:
+                logger.debug(f"Clustered goal empty. Using original goal_map.")
+                clustered_map = goal_map[0]
         except Exception as e:
             logger.debug(f"Faced an error {e} while clustering goal_map")
             clustered_map = goal_map[0]
