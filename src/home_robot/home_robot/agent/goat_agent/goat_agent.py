@@ -33,6 +33,8 @@ from .goat_matching import GoatMatching
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
+from home_robot.utils.visualization import visualize_map
+
 # For visualizing exploration issues
 debug_frontier_map = False
 
@@ -875,9 +877,20 @@ class GoatAgent(Agent):
 
             # adopt masked map if non-empty
             if goal_map_.sum() > 0:
-                goal_map[0] = goal_map_
+                clustered_map = goal_map_
         except Exception as e:
             logger.debug(f"Faced an error {e} while clustering goal_map")
-            return goal_map
+            clustered_map = goal_map[0]
 
+        
+        visualize_map(
+            goal_map[0].shape,
+            self.planner.vis_dir,
+            f"{self.sub_task_timesteps[0][self.current_task_idx]}_02.cluster_goal.png",
+            goal_map=clustered_map,
+            dilated_goal_map=goal_map[0],
+            traversible=1 - self.semantic_map.get_obstacle_map(0),
+        )
+
+        goal_map[0] = clustered_map
         return goal_map
