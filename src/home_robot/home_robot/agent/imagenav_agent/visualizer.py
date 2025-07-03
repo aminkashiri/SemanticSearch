@@ -26,42 +26,42 @@ from home_robot.perception.detection.maskrcnn.coco_categories import (
 )
 from home_robot.utils.visualization import draw_line, get_contour_points
 
-MAP_COLOR_PALETTE = [
-    int(x * 255.0)
-    for x in [
-        1.0,
-        1.0,
-        1.0,  # empty space
-        0.6,
-        0.6,
-        0.6,  # obstacles
-        0.95,
-        0.95,
-        0.95,  # explored area
-        0.96,
-        0.36,
-        0.26,  # visited area
-        0.12,
-        0.46,
-        0.70,  # closest goal
-        0.63,
-        0.78,
-        0.95,  # rest of goal
-        0.6,
-        0.87,
-        0.54,  # been close map
-        0.0,
-        1.0,
-        0.0,  # short term goal
-        0.6,
-        0.17,
-        0.54,  # blacklisted targets map
-        0.0,
-        0.0,
-        0.0,  # instance border
-        *coco_categories_color_palette,
-    ]
-]
+# MAP_COLOR_PALETTE = [
+#     int(x * 255.0)
+#     for x in [
+#         1.0,
+#         1.0,
+#         1.0,  # empty space
+#         0.6,
+#         0.6,
+#         0.6,  # obstacles
+#         0.95,
+#         0.95,
+#         0.95,  # explored area
+#         0.96,
+#         0.36,
+#         0.26,  # visited area
+#         0.12,
+#         0.46,
+#         0.70,  # closest goal
+#         0.63,
+#         0.78,
+#         0.95,  # rest of goal
+#         0.6,
+#         0.87,
+#         0.54,  # been close map
+#         0.0,
+#         1.0,
+#         0.0,  # short term goal
+#         0.6,
+#         0.17,
+#         0.54,  # blacklisted targets map
+#         0.0,
+#         0.0,
+#         0.0,  # instance border
+#         *coco_categories_color_palette,
+#     ]
+# ]
 
 MAP_COLOR_PALETTE = languagenav_2categories_map_color_palette
 
@@ -183,7 +183,6 @@ class NavVisualizer:
     def visualize(
         self,
         obstacle_map: np.ndarray,
-        closest_goal_map: Optional[np.ndarray],
         global_pose: np.ndarray,
         lmb: np.ndarray,
         explored_map: np.ndarray,
@@ -191,6 +190,7 @@ class NavVisualizer:
         semantic_frame: np.ndarray,
         timestep: int,
         last_goal_image,
+        inst_goal_found,
         last_td_map: Dict[str, Any] = None,
         last_collisions: Dict[str, Any] = None,
         semantic_map: Optional[np.ndarray] = None,
@@ -201,10 +201,9 @@ class NavVisualizer:
         frontier_map: Optional[np.ndarray] = None,
         dilated_obstacle_map: Optional[np.ndarray] = None,
         instance_map: Optional[np.ndarray] = None,
-        short_term_goal: Optional[np.ndarray] = None,
-        view_loc = None,
-        instance_goal_found=None,
-        total_timesteps: int = 0,
+        closest_goal_map: Optional[np.ndarray] = None,
+        is_local: bool = True,
+        **kwargs,
     ) -> None:
         """Visualize frame input and semantic map.
 
@@ -226,10 +225,11 @@ class NavVisualizer:
         """
         global_pose = global_pose.cpu().float().numpy()
         lmb = lmb.cpu().float().numpy()
-        if instance_goal_found == True:
+        if inst_goal_found == True:
             goal_map = instance_map
         else:
             goal_map = frontier_map
+            assert not frontier_map is None
 
         if not self.print_images:
             return
@@ -241,19 +241,22 @@ class NavVisualizer:
             obstacle_map = dilated_obstacle_map
 
         goal_frame = self.make_goal(last_goal_image)
+        # cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_8_1.goal_frame.png"), goal_frame)
 
         obs_frame = self.make_observations(
             rgb_frame,
             last_collisions["is_collision"],
-            instance_goal_found,
+            inst_goal_found,
             metrics,
         )
+        # cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_8_2.obs_frame.png"), obs_frame)
         sem_frame = self.make_sem_observations(
             semantic_frame,
             last_collisions["is_collision"],
-            instance_goal_found,
+            inst_goal_found,
             metrics,
         )
+        # cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_8_3.sem_frame.png"), sem_frame)
         map_pred_frame = self.make_map_preds(
             global_pose,
             lmb,
@@ -263,7 +266,9 @@ class NavVisualizer:
             closest_goal_map,
             goal_map,
             visualize_goal,
+            is_local,
         )
+        # cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_8_4.map_pred_frame.png"), map_pred_frame)
         td_map_frame = None if last_td_map is None else self.make_td_map(last_td_map)
 
         kp_frame = np.ones_like(goal_frame) * 255
@@ -459,6 +464,9 @@ class NavVisualizer:
         )
 
         # sem_img = sem_img % 255
+        # semantic_map_vis.putpalette(MAP_COLOR_PALETTE)
+        # sem_img_offset = sem_img + PI.SEM_START
+        # semantic_map_vis.putdata(sem_img_offset.flatten().astype(np.uint8))
 
         semantic_map_vis.putpalette(languagenav_2categories_color_palette)
         semantic_map_vis.putdata(sem_img.flatten().astype(np.uint8))
@@ -481,7 +489,7 @@ class NavVisualizer:
         if collision:
             sem_img = draw_collision(sem_img)
 
-        sem_img = cv2.cvtColor(sem_img, cv2.COLOR_RGB2BGR)
+        # sem_img = cv2.cvtColor(sem_img, cv2.COLOR_RGB2BGR)
         sem_img = self._add_border(sem_img, border_size)
         w = sem_img.shape[1]
 
@@ -519,6 +527,7 @@ class NavVisualizer:
         closest_goal_map: np.ndarray,
         goal_map: np.ndarray,
         visualize_goal: bool,
+        is_local=True,
     ) -> np.ndarray:
         """make the predicted map sub-frame."""
         if semantic_map is None:
@@ -526,8 +535,11 @@ class NavVisualizer:
             semantic_map = np.zeros_like(obstacle_map) + fill_val
 
         curr_x, curr_y, curr_o = global_pose
-        gy1, gy2, gx1, gx2 = lmb
-        gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
+        if is_local:
+            gy1, gy2, gx1, gx2 = lmb
+            gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
+        else:
+            gy1, gy2, gx1, gx2 = 0, obstacle_map.shape[0], 0, obstacle_map.shape[1]
 
         # Update visited map with last visited area
         if self.last_xy is not None:
@@ -560,7 +572,7 @@ class NavVisualizer:
         semantic_map[visited_mask] = PI.VISITED
 
         # Goal
-        if visualize_goal:
+        if visualize_goal and not goal_map is None:
             selem = skimage.morphology.disk(4)
             goal_mat = 1 - skimage.morphology.binary_dilation(goal_map, selem) != 1
             goal_mask = goal_mat == 1

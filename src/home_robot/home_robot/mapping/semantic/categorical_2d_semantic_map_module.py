@@ -189,6 +189,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         exploration_type="default",
         gaze_width=30,
         gaze_distance=3,
+        agent_cell_radius: int = 1,
     ):
         """
         Arguments:
@@ -278,13 +279,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.exploration_type = exploration_type
         self.gaze_width = gaze_width
         self.gaze_distance = gaze_distance
+        self.agent_cell_radius = agent_cell_radius
 
     @torch.no_grad()
     def forward(
         self,
         obs: Tensor,
         pose_delta: Tensor,
-        camera_poses: Tensor,
         init_local_map: Tensor,
         init_global_map: Tensor,
         init_local_pose: Tensor,
@@ -342,7 +343,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             pose_delta,
             init_local_map.clone(),
             init_local_pose.clone(),
-            camera_poses,
             origins,
             lmb,
             obstacle_locations,
@@ -497,7 +497,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         pose_delta: Tensor,
         prev_map: Tensor,
         prev_pose: Tensor,
-        camera_pose: Tensor,
         origins: Tensor,
         lmb: Tensor,
         obstacle_locations: Optional[Tensor] = None,
@@ -523,31 +522,31 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
         obs_channels, h, w = obs.size()
         device, dtype = obs.device, obs.dtype
-        if camera_pose is not None:
-            # TODO: make consistent between sim and real
-            # hab_angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="YZX")
-            # angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="ZYX")
-            # angles = torch.Tensor(
-            #     [tra.euler_from_matrix(p[:3, :3].cpu(), "rzyx") for p in camera_pose]
-            # )
-            angles = torch.Tensor(tra.euler_from_matrix(camera_pose[:3, :3], "rzyx"))
+        # if camera_pose is not None: # It is none in our case
+        #     # TODO: make consistent between sim and real
+        #     # hab_angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="YZX")
+        #     # angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="ZYX")
+        #     # angles = torch.Tensor(
+        #     #     [tra.euler_from_matrix(p[:3, :3].cpu(), "rzyx") for p in camera_pose]
+        #     # )
+        #     angles = torch.Tensor(tra.euler_from_matrix(camera_pose[:3, :3], "rzyx"))
 
-            # For habitat - pull x angle
-            # tilt = angles[:, -1]
-            # For real robot
-            tilt = angles[1]
-            # angles gives roll, pitch, yaw
-            yaw = angles[-1]
+        #     # For habitat - pull x angle
+        #     # tilt = angles[:, -1]
+        #     # For real robot
+        #     tilt = angles[1]
+        #     # angles gives roll, pitch, yaw
+        #     yaw = angles[-1]
 
-            # Get the agent pose
-            # hab_agent_height = camera_pose[:, 1, 3] * 100
-            agent_pos = camera_pose[:3, 3] * 100
-            agent_height = agent_pos[2]
+        #     # Get the agent pose
+        #     # hab_agent_height = camera_pose[:, 1, 3] * 100
+        #     agent_pos = camera_pose[:3, 3] * 100
+        #     agent_height = agent_pos[2]
 
-        else:
-            yaw = 0
-            tilt = torch.zeros(0)
-            agent_height = self.agent_height
+        # else:
+        yaw = 0
+        tilt = torch.zeros(0)
+        agent_height = self.agent_height
 
         yaw = torch.tensor(yaw)
         depth = obs[3, :, :].float()
@@ -817,9 +816,14 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         x, y = curr_loc
         current_map[
-            MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2,
+            MC.CURRENT_LOCATION,
             y - 2 : y + 3,
             x - 2 : x + 3,
+        ].fill_(1.0)
+        current_map[
+            MC.VISITED_MAP,
+            y - self.agent_cell_radius: y + self.agent_cell_radius,
+            x - self.agent_cell_radius: x + self.agent_cell_radius
         ].fill_(1.0)
         # if self.old_x and self.old_y:
         #     # Draw a line from the previous location to the current location

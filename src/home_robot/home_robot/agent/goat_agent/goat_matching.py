@@ -109,20 +109,26 @@ class GoatMatching(Matching):
 
             pdb.set_trace()
 
-    def match_to_category(self, instance_ids, global_pose, instance_memory, use_local_id=False):
+    def match_to_category(
+        self, instance_ids, global_pose, instance_memory, use_local_id=False
+    ):
         #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
         output_instance_ids = []
         all_confidences = []
         for instance_id in instance_ids:
             global_instance_id = instance_id
             if use_local_id:
-                global_instance_id = instance_memory.local_id_to_global_id_map.get(instance_id, -1)
-                
+                global_instance_id = instance_memory.local_id_to_global_id_map.get(
+                    instance_id, -1
+                )
+
             if global_instance_id == -1:
                 continue
 
             output_instance_ids.append(instance_id)
-            instance_views = instance_memory.instance_views[global_instance_id].instance_views
+            instance_views = instance_memory.instance_views[
+                global_instance_id
+            ].instance_views
             # pick a view with maximum object coverage
             best_view = np.argmax([view.object_coverage for view in instance_views])
             instance_pose = instance_views[best_view].pose
@@ -265,8 +271,8 @@ class GoatMatching(Matching):
 
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
         logger.debug("Computing matching score with each view...")
-        for i in range(len(rgb_image_batched)):
-            # for i in tqdm(range(len(rgb_image_batched))):
+        # for i in range(len(rgb_image_batched)):
+        for i in tqdm(range(len(rgb_image_batched))):
             if goal_image_keypoints is None:
                 goal_image_keypoints = {}
             if rgb_image_keypoints is None:
@@ -352,53 +358,31 @@ class GoatMatching(Matching):
         similarity = (language_goal @ view_embeddings.T).squeeze(0)
         return similarity.detach().cpu().numpy().flatten()
 
-    def get_best_match(self, scores, instance_ids, instance_map, score_thresh):
-        instance_goal_found = False
-        goal_inst = None
+    def get_best_match(self, scores, instance_ids, score_thresh):
+        """instance_ids are global"""
         sorted_inst_ids = np.argsort(scores)[::-1]
         idx = 0
         logger.debug(
             f"Getting best match. Scores: {scores}, instance_ids: {instance_ids}, score threshold: {score_thresh}."
         )
         while (
-            idx < len(sorted_inst_ids) and scores[sorted_inst_ids[idx]] > score_thresh
+            idx < len(sorted_inst_ids) and scores[sorted_inst_ids[idx]] >= score_thresh
         ):
             inst_idx = sorted_inst_ids[idx]
             idx += 1
             logger.debug(
                 f"Trying to localize instance {inst_idx + 1} with score {scores[inst_idx]}"
             )
-            if instance_ids is None:
-                best_instance_id = inst_idx + 1
-            else:
-                best_instance_id = instance_ids[inst_idx]
-            if instance_ids[inst_idx] == -1:
+            best_instance_id = instance_ids[inst_idx]
+            if best_instance_id == -1:
                 # * The reason that this might happen is sometimes someobjects are overriding that instance when projecting into 2D (object with highest point is chosen in a specifc cell).
-                logger.debug(
-                    "Found the goal in current observation, but is not in instance map. Skipping."
-                )
+                logger.debug("No id provided for this instance. Skipping.")
                 continue
-            inst_map_idx = instance_map == best_instance_id
-            inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
+            # * We does not check it goal map is non-empty here. Somewehre else, I should make sure we can navigate to this goal.
+            return True, best_instance_id
 
-            if not self.goto_past_pose:
-                goal_map_temp = (instance_map[inst_map_idx] == best_instance_id).float()
-                if goal_map_temp.any():
-                    instance_goal_found = True
-                    goal_inst = best_instance_id
-                    logger.debug(f"Instance {goal_inst} will be the goal")
-                    return instance_goal_found, goal_inst
-                else:
-                    logger.debug("Instance was seen, but not present in local map.")
-            else:
-                #! TODODODODODOOD myTODO . FILL TODAY. THIS IS NOT OK. EVEN IF I CHECK IT IS IN THE LOCAL MAP, IT MIGHT NOT BE WHEN CHECKING FOR POSE
-                # we are ok with object not being on map when using agent pose as target
-                return True, best_instance_id
-
-        if idx == len(sorted_inst_ids):
-            logger.debug("Goal image does not match any instance.")
-
-        return instance_goal_found, goal_inst
+        logger.debug("Goal does not match any instance.")
+        return False, None
 
     def aggregate_scores_per_instance(self, confidences, agg_fn):
         agg_scores = []
@@ -415,108 +399,59 @@ class GoatMatching(Matching):
             logger.debug(f"Instance {inst_idx+1} score: {agg_scores[-1]}")
         return agg_scores
 
-    def get_goal_map_from_goal_instance(self, instance_map, lmb, goal_inst):
-        #! myTODO: We are checking goal_inst and instance_goal_found here before calling the function, so I should be able to remove instance_goal_found as input.
-        if goal_inst is None:
-            logger.error(f"Goal instance {goal_inst} not found")
-            raise Exception(f"Goal instance {goal_inst} not found")
-        global_view_loc = None
 
-        if self.goto_past_pose:
-            instance_memory = self.instance_memory
-            instance_views = instance_memory.instance_views[goal_inst].instance_views
-            # pick a view with maximum object coverage
-            best_view = np.argmax([view.object_coverage for view in instance_views])
-            pose = instance_views[best_view].pose
-            curr_x, curr_y, curr_o, gy1, _, gx1, _ = pose.tolist()
-
-            # Past pose closest to the goal instance, new code
-            inst_map_idx = instance_map == goal_inst
-            inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
-            goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
-
-            #! The output goal pose is the actual index in global map
-            global_view_loc = [int(curr_y * 100.0 / 5), int(curr_x * 100.0 / 5), curr_o]
-
-            # from home_robot.utils.visualization import visualize_map
-            # import os
-            # current_dir = os.path.dirname(os.path.abspath(__file__))
-            # visualize_map(goal_map.shape, current_dir, f"goal_instance_{goal_inst}_coverage_map.png" , goal_map=goal_map.cpu().numpy())
-
-            logger.debug(
-                f">>> Goal instance {goal_inst} best view loc is: {global_view_loc}, with coverage {instance_views[best_view].object_coverage}. Returning goal_pose in addition to goal_map."
-            )
-
-        else:
-            inst_map_idx = instance_map == goal_inst
-            inst_map_idx = torch.argmax(torch.sum(inst_map_idx, axis=(1, 2)))
-            goal_map = (instance_map[inst_map_idx] == goal_inst).to(torch.float)
-            logger.info(f">>> Returning goal_map for instance: {goal_inst}.")
-
-        goal_map = goal_map.cpu().numpy()
-
-        return goal_map, global_view_loc
-
-    def select_and_localize_instance(
+    def get_best_inst_goal(
         self,
-        instance_map: torch.Tensor,
-        lmb: torch.Tensor,  # local map boundaries
-        confidence: torch.Tensor,
-        frame_matches_local_instance_ids: List,
-        local_id_to_global_id_map: Optional[Dict],
-        all_confidences: List = None,
-        instance_ids: List = None,
+        obs_match_confidences: torch.Tensor = [],
+        obs_match_instance_ids: List = [],
+        local_id_to_global_id_map: Optional[Dict]= None,
+        mem_match_confidences: List = [],
+        mem_match_instance_ids: List = [],
         score_thresh: float = 0.0,
         agg_fn: str = "max",
     ) -> Tuple[torch.Tensor, torch.Tensor, bool, Optional[int]]:
-        """Select and localize an instance given computed matching scores."""
+        """
+        Select and localize an instance given computed matching scores. Note that instance map is the local map with local instance ids.
+        """
         goal_map = None
         goal_pose = None
-        instance_goal_found = False
-        goal_inst = None
+        inst_goal_found = False
+        inst_goal_id = None
 
-        if len(all_confidences) > 0:
-            logger.debug(f"Matching with memory: {len(all_confidences)} instances")
-            agg_scores = self.aggregate_scores_per_instance(all_confidences, agg_fn)
+        if len(mem_match_confidences) > 0:
+            logger.debug(f"Matching with memory: {len(mem_match_confidences)} instances")
+            agg_scores = self.aggregate_scores_per_instance(mem_match_confidences, agg_fn)
             if len(agg_scores) > 0:
-                instance_goal_found, goal_inst = self.get_best_match(
-                    agg_scores, instance_ids, instance_map, score_thresh
+                inst_goal_found, inst_goal_id = self.get_best_match(
+                    agg_scores, mem_match_instance_ids, score_thresh
                 )
-        if instance_goal_found is True:
-            logger.info(f"Goal instance {goal_inst} found by matching with memory.")
+        if inst_goal_found is True:
+            logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
         else:
             logger.debug(f"No matches found in the memory")
 
-        if (
-            instance_goal_found is False
-            and len(confidence) > 0
-        ):
-            logger.debug(f"Matching with observation: {len(confidence)} instances")
+        if inst_goal_found is False and len(obs_match_confidences) > 0:
+            logger.debug(f"Matching with observation: {len(obs_match_confidences)} instances")
             global_instance_ids = [
                 local_id_to_global_id_map.get(i, -1)
-                for i in frame_matches_local_instance_ids
+                for i in obs_match_instance_ids
             ]
             logger.debug(
-                f"Global instance ids: {global_instance_ids}, local instance ids: {frame_matches_local_instance_ids}"
+                f"Global instance ids: {global_instance_ids}, local instance ids: {obs_match_instance_ids}"
             )
-            agg_scores = self.aggregate_scores_per_instance(confidence, agg_fn)
+            agg_scores = self.aggregate_scores_per_instance(obs_match_confidences, agg_fn)
 
-            instance_goal_found, goal_inst = self.get_best_match(
-                agg_scores, global_instance_ids, instance_map, score_thresh
+            inst_goal_found, inst_goal_id = self.get_best_match(
+                agg_scores, global_instance_ids, score_thresh
             )
-            if instance_goal_found is True:
+            if inst_goal_found is True:
                 logger.debug(
-                    f"Goal instance {goal_inst} found in this step by matching with observation."
+                    f"Goal instance {inst_goal_id} found in this step by matching with observation."
                 )
             else:
                 logger.debug(f"No matches found with observation")
 
-        if goal_inst is not None and instance_goal_found is True:
-            logger.info(f"Localizing found goal instance")
-            goal_map, goal_pose = self.get_goal_map_from_goal_instance(
-                instance_map, lmb, goal_inst
-            )
-        else:
-            logger.debug(f"Didn't find any match in this step")
 
-        return goal_map, goal_pose, instance_goal_found, goal_inst
+        return inst_goal_found, inst_goal_id
+
+
