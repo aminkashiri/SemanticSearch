@@ -583,7 +583,6 @@ class DiscretePlanner:
                 _navigable_goal_map = dilated_goal_map.copy().astype(np.uint8)
             else:
                 _navigable_goal_map = navigable_goal_map.copy().astype(np.uint8)
-            _navigable_goal_map = navigable_goal_map.copy().astype(np.uint8)
             _navigable_goal_map = _navigable_goal_map
 
             white = np.ones((_navigable_goal_map.shape + (3,)), dtype=np.uint8) * 255

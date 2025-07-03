@@ -416,13 +416,18 @@ class DiscretePlanner:
             vis_postfix=postfix,
         )
 
-        # navigable_goal_map = goal_map
         navigable_goal_map = np.logical_and(goal_map, traversible)
         #! myTODO
-        assert np.any(navigable_goal_map)
-        # logger.info(
-        #     f"Couldn't find any navigable goal points in the map. returning replan=True, stop=False, to try again with next best option (lower dilation, frontier, best goal)."
-        # )
+        if not np.any(navigable_goal_map):
+            logger.info(
+                f"Couldn't find any navigable goal points in the map. Should only happned for frontier."
+            )
+            return (
+                False,
+                False,
+                None,
+                None,
+            )
 
         # * Previously they had another logic of dilating goal similar to obstacles too (cv2.dilate(sel)). I don't see much difference, but I can think more later
         dilated_goal_map = planner.dilate_goal(
@@ -636,13 +641,14 @@ class DiscretePlanner:
                 break
 
         
-        closest_goal_map = np.zeros_like(traversible)
-        closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
         vis_input = {
             "dilated_obstacle_map": 1-traversible,
-            "closest_goal_map": closest_goal_map,
             "is_local": is_local,
         }
+        if reachable:
+            closest_goal_map = np.zeros_like(traversible)
+            closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
+            vis_input["closest_goal_map"] = closest_goal_map
         return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
 
     def plan_to_instance_goal(self, instance_goal_id, postfix):

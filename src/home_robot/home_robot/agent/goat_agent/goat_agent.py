@@ -382,6 +382,7 @@ class GoatAgent(Agent):
                 "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
             )
             action = DiscreteNavigationAction.STOP
+            vis_inputs = {}
         else:
             action, is_local, vis_inputs = self.get_best_action(current_task)
 
