@@ -225,7 +225,6 @@ class Visualizer:
         closest_goal_map: Optional[np.ndarray] = None,
         global_pose: np.ndarray = None,
         lmb: np.ndarray = None,
-        found_goal: bool = None,
         explored_map: np.ndarray = None,
         semantic_map: np.ndarray = None,
         been_close_map: np.ndarray = None,
@@ -246,6 +245,7 @@ class Visualizer:
         instance_memory: Optional[InstanceMemory] = None,
         goal_pose = None,
         top_down_map = None,
+        is_local=True,
         **kwargs,
     ):
         """Visualize frame input and semantic map.
@@ -322,8 +322,11 @@ class Visualizer:
 
         if obstacle_map is not None:
             curr_x, curr_y, curr_o = global_pose.cpu().float().numpy()
-            gy1, gy2, gx1, gx2 = lmb
-            gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
+            if is_local:
+                gy1, gy2, gx1, gx2 = lmb
+                gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
+            else:
+                gy1, gy2, gx1, gx2 = 0, obstacle_map.shape[0], 0, obstacle_map.shape[1]
 
             # Update visited map with last visited area
             if self.last_xy is not None:

@@ -2,32 +2,30 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-import math
 import os
-import shutil
-import torch
-from typing import List, Tuple
-
 import cv2
-import matplotlib.pyplot as plt
+import math
+import scipy
+import shutil
 import numpy as np
 import skimage.morphology
-
+from typing import List, Tuple
+from bresenham import bresenham
 import home_robot.utils.pose as pu
+from sklearn.cluster import DBSCAN
+from .fmm_planner import FMMPlanner
 from home_robot.core.interfaces import (
     ContinuousNavigationAction,
     DiscreteNavigationAction,
 )
-from home_robot.utils.geometry import xyt_global_to_base
-
-from .fmm_planner import FMMPlanner
-
-from bresenham import bresenham
 from home_robot.utils.visualization import visualize_map
 from home_robot.utils.logger import get_logger
+from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
+    Categorical2DSemanticMapState,
+)
+
+
 logger = get_logger()
-
-
 
 def add_boundary(mat: np.ndarray, value=1) -> np.ndarray:
     h, w = mat.shape
@@ -62,13 +60,15 @@ class DiscretePlanner:
         exp_name: str,
         min_goal_distance_cm: float = 50.0,
         min_obs_dilation_selem_radius: int = 1,
-        agent_cell_radius: int = 1,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
         goal_tolerance: float = 0.01,  # for sim
         discrete_actions: bool = True,
         continuous_angle_tolerance: float = 30.0,
         panorama_start_steps: int = 0,
+        semantic_map: Categorical2DSemanticMapState = None,
+        instance_memory=None,
+        goal_filtering=False,
     ):
         """
         Similar to old DiscretePlanner, but with changes to:
@@ -102,13 +102,11 @@ class DiscretePlanner:
         self.step_size = step_size
         self.start_obs_dilation_selem_radius = obs_dilation_selem_radius
         self.min_obs_dilation_selem_radius = min_obs_dilation_selem_radius
-        self.agent_cell_radius = agent_cell_radius
         self.goal_tolerance = goal_tolerance
         self.continuous_angle_tolerance = continuous_angle_tolerance
 
         self.vis_dir = None
         self.collision_map = None
-        self.visited_map = None
         self.col_width = None
         self.last_global_pose = None
         self.curr_global_pose = None
@@ -118,16 +116,18 @@ class DiscretePlanner:
         self.obs_dilation_selem = None
         self.min_goal_distance_cm = min_goal_distance_cm
         self.dd = None
-        self.reached_goal_candidate = False  # to keep track of whether goal has been reached – for stacking additional checks to confirm whether goal is correct
 
         self.map_downsample_factor = map_downsample_factor
         self.map_update_frequency = map_update_frequency
-        self.panorama_start_steps=panorama_start_steps
+        self.panorama_start_steps = panorama_start_steps
+
+        self.semantic_map = semantic_map
+        self.instance_memory = instance_memory
+        self.goal_filtering = goal_filtering
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
         self.collision_map = np.zeros(self.map_shape)
-        self.visited_map = np.zeros(self.map_shape)
         self.col_width = 1
         self.last_global_pose = None
         self.curr_global_pose = [
@@ -153,15 +153,12 @@ class DiscretePlanner:
 
     def plan(
         self,
-        obstacle_map: np.ndarray,
-        frontier_map: np.ndarray,
-        global_pose: np.ndarray,
-        lmb: np.ndarray,
-        instance_goal_found: bool,
-        instance_map: np.ndarray,
-        view_loc: List[float] = None,
-        timestep: int = None,
-        total_timesteps: int =None,
+        inst_goal_found: bool,
+        inst_goal_id: int,
+        timestep: int,
+        total_timesteps: int,
+        fallback_to_frontier=True,
+        postfix=""
     ) -> Tuple[DiscreteNavigationAction, np.ndarray]:
         """Plan a low-level action.
 
@@ -177,68 +174,25 @@ class DiscretePlanner:
             closest_goal_map: (M, M) binary array denoting closest goal
              location in the goal map in geodesic distance
         """
-        reset_module = False
-        #! Note: All the maps are local maps
-        assert timestep is not None
+        reachable = False
+        stop = False
+        viewpoint_orientation = None
         self.timestep = timestep
 
-        if instance_goal_found:
+        if inst_goal_found:
             self.episode_panorama_start_steps = 0
 
         if total_timesteps < self.episode_panorama_start_steps:
             #! When total_timesteps is less than the panorama start steps, we just turn right. So if turn angle is 30, at 12th step, we don't need to turn anymore.
             return (
                 DiscreteNavigationAction.TURN_RIGHT,
-                None,
-                None,
-                None,
-                True, # Means we have found a path, don't stop.
-                False, #reset module
+                True,  # Means we have found a path, don't stop.
+                True, # is_local
+                {},
             )
 
         self.last_global_pose = self.curr_global_pose
-        self.curr_global_pose = global_pose
-        obstacle_map = np.rint(obstacle_map)
-
-        planning_window = lmb.tolist()
-
-        #! This is actually correct as far as I get. lmb is [y1,y2,x1,x2], so this makes sense.
-        local_loc = [
-            int(self.curr_global_pose[1] * 100.0 / self.map_resolution - lmb[0]),
-            int(self.curr_global_pose[0] * 100.0 / self.map_resolution - lmb[2]),
-        ]
-
-        logger.info(f"---- Starting planning with local loc (pixels): {local_loc} ---- ")
-        logger.info(f"> global pose: {global_pose.tolist()}")
-        logger.info(f"> Instance goal found: {instance_goal_found}")
-        if instance_map is not None:
-            assert np.any(instance_map > 0)
-
-
-
-        start_thresholded = pu.threshold_poses(local_loc, obstacle_map.shape)
-        if start_thresholded[0] != local_loc[0] or start_thresholded[1] != local_loc[1]:
-            logger.warning(f"location is changed because it was out of map. Init location: {local_loc}, new location: {start_thresholded}")
-        local_loc = start_thresholded
-        local_loc = np.array(local_loc)
-
-        if self.print_images:
-            instance_on_obstacles = False
-            if not instance_map is None:
-                instance_on_obstacles = np.logical_and(instance_map == 1, obstacle_map == 1)
-            visualize_map(
-                obstacle_map.shape, 
-                self.vis_dir,
-                f"{self.timestep}_1.planning_input.png",
-                points=[(local_loc, [255, 0, 0])],
-                traversible=1-obstacle_map,
-                goal_map=instance_map,
-                frontier_map=frontier_map,
-                features=[(instance_on_obstacles,[0,255,255])], # yellow
-            )
-
-
-        self.visited_map[lmb[0]:lmb[1], lmb[2]:lmb[3]][local_loc[0], local_loc[1]] = 1
+        self.curr_global_pose = self.semantic_map.global_pose
 
         # Check collisions if we have just moved and are uncertain
         if self.last_action == DiscreteNavigationAction.MOVE_FORWARD or (
@@ -247,175 +201,66 @@ class DiscretePlanner:
         ):
             self._check_collision()
 
-
-        reachable = False
-        stop = False
-        i = 0
-        traversible = self.get_traversible(obstacle_map, planning_window, local_loc)
-        logger.info(f"Trying to plan with obs dilation: {self.curr_obs_dilation_selem_radius}.")
-        if instance_goal_found == True:
-            pose_idx = 0
-            while True:
-                goal_map = self.get_goal_map_from_goal_pose(traversible, instance_map, view_loc, planning_window, pose_idx, self.timestep)
-                if goal_map is None:
-                    # This mean we couldn't find any traversible pose. We should go to frontiers
-                    #! myTODO: Should I remove this instance goal?
-                    break
-
-                (
-                    short_term_goal,
-                    closest_goal_map,
-                    reachable,
-                    stop,
-                    closest_goal_pt,
-                ) = self._get_short_term_goal(
-                    traversible,
-                    goal_map,
-                    local_loc,
-                    postfix=f"_replan_{i}" if i > 0 else "",
-                )
-
-                if stop or reachable:
-                    break
-                
-                i += 1
-                logger.info(
-                    "Could not find a path to the high-level goal. Trying to replan"
-                )
-                # self.collision_map *= 0
-                if self.curr_obs_dilation_selem_radius > self.min_obs_dilation_selem_radius:
-                    self.curr_obs_dilation_selem_radius -= 1
-                    self.obs_dilation_selem = skimage.morphology.disk(
-                        self.curr_obs_dilation_selem_radius
-                    )
-                    logger.info(f"Decreasing obstacle dilation radius to {self.curr_obs_dilation_selem_radius}")
-                    traversible = self.get_traversible(obstacle_map, planning_window, local_loc)
-                else:
-                    logger.info(f"Obstacle dilation radius is already at minimum, trying next pose.")
-                    pose_idx += 1
+        logger.info(f"---- Starting planning ---- ")
+        logger.info(f"> Global Location: {self.semantic_map.global_loc}")
+        logger.info(f"> Local Location: {self.semantic_map.local_loc}")
+        logger.info(f"> Instance goal found: {inst_goal_found}")
 
 
-        if not stop and reachable:
-            logger.debug(f"Found a path to the high-level goal")
-            logger.debug(f"Short term goal: {short_term_goal}")
-            logger.debug(f"Delta = [{short_term_goal[0] - local_loc[0]}, {short_term_goal[1] - local_loc[1]}]")
-            dist_to_short_term_goal = np.linalg.norm(local_loc - np.array(short_term_goal[:2]))
-            logger.debug(f"Distance to stg: { dist_to_short_term_goal * self.map_resolution / 100} m")
-        elif not (stop or reachable):
-            if instance_goal_found:
-                logger.debug("Couldn't find any path to instance goal. Resetting module so it doesn't use this instance goal anymore.")
-                reset_module = True
-            else:
-                logger.debug("No instance goal provided.")
-            if frontier_map.any():
-                logger.debug("Trying frontiers instead.")
-                (
-                    short_term_goal,
-                    closest_goal_map,
-                    reachable,
-                    stop,
-                    closest_goal_pt,
-                ) = self._get_short_term_goal(
-                    traversible,
-                    frontier_map,
-                    local_loc,
-                    postfix="_frontier",
-                )
-            else:
-                logger.info("No frontier map available.")
-            if not reachable:
-                logger.info("Could not find a path to the frontier goal either.")
+        if inst_goal_found:
+            reachable, stop, short_term_goal, closest_goal_pt, is_local, viewpoint_orientation, vis_input = self.plan_to_instance_goal(inst_goal_id, postfix=postfix)
+        else:
+            logger.debug("No instance goal provided.")
+
+
+        if not stop and not reachable:
+            if fallback_to_frontier:
+                reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input = self.plan_to_frontier_goal(postfix)
+        
+        vis_input = {
+            "short_term_goal": short_term_goal,
+            "is_local": is_local,
+            **vis_input
+        }
 
         if not (stop or reachable):
             return (
                 None,
-                closest_goal_map,
-                short_term_goal,
-                1- traversible,
-                reachable,
-                reset_module
+                False,
+                is_local, # is_local. Used only for visualization.
+                vis_input,
             )
 
-
-        # Normalize agent angle
-        angle_agent = pu.normalize_angle(self.curr_global_pose[2])
-
-        # If we found a short term goal worth moving towards...
-        stg_x, stg_y = short_term_goal
-        relative_stg_x, relative_stg_y = stg_x - local_loc[0], stg_y - local_loc[1]
-        angle_st_goal = math.degrees(math.atan2(relative_stg_x, relative_stg_y))
-        relative_angle_to_stg = pu.normalize_angle(angle_agent - angle_st_goal)
-
-        # Compute angle to the final goal
-        goal_x, goal_y = closest_goal_pt
-        angle_goal = math.degrees(math.atan2(goal_x - local_loc[0], goal_y - local_loc[1]))
-
-        if view_loc is None:
-            # Compute angle to the final goal
-            relative_angle_to_closest_goal = pu.normalize_angle(
-                angle_agent - angle_goal
-            )
-        else:
-            relative_angle_to_closest_goal = pu.normalize_angle(
-                angle_agent - view_loc[2]
-            )
-
-            # # Actual metric distance to goal
-            # distance_to_goal = np.linalg.norm(np.array([goal_x, goal_y]) - local_start_pose)
-            # distance_to_goal_cm = distance_to_goal * self.map_resolution
-            # # Display information
-            # print("Angle to goal:", relative_angle_to_closest_goal)
-            # print("Distance to goal", distance_to_goal)
-            # print(
-            #     "Distance in cm:",
-            #     distance_to_goal_cm,
-            # )
-
-            # m_relative_stg_x, m_relative_stg_y = [
-            #     CM_TO_METERS * self.map_resolution * d
-            #     for d in [relative_stg_x, relative_stg_y]
-            # ]
-            # print("continuous actions for exploring")
-            # print("agent angle =", angle_agent)
-            # print("angle stg goal =", angle_st_goal)
-            # print("angle final goal =", relative_angle_to_closest_goal)
-            # print(
-            #     m_relative_stg_x, m_relative_stg_y, "rel ang =", relative_angle_to_stg
-            # )
-
-        action = self.get_action(
-            relative_stg_x,
-            relative_stg_y,
-            relative_angle_to_stg,
-            relative_angle_to_closest_goal,
-            self.curr_global_pose[2],
-            stop,
-        )
+        action = self.get_action(stop, short_term_goal, closest_goal_pt, self.semantic_map.local_loc if is_local else self.semantic_map.global_loc, viewpoint_orientation)
 
         self.last_action = action
         return (
             action,
-            closest_goal_map,
-            short_term_goal,
-            1-traversible,
             reachable,
-            reset_module
+            is_local,
+            vis_input
         )
 
     def get_action(
         self,
-        relative_stg_x: float,
-        relative_stg_y: float,
-        relative_angle_to_stg: float,
-        relative_angle_to_closest_goal: float,
-        start_compass: float,
-        stop: bool,
+        stop,
+        short_term_goal,
+        closest_goal_pt,
+        location,
+        viewpoint_orientation
     ):
         """
         Gets discrete/continuous action given short-term goal. Agent orients to closest goal if found_goal=True and stop=True
         """
-        # stop == True, orient towards goal first, then actually stop. 
+        angle_agent = pu.normalize_angle(self.curr_global_pose[2])
+
+        # stop == True, orient towards goal first, then actually stop.
         if stop == False:
+            stg_x, stg_y = short_term_goal
+            relative_stg_x, relative_stg_y = stg_x - location[0], stg_y - location[1]
+            angle_st_goal = math.degrees(math.atan2(relative_stg_x, relative_stg_y))
+            relative_angle_to_stg = pu.normalize_angle(angle_agent - angle_st_goal)
+
             if self.discrete_actions:
                 if relative_angle_to_stg > self.turn_angle / 2.0:
                     action = DiscreteNavigationAction.TURN_RIGHT
@@ -423,37 +268,27 @@ class DiscretePlanner:
                     action = DiscreteNavigationAction.TURN_LEFT
                 else:
                     action = DiscreteNavigationAction.MOVE_FORWARD
-            else:
-                # Use the short-term goal to set where we should be heading next
-                m_relative_stg_x, m_relative_stg_y = [
-                    100 * self.map_resolution * d
-                    for d in [relative_stg_x, relative_stg_y]
-                ]
-                if np.abs(relative_angle_to_stg) > self.turn_angle / 2.0:
-                    # Must return commands in radians and meters
-                    relative_angle_to_stg = math.radians(relative_angle_to_stg)
-                    action = ContinuousNavigationAction([0, 0, -relative_angle_to_stg])
-                else:
-                    # Must return commands in radians and meters
-                    relative_angle_to_stg = math.radians(relative_angle_to_stg)
-                    xyt_global = [
-                        m_relative_stg_y,
-                        m_relative_stg_x,
-                        -relative_angle_to_stg,
-                    ]
-
-                    xyt_local = xyt_global_to_base(
-                        xyt_global, [0, 0, math.radians(start_compass)]
-                    )
-                    xyt_local[2] = (
-                        -relative_angle_to_stg
-                    )  # the original angle was already in base frame
-                    action = ContinuousNavigationAction(xyt_local)
         else:
             # Try to orient towards the goal object - or at least any point sampled from the goal
             # object.
             logger.debug("----------------------------")
-            logger.debug(">>> orienting towards the goal: {relative_angle_to_closest_goal}")
+            logger.debug(
+                ">>> orienting towards the goal: {relative_angle_to_closest_goal}"
+            )
+            if viewpoint_orientation is None:
+                # Compute angle to the final goal
+                goal_x, goal_y = closest_goal_pt
+                angle_goal = math.degrees(
+                    math.atan2(goal_x - location[0], goal_y - location[1])
+                )
+                # Compute angle to the final goal
+                relative_angle_to_closest_goal = pu.normalize_angle(
+                    angle_agent - angle_goal
+                )
+            else:
+                relative_angle_to_closest_goal = pu.normalize_angle(
+                    angle_agent - viewpoint_orientation
+                )
             if self.discrete_actions:
                 if relative_angle_to_closest_goal > 2 * self.turn_angle / 3.0:
                     action = DiscreteNavigationAction.TURN_RIGHT
@@ -462,67 +297,52 @@ class DiscretePlanner:
                 else:
                     logger.debug("Already toward the goal, stopping.")
                     action = DiscreteNavigationAction.STOP
-            elif (
-                np.abs(relative_angle_to_closest_goal) > self.continuous_angle_tolerance
-            ):
-                relative_angle_to_closest_goal = math.radians(
-                    relative_angle_to_closest_goal
-                )
-                action = ContinuousNavigationAction(
-                    [0, 0, -relative_angle_to_closest_goal]
-                )
-            else:
-                action = DiscreteNavigationAction.STOP
-                print("!!! DONE !!!")
 
         return action
 
-    def get_traversible(self, obstacles, planning_window, local_loc):
-        gx1, gx2, gy1, gy2 = planning_window
+    def get_traversible(self, obstacles, is_local):
         dilated_obstacles = cv2.dilate(obstacles, self.obs_dilation_selem, iterations=1)
 
-        # Create inverse map of obstacles - this is territory we assume is traversible
-        # Traversible is now the map
         traversible = 1 - dilated_obstacles
-        traversible[self.collision_map[gx1:gx2, gy1:gy2] == 1] = 0
-        traversible[self.visited_map[gx1:gx2, gy1:gy2] == 1] = 1
-        agent_rad = self.agent_cell_radius
-        traversible[
-            local_loc[0] - agent_rad : local_loc[0] + agent_rad + 1,
-            local_loc[1] - agent_rad : local_loc[1] + agent_rad + 1,
-        ] = 1
+        if is_local:
+            gx1, gx2, gy1, gy2 = self.semantic_map.lmb
+            traversible[self.collision_map[gx1:gx2, gy1:gy2] == 1] = 0
+        else:
+            traversible[self.collision_map == 1] = 0
+        #! myTODO: Global vs Local
+        traversible[self.semantic_map.get_visited_map(is_local) == 1] = 1
         return traversible
 
-    def get_goal_map_from_goal_pose(self, traversible, instance_map, view_loc, planning_window, index, timestep):
+    def get_goal_map(self, traversible, instance_map, viewpoint_location, is_local, pose_idx):
         """
         Args:
             goal_map
             view_pose: Global loc that we can see the goal instance.
         """
-        logger.info(f"Creating goal map using past view. Choosing {index}th traversible pose.")
-        assert not view_loc is None
+        # instance_map, view_loc, planning_window, pose_idx, self.timestep
+        logger.info(
+            f"Creating goal map using viewpoint. Choosing {pose_idx}th traversible viewpoint."
+        )
 
-        assert instance_map.shape == traversible.shape
+        logger.debug(f"Viewpoint is : {viewpoint_location}")
 
-        # no plus 1. No boundary yet
-        local_view_loc = np.array([
-            view_loc[0] - planning_window[0],
-            view_loc[1] - planning_window[2]
-        ])
-        logger.debug(f"Global view loc is : {view_loc}, local view loc is : {local_view_loc}")
-
-        # Find closest goal_map cell to goal_pose
         goal_indices = np.argwhere(instance_map == 1)
-        if goal_indices.size == 0:
-            raise Exception("No instance cells found in goal_map, should not happen.")
 
         # Find closest goal cell in goal_map to the goal_pose
-        dists = np.linalg.norm(goal_indices - local_view_loc[None, :], axis=1)
+        dists = np.linalg.norm(goal_indices - np.array(viewpoint_location)[None, :], axis=1)
         closest_instance_idx = goal_indices[np.argmin(dists)]
-        logger.debug(f"Closest goal index in goal_map to goal_pose is ({closest_instance_idx})")
+        logger.debug(
+            f"Closest goal index in goal_map to goal_pose is ({closest_instance_idx})"
+        )
 
-        # Generate Bresenham line from closest_goal_idx to goal_pose  
-        line_coords = list(bresenham(closest_instance_idx[0], closest_instance_idx[1],local_view_loc[0], local_view_loc[1]))
+        line_coords = list(
+            bresenham(
+                closest_instance_idx[0],
+                closest_instance_idx[1],
+                viewpoint_location[0],
+                viewpoint_location[1],
+            )
+        )
 
         first_pixels = []
         in_segment = False
@@ -539,54 +359,32 @@ class DiscretePlanner:
                     in_segment = True
             else:
                 in_segment = False
-        
 
-        if not (0 <= local_view_loc[0] < traversible.shape[0] and 0 <= local_view_loc[1] < traversible.shape[1]):
-            first_pixels.append(local_view_loc)
+        first_pixels.append(viewpoint_location)
 
-        if index >= len(first_pixels):
+        if pose_idx >= len(first_pixels):
             logger.info(f"No traversible view found for the instance goal.")
             return None
 
         goal_map = np.zeros_like(instance_map, dtype=np.uint8)
-        goal_loc = first_pixels[index]
-        goal_map[goal_loc[0], goal_loc[1]] = 1
-        self.visualize_converting_goal_to_pose(traversible, instance_map, first_pixels, local_view_loc, goal_loc, index, timestep)
-        return goal_map
-
-    def visualize_converting_goal_to_pose(self,traversible, instance_map, first_pixels, local_view_loc, goal_loc, index, timestep):
-        h, w = traversible.shape
-        vis_img = np.ones((h, w, 3), dtype=np.uint8) * 255 
-        vis_img[traversible == 0] = [0, 0, 0]
-
-        # orange - All instance cells
-        vis_img[instance_map == 1] = [0, 165, 255]
-
-        for pixel in first_pixels:
-            # green - All poses
-            vis_img[pixel[0], pixel[1]] = [0, 255, 0]
-
-        if not (0 <= local_view_loc[0] < traversible.shape[0] and 0 <= local_view_loc[1] < traversible.shape[1]):
-            # blue
-            logger.warning(f"Don't visualizing local view loc, because it is out of bound (GOAL is not in local map)")
-            vis_img[local_view_loc[0], local_view_loc[1]] = [255, 0,0]
-
-        # red - final goal
-        vis_img[goal_loc[0], goal_loc[1]] = [0, 0, 255]
-
-        vis_img = np.flipud(vis_img)
-
-        # logger.debug(f"SAVING 2.interpolate_goal")
-        cv2.imwrite(
-            os.path.join(self.vis_dir, f"{timestep}_2.interpolate_goal_idx{index}.png"),
-            vis_img,
+        goal_location = first_pixels[pose_idx]
+        goal_map[goal_location[0], goal_location[1]] = 1
+        self.visualize_get_goal_map(
+            traversible,
+            instance_map,
+            first_pixels,
+            viewpoint_location,
+            goal_location,
+            pose_idx,
+            is_local,
         )
+        return goal_map
 
     def _get_short_term_goal(
         self,
         traversible: np.ndarray,
         goal_map: np.ndarray,
-        local_loc: List[int],
+        location: List[int],
         postfix: str = "",
     ) -> Tuple[Tuple[int, int], np.ndarray, bool, bool]:
         """Get short-term goal.
@@ -619,21 +417,20 @@ class DiscretePlanner:
         )
 
         # navigable_goal_map = goal_map
-        navigable_goal_map= np.logical_and(goal_map, traversible)
+        navigable_goal_map = np.logical_and(goal_map, traversible)
         #! myTODO
         assert np.any(navigable_goal_map)
         # logger.info(
         #     f"Couldn't find any navigable goal points in the map. returning replan=True, stop=False, to try again with next best option (lower dilation, frontier, best goal)."
         # )
 
-        #* Previously they had another logic of dilating goal similar to obstacles too (cv2.dilate(sel)). I don't see much difference, but I can think more later
+        # * Previously they had another logic of dilating goal similar to obstacles too (cv2.dilate(sel)). I don't see much difference, but I can think more later
         dilated_goal_map = planner.dilate_goal(
             navigable_goal_map,
             self.min_goal_distance_cm / self.map_resolution,
-            timestep=self.timestep
+            timestep=self.timestep,
         )
         dilated_goal_map = np.logical_and(dilated_goal_map, traversible)
-
 
         self.dd = planner.set_multi_goal(
             dilated_goal_map,
@@ -641,17 +438,17 @@ class DiscretePlanner:
             self.dd,
             self.map_downsample_factor,
             self.map_update_frequency,
-            number="5"
+            number="5",
         )
 
         # goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
         #! myTODO: Make sure if I should use navigable goal map or dilated goal map or original goal map
-        goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
+        closet_goal_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, location)
 
         #! myTODO: Looks like this is no needed
         # self.timestep += 1
 
-        state = [local_loc[0] + 1, local_loc[1] + 1]
+        state = [location[0] + 1, location[1] + 1]
 
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
@@ -663,11 +460,14 @@ class DiscretePlanner:
 
         if self.print_images:
             points = [
-                ([local_loc[0] + 1, local_loc[1] + 1], [255,0,0]), # start blue
-                ([short_term_goal[0] + 1, short_term_goal[1] + 1], [0, 255, 0]) # stg green
+                ([location[0] + 1, location[1] + 1], [255, 0, 0]),  # start blue
+                (
+                    [short_term_goal[0] + 1, short_term_goal[1] + 1],
+                    [0, 255, 0],
+                ),  # stg green
             ]
             visualize_map(
-                dilated_goal_map.shape, 
+                dilated_goal_map.shape,
                 self.vis_dir,
                 f"{self.timestep}_7.stg{postfix}.png",
                 points=points,
@@ -675,15 +475,12 @@ class DiscretePlanner:
                 goal_map=dilated_goal_map,
             )
 
-
         return (
-            short_term_goal,
-            goal_distance_map,
             reachable,
             stop,
+            short_term_goal,
             closest_goal_pt,
         )
-
 
     #! It actually gets closest geometrical goal, not closest traversible goal
     def get_closest_goal(self, goal_map, start):
@@ -741,3 +538,273 @@ class DiscretePlanner:
                     )
                     [r, c] = pu.threshold_poses([r, c], self.collision_map.shape)
                     self.collision_map[r, c] = 1
+
+    def get_largest_cluster(self, instance_map, is_local) -> None:
+        """
+        Perform optional clustering of the goal channel to mitigate noisy projection
+        splatter.
+        """
+
+        if not self.goal_filtering:
+            return
+
+        logger.debug("Clustering Instance map and selecting the largest cluster.")
+        init_goal_map_count = instance_map.sum()
+
+        # cluster goal points
+        c = DBSCAN(eps=4, min_samples=1)
+        # * data is index of nonzero elements
+        data = np.array(instance_map.nonzero()).T
+        c.fit(data)
+
+        # mask all points not in the largest cluster
+        mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
+        mode_mask = (c.labels_ != mode).nonzero()
+        x = data[mode_mask]
+        clustered_map = np.copy(instance_map)
+        clustered_map[x] = 0.0
+
+        # adopt masked map if non-empty
+        if clustered_map.sum() > 0:
+            logger.debug("Choosing largest cluster for instance map.")
+            logger.debug(
+                f"Goal map cells count changed from {init_goal_map_count} to {clustered_map.sum()}"
+            )
+        else:
+            logger.debug(
+                "Instance map not changed. Largest cluster is empty for some reason!"
+            )
+            clustered_map = instance_map
+
+        visualize_map(
+            instance_map.shape,
+            self.vis_dir,
+            f"{self.timestep}_02.cluster_goal.png",
+            goal_map=clustered_map,
+            dilated_goal_map=instance_map,
+            traversible=1 - self.semantic_map.get_obstacle_map(is_local),
+        )
+        return clustered_map
+
+    def plan_to_frontier_goal(self, postfix):
+        is_local = True
+        frontier_map = self.semantic_map.get_frontier_map(local=True, timestep=self.timestep)
+        if not frontier_map.any():
+            is_local = False
+            frontier_map = self.semantic_map.get_frontier_map(local=False, timestep=self.timestep)
+        
+        if not frontier_map.any():
+            logger.info("No frontier map available.")
+            return False, False, None, None, None, {}
+
+
+        obstacle_map = np.rint(self.semantic_map.get_obstacle_map(is_local))
+        traversible = self.get_traversible(obstacle_map, is_local)
+        location = self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
+
+        visualize_map(
+            obstacle_map.shape,
+            self.vis_dir,
+            f"{self.timestep}_1.planning_input_frontier{postfix}.png",
+            points=[(location, [255, 0, 0])],
+            traversible=1 - obstacle_map,
+        )
+        while True:
+
+            #! myTODO: I can cluster frontiers here, and mask a cluster if not reachable, and then go to the next one.
+            (
+                reachable,
+                stop,
+                short_term_goal,
+                closest_goal_pt,
+            ) = self._get_short_term_goal(
+                traversible,
+                frontier_map,
+                location,
+                postfix="_frontier",
+            )
+            if reachable:
+                logger.info("Planning to frontier successfull.")
+                break
+
+            logger.info("Frontier map not reachable.")
+            traversible, success = self.decrease_obstacle_dilation_radius(traversible, obstacle_map, is_local)
+            if not success:
+                logger.info(
+                    f"Obstacle dilation radius is already at minimum. Could not plan to frontiers either."
+                )
+                break
+
+        
+        closest_goal_map = np.zeros_like(traversible)
+        closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
+        vis_input = {
+            "dilated_obstacle_map": 1-traversible,
+            "closest_goal_map": closest_goal_map,
+            "is_local": is_local,
+        }
+        return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
+
+    def plan_to_instance_goal(self, instance_goal_id, postfix):
+        instance_map, viewpoint_location, viewpoint_orientation, is_local = self.get_instance_map_and_viewpoint(instance_goal_id)
+        instance_map = self.get_largest_cluster(instance_map, is_local)
+        obstacle_map = np.rint(self.semantic_map.get_obstacle_map(is_local))
+
+        location = self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
+        instance_on_obstacles = np.logical_and(
+            instance_map == 1, obstacle_map == 1
+        )
+
+        visualize_map(
+            obstacle_map.shape,
+            self.vis_dir,
+            f"{self.timestep}_1.planning_input_instance{postfix}.png",
+            points=[(location, [255, 0, 0]), (viewpoint_location, [120, 0, 0])],
+            traversible=1 - obstacle_map,
+            goal_map=instance_map,
+            features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
+        )
+
+        logger.info(
+            f"Trying to plan to instance goal with obs dilation: {self.curr_obs_dilation_selem_radius}."
+        )
+
+        reachable = False
+        stop = False
+        i = 0
+        pose_idx = 0
+        traversible = self.get_traversible(obstacle_map, is_local)
+        while True:
+            goal_map = self.get_goal_map(
+                traversible, instance_map, viewpoint_location, is_local, pose_idx
+            )
+            if goal_map is None:
+                # This mean we couldn't find any traversible pose. We should go to frontiers
+                #! myTODO: Should I remove this instance goal?
+                break
+
+            (
+                reachable,
+                stop,
+                short_term_goal,
+                closest_goal_pt,
+            ) = self._get_short_term_goal(
+                traversible,
+                goal_map,
+                (
+                    self.semantic_map.local_loc
+                    if is_local
+                    else self.semantic_map.global_loc
+                ),
+                postfix=f"_replan_{i}{postfix}" if i > 0 else "",
+            )
+
+            if stop or reachable:
+                break
+
+            i += 1
+
+            logger.info("Could not find a path to the high-level goal.")
+            traversible, success = self.decrease_obstacle_dilation_radius(traversible, obstacle_map, is_local)
+            if not success:
+                logger.info(
+                    f"Obstacle dilation radius is already at minimum, trying next viewpoint."
+                )
+                pose_idx += 1
+
+        if reachable:
+            logger.debug(f"Planning to instance goal successfull.")
+            if stop:
+                logger.debug(f"We need to stop.")
+            else:
+                logger.debug(f"Short term goal: {short_term_goal}")
+        
+        closest_goal_map = np.zeros_like(traversible)
+        closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
+        vis_input = {
+            "dilated_obstacle_map": 1-traversible,
+            "closest_goal_map": closest_goal_map,
+            "instance_map": instance_map,
+            # "goal_map": goal_map, #! myTODO: Can add a visualization for goal_map too.
+        }
+
+        return reachable, stop, short_term_goal, closest_goal_pt, is_local, viewpoint_orientation, vis_input
+
+    def get_instance_map_and_viewpoint(self, instance_goal_id):
+        instance_views = self.instance_memory.instance_views[instance_goal_id].instance_views
+        best_view = np.argmax([view.object_coverage for view in instance_views])
+        instance_pose = instance_views[best_view].pose
+        viewpoint_global_location = self.semantic_map.global_pose_to_global_location(
+            instance_pose
+        )
+        viewpoint_local_location = self.semantic_map.global_pose_to_local_location(
+            instance_pose
+        )
+
+        is_local = self.semantic_map.is_in_local_map(viewpoint_local_location)
+
+        instances_map = self.semantic_map.get_instances_map(local=True)
+        inst_map_idx = instances_map == instance_goal_id
+        inst_map_idx = np.argmax(np.sum(inst_map_idx, axis=(1, 2)))
+        instance_map = (instances_map[inst_map_idx] == instance_goal_id).astype(int)
+
+        is_local = is_local and np.any(instance_map)
+
+        if is_local:
+            logger.debug(f">>> Goal instance {instance_goal_id} present in local map.")
+            logger.debug(
+                f">>> viewpoint location is: {viewpoint_local_location}, with coverage {instance_views[best_view].object_coverage}."
+            )
+            return instance_map, viewpoint_local_location, instance_pose[2], True
+
+        instances_map = self.semantic_map.get_instances_map(local=False)
+        inst_map_idx = instances_map == instance_goal_id
+        inst_map_idx = np.argmax(np.sum(inst_map_idx, axis=(1, 2)))
+        instance_map = (instances_map[inst_map_idx] == instance_goal_id).astype(int)
+
+        return instance_map, viewpoint_global_location, instance_pose[2], False
+
+    def decrease_obstacle_dilation_radius(self, traversible, obstacle_map, is_local):
+        # self.collision_map *= 0
+        if self.curr_obs_dilation_selem_radius > self.min_obs_dilation_selem_radius:
+            self.curr_obs_dilation_selem_radius -= 1
+            self.obs_dilation_selem = skimage.morphology.disk(
+                self.curr_obs_dilation_selem_radius
+            )
+            logger.info(
+                f"Decreasing obstacle dilation radius to {self.curr_obs_dilation_selem_radius}. Trying again."
+            )
+            traversible = self.get_traversible(obstacle_map, is_local)
+            return traversible, True
+        else:
+            return traversible, False
+
+    def visualize_get_goal_map(
+        self,
+        traversible,
+        instance_map,
+        first_pixels,
+        viewpoint_location,
+        goal_location,
+        index,
+        is_local,
+    ):
+        features = [(instance_map, [0, 165, 255])]  # orange - All instance cells
+        points = []
+        for pixel in first_pixels:
+            points.append((pixel, [0, 255, 0]))  # green - All poses
+
+        # blue - viewpoint
+        points.append((viewpoint_location, [255, 0, 0]))
+
+        # red - final goal
+        points.append((goal_location, [0, 0, 255]))
+
+        visualize_map(
+            traversible.shape,
+            self.vis_dir,
+            f"{self.timestep}_2.interpolate_goal_idx{index}{'' if is_local else '_global'}.png",
+            traversible=traversible,
+            features=features,
+            points=points,
+        )
