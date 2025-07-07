@@ -221,8 +221,7 @@ class Visualizer:
         timestep: int,
         semantic_frame: np.ndarray,
         obstacle_map: np.ndarray = None,
-        goal_map: np.ndarray = None,
-        closest_goal_map: Optional[np.ndarray] = None,
+        closest_goal_pt: Optional[np.ndarray] = None,
         global_pose: np.ndarray = None,
         lmb: np.ndarray = None,
         explored_map: np.ndarray = None,
@@ -231,7 +230,6 @@ class Visualizer:
         blacklisted_targets_map: np.ndarray = None,
         frontier_map: np.ndarray = None,
         goal_name: str = None,
-        visualize_goal: bool = True,
         third_person_image: np.ndarray = None,
         curr_skill: str = None,
         curr_action: str = None,
@@ -242,10 +240,10 @@ class Visualizer:
         caption: str = None,
         landmarks: List = None,
         instance_map: Optional[np.ndarray] = None,
-        instance_memory: Optional[InstanceMemory] = None,
-        goal_pose = None,
         top_down_map = None,
         is_local=True,
+        inst_goal_found: bool = False,
+        goal_instance_map: Optional[np.ndarray] = None,
         **kwargs,
     ):
         """Visualize frame input and semantic map.
@@ -259,13 +257,11 @@ class Visualizer:
             lmb
             # sensor_pose: (7,) array denoting global pose (x, y, o)
             #  and local map boundaries planning window (gy1, gy2, gx1, gy2)
-            found_goal: whether we found the object goal category
             explored_map: (M, M) binary local explored map prediction
             semantic_map: (M, M) local semantic map predictions
             semantic_frame: semantic frame visualization
             goal_name: semantic goal category
             timestep: time step within the episode
-            visualize_goal: if True, visualize goal
             curr_skill: the skill currently being executed
             curr_action: the action that will be executed in current step
             short_term_goal: (M, M) map showing the short term goal
@@ -273,7 +269,7 @@ class Visualizer:
             semantic_category_mapping: contains category id to category mapping and color palette
             rl_obs_frame: variable sized image containing all observations passed to RL (useful for debugging)
         """
-        visualize_goal = not goal_map is None #! myTODO: Temp. Fix this viusalization.
+        # print("kwargs is":)
         # Do nothing if visualization is off
         if not self.show_images and not self.print_images:
             return
@@ -361,12 +357,12 @@ class Visualizer:
             semantic_map[visited_mask] = PI.VISITED
 
             # Goal
-            if visualize_goal:
+            if inst_goal_found:
                 selem = skimage.morphology.disk(4)
-                goal_mat = 1 - skimage.morphology.binary_dilation(goal_map, selem) != 1
-                goal_mask = goal_mat == 1
-                semantic_map[goal_mask] = PI.REST_OF_GOAL
-                if closest_goal_map is not None:
+                semantic_map[goal_instance_map] = PI.REST_OF_GOAL
+                if closest_goal_pt is not None:
+                    closest_goal_map = np.zeros_like(goal_instance_map)
+                    closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
                     closest_goal_mat = (
                         1 - skimage.morphology.binary_dilation(closest_goal_map, selem)
                         != 1
@@ -375,7 +371,7 @@ class Visualizer:
                     semantic_map[closest_goal_mask] = PI.CLOSEST_GOAL
 
                 if short_term_goal is not None:
-                    short_term_goal_mask = np.zeros(goal_mask.shape)
+                    short_term_goal_mask = np.zeros(goal_instance_map.shape)
                     short_term_goal_mask[short_term_goal[0], short_term_goal[1]] = 1
                     short_term_goal_mask = (
                         1
@@ -505,7 +501,7 @@ class Visualizer:
         '"""
         num_instances_per_category = defaultdict(int)
         num_views_per_instance = defaultdict(list)
-        for instance_id, instance in instance_memory.instance_views[0].items():
+        for instance_id, instance in instance_memory.instances[0].items():
             num_instances_per_category[instance.category_id] += 1
             num_views_per_instance[instance.category_id].append(
                 len(instance.instance_views)

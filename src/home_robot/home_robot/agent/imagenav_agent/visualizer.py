@@ -200,8 +200,8 @@ class NavVisualizer:
         blacklisted_targets_map=None,
         frontier_map: Optional[np.ndarray] = None,
         dilated_obstacle_map: Optional[np.ndarray] = None,
-        instance_map: Optional[np.ndarray] = None,
-        closest_goal_map: Optional[np.ndarray] = None,
+        goal_instance_map: Optional[np.ndarray] = None,
+        closest_goal_pt: Optional[np.ndarray] = None,
         is_local: bool = True,
         **kwargs,
     ) -> None:
@@ -226,7 +226,7 @@ class NavVisualizer:
         global_pose = global_pose.cpu().float().numpy()
         lmb = lmb.cpu().float().numpy()
         if inst_goal_found == True:
-            goal_map = instance_map
+            goal_map = goal_instance_map
         else:
             goal_map = frontier_map
             assert not frontier_map is None
@@ -263,7 +263,7 @@ class NavVisualizer:
             obstacle_map,
             explored_map,
             semantic_map,
-            closest_goal_map,
+            closest_goal_pt,
             goal_map,
             visualize_goal,
             is_local,
@@ -524,7 +524,7 @@ class NavVisualizer:
         obstacle_map: np.ndarray,
         explored_map: np.ndarray,
         semantic_map: np.ndarray,
-        closest_goal_map: np.ndarray,
+        closest_goal_pt: np.ndarray,
         goal_map: np.ndarray,
         visualize_goal: bool,
         is_local=True,
@@ -577,7 +577,9 @@ class NavVisualizer:
             goal_mat = 1 - skimage.morphology.binary_dilation(goal_map, selem) != 1
             goal_mask = goal_mat == 1
             semantic_map[goal_mask] = PI.REST_OF_GOAL
-            if closest_goal_map is not None:
+            if closest_goal_pt is not None:
+                closest_goal_map = np.zeros_like(goal_map)
+                closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
                 closest_goal_mat = (
                     1 - skimage.morphology.binary_dilation(closest_goal_map, selem) != 1
                 )
