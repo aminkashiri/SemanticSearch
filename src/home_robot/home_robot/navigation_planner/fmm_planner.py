@@ -26,10 +26,7 @@ def convert_to_cmap(subset):
     final_img[final_img==np.max(final_img)] = second_max + 1
 
     vmin, vmax = np.nanmin(final_img), np.nanmax(final_img)
-    if vmin < 0:
-        norm = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
-    else:
-        norm = Normalize(vmin=vmin, vmax=vmax)
+    norm = Normalize(vmin=vmin, vmax=vmax)
 
     cmap = cm.get_cmap("plasma")
 
@@ -258,6 +255,9 @@ class FMMPlanner:
                 logger.error(f"{timestep}_6.get_stg_details.png, probably because there is no way to goal: {e}")
                 logger.debug(f">> Some more info:")
                 logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[0])}, {np.min(vis_list[0])}")
+                logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[2])}, {np.min(vis_list[2])}")
+                logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[3])}, {np.min(vis_list[3])}")
+                raise e
 
         (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
 

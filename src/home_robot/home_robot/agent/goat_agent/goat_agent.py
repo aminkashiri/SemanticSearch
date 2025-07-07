@@ -197,10 +197,6 @@ class GoatAgent(Agent):
             dump_location=config.DUMP_LOCATION,
             exp_name=config.EXP_NAME,
         )
-        # self.imagenav_visualizer = None
-        self.instance_map = None
-        self.view_loc = None
-
         self.image_matching_function = self.matching.match_image_to_image
         self.matching_fn = {
             "imagenav": self.image_matching_function,
@@ -279,9 +275,6 @@ class GoatAgent(Agent):
 
         if self.inst_goal_found:
             logger.info(f"Already found instance goal, not searching anymore.")
-            # self.goal_map, self.goal_pose = self.matching.get_goal_map_from_goal_instance(
-            #     instance_map, lmb, self.goal_inst
-            # )
         else:
             logger.debug(
                 f"candidate matches in memory: {len(mem_match_confidences)}, candidate matches in observation: {len(obs_match_confidences) > 0}"
@@ -329,7 +322,6 @@ class GoatAgent(Agent):
         if self.imagenav_visualizer is not None:
             self.imagenav_visualizer.reset()
 
-        self.instance_map = None
         self.reset_sub_episode()
         self.planner.reset()
         self.inst_goal_found = False
@@ -384,9 +376,10 @@ class GoatAgent(Agent):
             action = DiscreteNavigationAction.STOP
             vis_inputs = {}
         else:
-            action, is_local, vis_inputs = self.get_best_action(current_task)
+            action, vis_inputs = self.get_best_action(current_task)
 
         if self.visualize:
+            is_local = vis_inputs.get("is_local", True)
             vis_inputs = {
                 "inst_goal_found": self.inst_goal_found,
                 "inst_goal_id": self.inst_goal_id,
@@ -599,21 +592,21 @@ class GoatAgent(Agent):
         return mem_match_confidences, mem_match_instance_ids
 
     def get_best_action(self, current_task):
-        action, reachable, is_local, vis_input = self.planner.plan(
+        action, vis_input = self.planner.plan(
             self.inst_goal_found,
             self.inst_goal_id,
             self.sub_task_timesteps[self.current_task_idx],
             self.total_timesteps,
         )
 
-        if reachable:
-            return action, is_local, vis_input
+        if not action is None:
+            return action, vis_input
 
         logger.info("No reachable goal.")
 
         if self.navigate_to_best:
             logger.info("Already tried the best match. Stopping")
-            return DiscreteNavigationAction.STOP, is_local, {}
+            return DiscreteNavigationAction.STOP, {}
         self.navigate_to_best = True
         logger.info("Forcing a match against memory")
 
@@ -622,7 +615,7 @@ class GoatAgent(Agent):
         )
         if not len(mem_match_confidences) > 0:
             logger.info("No match found in memory. Stopping")
-            return DiscreteNavigationAction.STOP, is_local, vis_input
+            return DiscreteNavigationAction.STOP, {}
         prev_inst_goal_id = self.inst_goal_id
         (
             self.inst_goal_found,
@@ -635,9 +628,9 @@ class GoatAgent(Agent):
         assert self.inst_goal_found == True
         if self.inst_goal_id == prev_inst_goal_id:
             logger.info("Best match is the same as the previous one. Stopping")
-            return DiscreteNavigationAction.STOP, is_local, vis_input
+            return DiscreteNavigationAction.STOP, {}
 
-        (action, reachable, is_local, vis_input) = self.planner.plan(
+        action, vis_input = self.planner.plan(
             self.inst_goal_found,
             self.inst_goal_id,
             self.sub_task_timesteps[self.current_task_idx],
@@ -646,10 +639,9 @@ class GoatAgent(Agent):
             postfix="_last_shot",
         )
 
-        if not reachable:
+        if action is None:
             logger.info("Fully explored and no path to our best match. Stopping")
-            action = DiscreteNavigationAction.STOP
-        else:
-            logger.info("Found a path to the last shot goal. Navigating to it.")
+            return DiscreteNavigationAction.STOP, {}
 
-        return action, is_local, vis_input
+        logger.info("Found a path to the last shot goal. Navigating to it.")
+        return action, vis_input

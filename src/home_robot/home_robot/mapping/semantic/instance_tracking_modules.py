@@ -89,7 +89,7 @@ class InstanceMemory:
     """
 
     images: torch.Tensor = None
-    instance_views: Dict[int, Instance] = dict()
+    instances: Dict[int, Instance] = dict()
     point_cloud: torch.Tensor = None
     unprocessed_views: Dict[int, InstanceView] = dict()
     local_id_to_global_id_map: Dict[int, int] = dict()
@@ -126,7 +126,7 @@ class InstanceMemory:
     def reset(self):
         self.images = None
         self.point_cloud = None
-        self.instance_views = dict()
+        self.instances = dict()
         self.unprocessed_views = dict()
         self.local_id_to_global_id_map = dict()
         self.timesteps = 0
@@ -148,13 +148,13 @@ class InstanceMemory:
             )
 
         # get global instance
-        global_instance = self.instance_views.get(global_instance_id, None)
+        global_instance = self.instances.get(global_instance_id, None)
         if global_instance is None:
             # create a new global instance
             global_instance = Instance()
             global_instance.category_id = instance_view.category_id
             global_instance.instance_views.append(instance_view)
-            self.instance_views[global_instance_id] = global_instance
+            self.instances[global_instance_id] = global_instance
         else:
             # add instance view to global instance
             global_instance.instance_views.append(instance_view)

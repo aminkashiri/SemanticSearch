@@ -126,7 +126,7 @@ class GoatMatching(Matching):
                 continue
 
             output_instance_ids.append(instance_id)
-            instance_views = instance_memory.instance_views[
+            instance_views = instance_memory.instances[
                 global_instance_id
             ].instance_views
             # pick a view with maximum object coverage
@@ -190,7 +190,7 @@ class GoatMatching(Matching):
         instance_view_counts = []
         steps_per_view = []
         instance_ids = []
-        for inst_key, inst in instance_memory.instance_views.items():
+        for inst_key, inst in instance_memory.instances.items():
             if categories is not None and inst.category_id not in categories:
                 continue
             inst_views = inst.instance_views
