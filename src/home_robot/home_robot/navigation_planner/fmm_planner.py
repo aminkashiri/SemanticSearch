@@ -3,36 +3,37 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 import os
-from typing import List
-
 import cv2
-import matplotlib.pyplot as plt
-import numpy as np
 import skfmm
-import skimage
+import numpy as np
 from numpy import ma
-
+from typing import List
 import matplotlib.cm as cm
-from matplotlib.colors import Normalize, TwoSlopeNorm
-
-from home_robot.utils.visualization import visualize_map
+from bresenham import bresenham
+from matplotlib.colors import Normalize
 from home_robot.utils.logger import get_logger
+from home_robot.utils.visualization import visualize_map
+
 logger = get_logger()
 
+
 def convert_to_cmap(subset):
-    final_img = np.flipud(subset.copy()) 
+    final_img = np.flipud(subset.copy())
     unique_vals = np.unique(final_img)
+    if len(unique_vals) < 2:
+        return np.zeros(final_img.shape + (3,), dtype=np.uint8)
     second_max = unique_vals[-2]
-    final_img[final_img==np.max(final_img)] = second_max + 1
+    final_img[final_img == np.max(final_img)] = second_max + 1
 
     vmin, vmax = np.nanmin(final_img), np.nanmax(final_img)
     norm = Normalize(vmin=vmin, vmax=vmax)
 
     cmap = cm.get_cmap("plasma")
 
-    rgba_img = cmap(norm(final_img)) 
-    rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8) 
+    rgba_img = cmap(norm(final_img))
+    rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8)
     return rgb_img
+
 
 class FMMPlanner:
     """
@@ -179,18 +180,54 @@ class FMMPlanner:
 
     def visualize_get_short_term_goal(self, vis_list, timestep):
         sub_h, sub_w = vis_list[0].shape
-        dist_vis = np.zeros((sub_h * 2, sub_w * 2,3))
+        dist_vis = np.zeros((sub_h * 2, sub_w * 2, 3))
         dist_vis[:sub_h, :sub_w] = convert_to_cmap(vis_list[0])
-        dist_vis[:sub_h, sub_w : 2 * sub_w,:] = vis_list[1]
+        dist_vis[:sub_h, sub_w : 2 * sub_w, :] = vis_list[1]
         dist_vis[sub_h:, :sub_w] = convert_to_cmap(vis_list[2])
         dist_vis[sub_h:, sub_w:] = convert_to_cmap(vis_list[3])
 
         # logger.debug(f"SAVING 6.get_stg")
         cv2.imwrite(
-            os.path.join(self.vis_dir, f"{timestep}_6.get_stg_details{self.vis_postfix}.png"),
+            os.path.join(
+                self.vis_dir, f"{timestep}_6.get_stg_details{self.vis_postfix}.png"
+            ),
             (dist_vis).astype(int),
         )
 
+    def filter_unreachable_goals(
+        self, subset, mask, robot_pos, obstacle_mask, ray_thickness=1
+    ):
+        safe_mask = np.zeros_like(mask, dtype=bool)
+        candidates = np.argwhere(mask)
+
+        for x, y in candidates:
+            line_coords = list(bresenham(robot_pos[0], robot_pos[1], x, y))[1:-1]
+            reachable = True
+            for r, c in line_coords:
+                # Check neighborhood around this point
+                for dx in range(-ray_thickness, ray_thickness + 1):
+                    for dy in range(-ray_thickness, ray_thickness + 1):
+                        nr, nc = r + dx, c + dy
+                        if 0 <= nr < subset.shape[0] and 0 <= nc < subset.shape[1]:
+                            if obstacle_mask[nr, nc]:
+                                reachable = False
+                                break
+                    if not reachable:
+                        break
+                if not reachable:
+                    break
+
+            if reachable:
+                safe_mask[x, y] = True
+
+            # line_coords = [(r, c) for r, c in line_coords if 0 <= r < subset.shape[0] and 0 <= c < subset.shape[1]]
+
+            # if not any(obstacle_mask[r, c] for r, c in line_coords):
+            #     safe_mask[x, y] = True
+
+        masked_subset = np.copy(subset)
+        masked_subset[np.logical_and(mask, ~safe_mask)] = np.max(subset)
+        return masked_subset
 
     def get_short_term_goal(self, state: List[float], continuous=True, timestep=0):
         """Compute the short-term goal closest to the current state.
@@ -217,11 +254,12 @@ class FMMPlanner:
             self.du,
             "constant",
             # constant_values=self.fmm_dist.shape[0] ** 2,
-            constant_values=max_value
+            constant_values=max_value,
         )
         subset = dist[
             state[0] : state[0] + 2 * self.du + 1, state[1] : state[1] + 2 * self.du + 1
         ]
+        obstacle_mask = subset == subset.max()
 
         assert (
             subset.shape[0] == 2 * self.du + 1 and subset.shape[1] == 2 * self.du + 1
@@ -234,32 +272,37 @@ class FMMPlanner:
         # subset += (1 - mask) * self.fmm_dist.shape[0] ** 2
         subset += (1 - mask) * max_value
 
-        vis_list.append(np.flipud(mask[...,None].copy()*255))
+        vis_list.append(np.flipud(mask[..., None].copy() * 255))
         vis_list.append(subset.copy())
 
-
         stop = subset[self.du, self.du] < self.goal_tolerance
-        logger.debug(f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}")
+        logger.debug(
+            f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}"
+        )
         logger.debug(f"self.goal_tolerance {self.goal_tolerance}")
         logger.debug(f"stop {stop}")
 
         subset -= subset[self.du, self.du]
-        vis_list.append(subset.copy())
         ratio1 = subset / dist_mask
         subset[ratio1 < -1.5] = 1
 
-        if self.print_images:
-            try:
-                self.visualize_get_short_term_goal(vis_list, timestep)
-            except Exception as e:
-                logger.error(f"{timestep}_6.get_stg_details.png, probably because there is no way to goal: {e}")
-                logger.debug(f">> Some more info:")
-                logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[0])}, {np.min(vis_list[0])}")
-                logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[2])}, {np.min(vis_list[2])}")
-                logger.debug(f">> subset.shape: subset max and min: {np.max(vis_list[3])}, {np.min(vis_list[3])}")
-                raise e
+        reachable_subset = self.filter_unreachable_goals(
+            subset, mask, (self.du, self.du), obstacle_mask
+        )
+        vis_list.append(reachable_subset.copy())
 
-        (stg_x, stg_y) = np.unravel_index(np.argmin(subset), subset.shape)
+        if self.print_images:
+            self.visualize_get_short_term_goal(vis_list, timestep)
+
+        #1 First attemp: Choose a safe reachable stg
+        stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+        if stg_x == self.du and stg_y == self.du:
+            #2 Second attemp: Choose a reachable stg
+            reachable_subset = self.filter_unreachable_goals(
+                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
+            )
+            stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+
 
         # Rechable if stg distance is less than current location (negative).
         reachable = (subset[stg_x, stg_y] < -0.0001) or stop
@@ -270,8 +313,6 @@ class FMMPlanner:
             reachable,
             stop,
         )
-
- 
 
     @staticmethod
     def get_mask(sx, sy, scale, step_size, min_radius=None):
@@ -325,12 +366,12 @@ class FMMPlanner:
         Find the nearest point to a goal which is traversible
         """
         logger.debug(f"Dilating goal map")
-        
+
         planner = FMMPlanner(
             self.traversible,
             print_images=self.print_images,
             vis_dir=self.vis_dir,
-            vis_postfix=self.vis_postfix
+            vis_postfix=self.vis_postfix,
         )
         # Plan to the goal mask
         planner.set_multi_goal(goal, timestep=timestep, number="3")
@@ -338,17 +379,25 @@ class FMMPlanner:
         # Now mask out anything here based on distance to the goal mask
         mask = self.traversible
         dist_map = planner.fmm_dist * mask
-        dist_map[dist_map == 0] = dist_map.max() #! max is either obstacle, or unreachable. 
-        dist_map[dist_map == dist_map.max()] = distance + 1 #! This makes sure that max cells are never chosen as dilated goals.
+        dist_map[dist_map == 0] = (
+            dist_map.max()
+        )  #! max is either obstacle, or unreachable.
+        dist_map[dist_map == dist_map.max()] = (
+            distance + 1
+        )  #! This makes sure that max cells are never chosen as dilated goals.
 
         #! set multigoal always sets masked cell to max+1, and it that is 1, it means max is 0, which means we found no possible path to goal.
         if np.max(dist_map) != 1.0:
-            logger.debug(f"Number of traversible points within distance {distance} (in pixels) is {np.sum(dist_map < distance)}")
+            logger.debug(
+                f"Number of traversible points within distance {distance} (in pixels) is {np.sum(dist_map < distance)}"
+            )
             logger.debug(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
             logger.debug(f"len unique values: {len(np.unique(dist_map))}")
             dilated_goal_map = dist_map < distance
         else:
-            logger.error(f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY")
+            logger.error(
+                f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
+            )
             raise Exception(
                 f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
             )
@@ -358,12 +407,12 @@ class FMMPlanner:
 
         if self.print_images:
             visualize_map(
-                dilated_goal_map.shape, 
+                dilated_goal_map.shape,
                 self.vis_dir,
                 f"{timestep}_4.dilate_goal{self.vis_postfix}.png",
                 traversible=self.traversible.astype(np.uint8),
                 goal_map=goal,
-                dilated_goal_map=dilated_goal_map.astype(np.uint8)
+                dilated_goal_map=dilated_goal_map.astype(np.uint8),
             )
 
         return dilated_goal_map
