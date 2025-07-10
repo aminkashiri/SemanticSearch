@@ -2,35 +2,30 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-from collections import defaultdict
-from typing import Optional, Tuple
 
 import cv2
-import matplotlib.pyplot as plt
-import numpy as np
-import skimage.morphology
 import torch
+import numpy as np
 import torch.nn as nn
-import trimesh.transformations as tra
-from skimage import measure
-from torch import IntTensor, Tensor
-from torch.nn import functional as F
-
-import home_robot.mapping.map_utils as mu
-import home_robot.utils.depth as du
+import skimage.morphology
+from skimage.draw import disk
+import matplotlib.pyplot as plt
+from bresenham import bresenham
+from collections import defaultdict
+from typing import Optional, Tuple
 import home_robot.utils.pose as pu
+from torch import IntTensor, Tensor
+import home_robot.utils.depth as du
+from torch.nn import functional as F
 import home_robot.utils.rotation as ru
+import home_robot.mapping.map_utils as mu
+from home_robot.utils.logger import get_logger
 from home_robot.mapping.semantic.constants import MapConstants as MC
-from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.utils.spot import draw_circle_segment, fill_convex_hull
+from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
 # For debugging input and output maps - shows matplotlib visuals
 debug_maps = False
-
-import numpy as np
-from bresenham import bresenham  # pip install bresenham
-
-from home_robot.utils.logger import get_logger
 
 logger = get_logger()
 
@@ -811,20 +806,39 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # Reset current location
         current_map[MC.CURRENT_LOCATION, :, :].fill_(0.0)
-        curr_loc = current_pose[:2]
+        curr_loc = current_pose[:2].flip(0)
         curr_loc = (curr_loc * 100.0 / self.xy_resolution).int()
 
-        x, y = curr_loc
+        prev_loc = prev_pose[:2].flip(0)
+        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int()
+
+
+        y, x = curr_loc
         current_map[
             MC.CURRENT_LOCATION,
             y - 2 : y + 3,
             x - 2 : x + 3,
         ].fill_(1.0)
-        current_map[
-            MC.VISITED_MAP,
-            y - self.agent_cell_radius: y + self.agent_cell_radius,
-            x - self.agent_cell_radius: x + self.agent_cell_radius
-        ].fill_(1.0)
+
+        def update_visited_map(current_loc, prev_loc, visited_map):
+            """
+            Marks the visited_map with a thick line between start and end.
+            """
+            thickness = self.agent_cell_radius+1
+            line_points = list(bresenham(prev_loc[0], prev_loc[1], current_loc[0], current_loc[1]))
+
+            for x, y in line_points:
+                if 0 <= x < visited_map.shape[0] and 0 <= y < visited_map.shape[1]:
+                    rr, cc = disk((x, y), radius=thickness, shape=visited_map.shape)
+                    visited_map[rr, cc] = 1
+            visited_map[
+                current_loc[0] - self.agent_cell_radius: current_loc[0] + self.agent_cell_radius+1,
+                current_loc[1] - self.agent_cell_radius: current_loc[1] + self.agent_cell_radius+1
+            ] = 1
+            return visited_map
+
+        current_map[MC.VISITED_MAP] = update_visited_map(curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP])
+
         # if self.old_x and self.old_y:
         #     # Draw a line from the previous location to the current location
         #     self.draw_line(current_map[e, MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2], x, y, self.old_x, self.old_y)

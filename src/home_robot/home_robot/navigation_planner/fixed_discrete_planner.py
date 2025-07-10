@@ -299,20 +299,23 @@ class DiscretePlanner:
         return action
 
     def get_traversible(self, obstacles, is_local):
+        collision_map = None
+        if is_local:
+            gx1, gx2, gy1, gy2 = self.semantic_map.lmb
+            collision_map = self.collision_map[gx1:gx2, gy1:gy2] == 1
+        else:
+            collision_map = self.collision_map == 1
+
+        obstacles = np.logical_or(obstacles, collision_map).astype(np.uint8)
         dilated_obstacles = cv2.dilate(obstacles, self.obs_dilation_selem, iterations=1)
 
         traversible = 1 - dilated_obstacles
-        if is_local:
-            gx1, gx2, gy1, gy2 = self.semantic_map.lmb
-            traversible[self.collision_map[gx1:gx2, gy1:gy2] == 1] = 0
-        else:
-            traversible[self.collision_map == 1] = 0
         #! myTODO: Global vs Local
         traversible[self.semantic_map.get_visited_map(is_local) == 1] = 1
         return traversible
 
     def get_goal_map(
-        self, traversible, goal_instance_map, viewpoint_location, is_local, pose_idx
+        self, traversible, goal_instance_map, viewpoint_location, is_local, pose_idx, method="com"
     ):
         """
         Args:
@@ -325,21 +328,32 @@ class DiscretePlanner:
 
         logger.debug(f"Viewpoint is : {viewpoint_location}")
 
-        goal_indices = np.argwhere(goal_instance_map == 1)
 
-        # Find closest goal cell in goal_map to the goal_pose
-        dists = np.linalg.norm(
-            goal_indices - np.array(viewpoint_location)[None, :], axis=1
-        )
-        closest_instance_idx = goal_indices[np.argmin(dists)]
-        logger.debug(
-            f"Closest goal index in goal_map to goal_pose is ({closest_instance_idx})"
-        )
+        if method == "com":
+            goal_indices = np.argwhere(goal_instance_map == 1)
+            center_of_mass = goal_indices.mean(axis=0).astype(int)
+            logger.debug(
+                f"Center of mass of the goal_mapis ({center_of_mass})"
+            )
+            goal_point = center_of_mass
+        else:
+            # Find closest goal cell in goal_map to the viewpoint location
+            goal_indices = np.argwhere(goal_instance_map == 1)
+            dists = np.linalg.norm(
+                goal_indices - np.array(viewpoint_location)[None, :], axis=1
+            )
+            closest_instance_idx = goal_indices[np.argmin(dists)]
+            logger.debug(
+                f"Closest goal index in goal_map to goal_pose is ({closest_instance_idx})"
+            )
+            goal_point = closest_instance_idx
+
+
 
         line_coords = list(
             bresenham(
-                closest_instance_idx[0],
-                closest_instance_idx[1],
+                goal_point[0],
+                goal_point[1],
                 viewpoint_location[0],
                 viewpoint_location[1],
             )
@@ -626,6 +640,15 @@ class DiscretePlanner:
             f"{self.timestep}_1.planning_input_frontier{postfix}.png",
             points=[(location, [255, 0, 0])],
             traversible=1 - obstacle_map,
+            frontier_map= frontier_map,
+        )
+        visualize_map(
+            obstacle_map.shape,
+            self.vis_dir,
+            f"{self.timestep}_0.visited_map{postfix}.png",
+            points=[(location, [255, 0, 0])],
+            traversible=1 - obstacle_map,
+            frontier_map=self.semantic_map.get_visited_map(is_local)
         )
         while True:
 

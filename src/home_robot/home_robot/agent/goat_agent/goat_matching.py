@@ -217,14 +217,12 @@ class GoatMatching(Matching):
 
         if len(all_views) > 0:
             if image_goal is None and language_goal is None:
-                logger.warning(f"In get_matches_against_memory 1.")
                 # * Category goal
                 instance_ids, all_confidences = self.match_to_category(
                     instance_ids, global_pose, instance_memory, use_local_id=False
                 )
                 all_confidences = np.array(all_confidences).reshape(-1, 1)
             else:
-                logger.warning(f"In get_matches_against_memory 2.")
                 all_confidences = self.match_images_to_goal(
                     all_views,
                     matching_fn,
