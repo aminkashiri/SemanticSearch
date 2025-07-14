@@ -5,7 +5,7 @@
 import os
 import cv2
 import math
-import scipy
+import skfmm
 import shutil
 import numpy as np
 import skimage.morphology
@@ -13,7 +13,6 @@ from typing import List, Tuple
 from scipy.ndimage import label
 from bresenham import bresenham
 import home_robot.utils.pose as pu
-from sklearn.cluster import DBSCAN
 from .fmm_planner import FMMPlanner
 from home_robot.core.interfaces import (
     ContinuousNavigationAction,
@@ -160,6 +159,7 @@ class DiscretePlanner:
         inst_goal_id: int,
         timestep: int,
         total_timesteps: int,
+        goal_semantic_id: int,
         fallback_to_frontier=True,
         postfix="",
     ) -> Tuple[DiscreteNavigationAction, np.ndarray]:
@@ -224,7 +224,7 @@ class DiscretePlanner:
                     closest_goal_pt,
                     is_local,
                     vis_input,
-                ) = self.plan_to_frontier_goal(postfix)
+                ) = self.plan_to_frontier_goal(goal_semantic_id, postfix)
 
         if not (stop or reachable):
             action = None
@@ -573,25 +573,12 @@ class DiscretePlanner:
         logger.debug("Clustering Instance map and selecting the largest cluster.")
         init_goal_map_count = goal_instance_map.sum()
 
-        labeled_map, num_features = label(goal_instance_map)
+        labeled_map, _ = label(goal_instance_map)
         component_sizes = np.bincount(labeled_map.ravel())
         component_sizes[0] = 0
         largest_label = component_sizes.argmax()
         clustered_map = labeled_map == largest_label
 
-        # # cluster goal points
-        # c = DBSCAN(eps=4, min_samples=1)
-        # # * data is index of nonzero elements
-        # data = np.array(goal_instance_map.nonzero()).T
-        # c.fit(data)
-        # # mask all points not in the largest cluster
-        # mode = scipy.stats.mode(c.labels_, keepdims=False).mode.item()
-        # mode_mask = (c.labels_ != mode).nonzero()
-        # x = data[mode_mask]
-        # clustered_map = np.copy(goal_instance_map)
-        # clustered_map[x] = 0.0
-
-        # adopt masked map if non-empty
         if clustered_map.sum() > 0:
             logger.debug("Choosing largest cluster for instance map.")
             logger.debug(
@@ -613,46 +600,58 @@ class DiscretePlanner:
         )
         return clustered_map
 
-    def plan_to_frontier_goal(self, postfix):
+    def plan_to_frontier_goal(self, goal_category, postfix):
         is_local = True
-        frontier_map = self.semantic_map.get_frontier_map(
-            local=True, timestep=self.timestep
-        )
-        if not frontier_map.any():
-            is_local = False
+
+        i = 0
+        while True:
             frontier_map = self.semantic_map.get_frontier_map(
-                local=False, timestep=self.timestep
+                local=is_local, timestep=self.timestep
+            )
+            if not frontier_map.any():
+                if is_local == True:
+                    is_local = False
+                    frontier_map = self.semantic_map.get_frontier_map(
+                        local=False, timestep=self.timestep
+                    )
+
+            if not frontier_map.any():
+                logger.info("No frontiers remaining.")
+                return False, False, None, None, None, {}
+
+            obstacle_map = np.rint(self.semantic_map.get_obstacle_map(is_local))
+            traversible = self.get_traversible(obstacle_map, is_local)
+            robot_loc = (
+                self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
+            )
+            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local)
+            visualize_map(
+                obstacle_map.shape,
+                self.vis_dir,
+                f"{self.timestep}_1.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                points=[(robot_loc, [255, 0, 0])],
+                traversible=1 - obstacle_map,
+                dilated_goal_map=frontier_map,
+                frontier_map=best_frontier_map,
+            )
+            visualize_map(
+                obstacle_map.shape,
+                self.vis_dir,
+                f"{self.timestep}_0.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                points=[(robot_loc, [255, 0, 0])],
+                traversible=1 - obstacle_map,
+                frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
             )
 
-        if not frontier_map.any():
-            logger.info("No frontier map available.")
-            return False, False, None, None, None, {}
+            # visualize_map(
+            #     obstacle_map.shape,
+            #     self.vis_dir,
+            #     f"{self.timestep}_0.visited_map{postfix}.png",
+            #     points=[(robot_loc, [255, 0, 0])],
+            #     traversible=1 - obstacle_map,
+            #     frontier_map=self.semantic_map.get_visited_map(is_local)
+            # )
 
-        obstacle_map = np.rint(self.semantic_map.get_obstacle_map(is_local))
-        traversible = self.get_traversible(obstacle_map, is_local)
-        location = (
-            self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
-        )
-
-        visualize_map(
-            obstacle_map.shape,
-            self.vis_dir,
-            f"{self.timestep}_1.planning_input_frontier{postfix}.png",
-            points=[(location, [255, 0, 0])],
-            traversible=1 - obstacle_map,
-            frontier_map= frontier_map,
-        )
-        visualize_map(
-            obstacle_map.shape,
-            self.vis_dir,
-            f"{self.timestep}_0.visited_map{postfix}.png",
-            points=[(location, [255, 0, 0])],
-            traversible=1 - obstacle_map,
-            frontier_map=self.semantic_map.get_visited_map(is_local)
-        )
-        while True:
-
-            #! myTODO: I can cluster frontiers here, and mask a cluster if not reachable, and then go to the next one.
             (
                 reachable,
                 stop,
@@ -660,8 +659,8 @@ class DiscretePlanner:
                 closest_goal_pt,
             ) = self._get_short_term_goal(
                 traversible,
-                frontier_map,
-                location,
+                best_frontier_map,
+                robot_loc,
                 postfix="_frontier",
             )
             if reachable:
@@ -674,9 +673,11 @@ class DiscretePlanner:
             )
             if not success:
                 logger.info(
-                    f"Obstacle dilation radius is already at minimum. Could not plan to frontiers either."
+                    f"Obstacle dilation radius is already at minimum. Could not plan to frontiers. Trying another frontier"
                 )
-                break
+                self.semantic_map.set_unreachable_frontier(best_frontier_map, is_local)
+
+            i += 1
 
         vis_input = {}
         if reachable:
@@ -687,6 +688,55 @@ class DiscretePlanner:
             }
         vis_input["dilated_obstacle_map"] = 1 - traversible
         return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
+    
+    def get_best_frontier(self, frontier_map, traversible, robot_loc, goal_category, is_local, metric="distance"):
+        structure = np.ones((3, 3))  # 8-connectivity
+        labeled_map, num_features = label(frontier_map, structure=structure)
+        frontiers = [
+            np.argwhere(labeled_map == i)
+            for i in range(1, num_features + 1)
+        ]
+
+        sem_weights = np.random.rand(
+            self.semantic_map.num_sem_categories, self.semantic_map.num_sem_categories
+        )
+        sem_weights = sem_weights[goal_category]
+        sem_layers = self.semantic_map.get_semantic_map(is_local)
+        r = 40
+
+        frontier_scores = []
+        for frontier in frontiers:
+            center = frontier.mean(axis=0).astype(int)
+            traversible_ma = np.ma.masked_values(traversible * 1, 0)
+            traversible_ma[center[0], center[1]] = 0 # the goal
+            distance = skfmm.distance(traversible_ma)
+            distance = np.ma.filled(distance, np.max(distance) + 1)
+            distance = distance[robot_loc[0], robot_loc[1]]
+
+            if metric == "distance":
+                frontier_scores.append(1/(distance+1))
+
+            elif metric == "semantics":
+                local_map = sem_layers[
+                    :, center[0] - r : center[0] + r, center[1] - r : center[1] + r
+                ]
+                neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0]
+
+                if len(neighbor_classes) > 0:
+                    frontier_sem_score = np.mean(
+                        sem_weights[neighbor_classes]
+                    ) /  distance
+                else:
+                    frontier_sem_score = np.mean(sem_weights) / distance
+                frontier_scores.append(frontier_sem_score)
+
+
+        # Select the frontier with the highest score
+        best_frontier = np.argmax(frontier_scores)
+        best_frontier_map = np.zeros_like(traversible)
+        best_frontier = frontiers[best_frontier]
+        best_frontier_map[best_frontier[:,0], best_frontier[:,1]] = 1
+        return best_frontier_map
 
     def plan_to_instance_goal(self, instance_goal_id, postfix):
         goal_instance_map, viewpoint_location, viewpoint_orientation, is_local = (
