@@ -597,6 +597,7 @@ class GoatAgent(Agent):
             self.inst_goal_id,
             self.sub_task_timesteps[self.current_task_idx],
             self.total_timesteps,
+            current_task["semantic_id"],
         )
 
         if not action is None:
@@ -635,6 +636,7 @@ class GoatAgent(Agent):
             self.inst_goal_id,
             self.sub_task_timesteps[self.current_task_idx],
             self.total_timesteps,
+            current_task["semantic_id"],
             fallback_to_frontier=False,
             postfix="_last_shot",
         )

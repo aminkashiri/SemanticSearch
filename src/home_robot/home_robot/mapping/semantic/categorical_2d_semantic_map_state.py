@@ -257,17 +257,19 @@ class Categorical2DSemanticMapState:
         frontier_map = (free_space & (unknown_neighbors > 0)).float()
         frontier_map2 = remove_small_frontiers(frontier_map, min_size=10)
         frontier_map3 = self.remove_close_frontiers(frontier_map2)
+        frontier_map4 = torch.logical_and(frontier_map3, 1-selected_map[MC.UNREACHABLE_FRONTIERS_MAP])
         self.print_maps(
             frontier_map=frontier_map,
             frontier_map2=frontier_map2,
             frontier_map3=frontier_map3,
+            frontier_map4=frontier_map4,
             obstacle_map=obstacle_map,
             known_map=known_map,
             timestep=timestep,
             local=local,
             # robot_pos=(50, 50),  # optional
         )
-        return frontier_map3.cpu().numpy()
+        return frontier_map4.cpu().numpy()
 
     def remove_close_frontiers(self, frontier_map: torch.Tensor) -> torch.Tensor:
         """
@@ -298,7 +300,7 @@ class Categorical2DSemanticMapState:
         return new_frontier_map
 
     def print_maps(
-        self, frontier_map, obstacle_map, known_map, local, timestep=None, frontier_map2=None, frontier_map3=None
+        self, frontier_map, obstacle_map, known_map, local, timestep=None, frontier_map2=None, frontier_map3=None, frontier_map4=None
     ):
         """
         Visualizes the frontier map alongside obstacles and explored area.
@@ -316,6 +318,7 @@ class Categorical2DSemanticMapState:
         frontier_map = frontier_map.cpu().numpy()
         frontier_map2 = frontier_map2.cpu().numpy()
         frontier_map3 = frontier_map3.cpu().numpy()
+        frontier_map4 = frontier_map4.cpu().numpy()
         obstacle_map = obstacle_map.cpu().numpy()
         known_map = known_map.cpu().numpy()
 
@@ -324,14 +327,38 @@ class Categorical2DSemanticMapState:
         vis_map[known_map == 1] = [117, 117, 117]
         vis_map[obstacle_map == 1] = [0, 0, 0]
 
-        vis_map = np.concatenate([vis_map]*3, axis=1)
+        vis_map = np.concatenate([vis_map]*4, axis=1)
 
         vis_map[:,:W,:][frontier_map == 1] = [255, 0, 0]
         vis_map[:,W:2*W,:][frontier_map2 == 1] = [255, 0, 0]
         vis_map[:,2*W:3*W,:][frontier_map3 == 1] = [255, 0, 0]
+        vis_map[:,3*W:4*W,:][frontier_map4 == 1] = [255, 0, 0]
 
         cv2.imwrite(
             os.path.join(self.vis_dir, f"{timestep}_0.frontiers{'' if local else '_global'}.png"),
             np.flipud(vis_map)
         )
+    def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:
+        if local:
+            return np.copy(
+                self.local_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().float().numpy()
+            )
+        else:
+            return np.copy(
+                self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().float().numpy()
+            )
 
+
+    def set_unreachable_frontier(self, frontier_map, local=True) -> np.ndarray:
+        """Get map showing regions the agent has been close to"""
+        if local:
+            unreachable_frontiers_map = self.local_map[MC.UNREACHABLE_FRONTIERS_MAP]
+            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
+            self.local_map[MC.UNREACHABLE_FRONTIERS_MAP] = new_unreachable_frontiers_map
+            self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = new_unreachable_frontiers_map 
+        else:
+            unreachable_frontiers_map = self.global_map[MC.UNREACHABLE_FRONTIERS_MAP]
+            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
+            self.global_map[MC.UNREACHABLE_FRONTIERS_MAP] = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
+            self.local_map[MC.UNREACHABLE_FRONTIERS_MAP] = self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+            
