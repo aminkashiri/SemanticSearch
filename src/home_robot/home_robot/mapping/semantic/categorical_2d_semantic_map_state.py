@@ -106,41 +106,41 @@ class Categorical2DSemanticMapState:
     def get_obstacle_map(self, local=True) -> np.ndarray:
         """Get local obstacle map for an environment."""
         if local:
-            return np.copy(self.local_map[MC.OBSTACLE_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.local_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
         else:
-            return np.copy(self.global_map[MC.OBSTACLE_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.global_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
 
     def get_explored_map(self, local=True) -> np.ndarray:
         """Get local explored map for an environment."""
         if local:
-            return np.copy(self.local_map[MC.EXPLORED_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.local_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
         else:
-            return np.copy(self.global_map[MC.EXPLORED_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.global_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
 
     def get_visited_map(self, local=True) -> np.ndarray:
         """Get local visited map for an environment."""
         if local:
-            return np.copy(self.local_map[MC.VISITED_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.local_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
         else:
-            return np.copy(self.global_map[MC.VISITED_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.global_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
 
     def get_been_close_map(self, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""
         if local:
-            return np.copy(self.local_map[MC.BEEN_CLOSE_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.local_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
         else:
-            return np.copy(self.global_map[MC.BEEN_CLOSE_MAP, :, :].cpu().float().numpy())
+            return (np.copy(self.global_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
 
     def get_blacklisted_targets_map(self, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""
         if local:
-            return np.copy(
-                self.local_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().float().numpy()
-            )
+            return (np.copy(
+                self.local_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
+            ) > 0).astype(np.uint8)
         else:
-            return np.copy(
-                self.global_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().float().numpy()
-            )
+            return (np.copy(
+                self.global_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
+            ) > 0).astype(np.uint8)
 
     def get_semantic_map(self, local=True) -> np.ndarray:
         """Get local map of semantic categories for an environment."""
@@ -229,35 +229,31 @@ class Categorical2DSemanticMapState:
             frontier_map (np.ndarray): binary map (1=frontier, 0=non-frontier)
         """
 
-        def remove_small_frontiers(frontier_tensor, min_size=10):
-            frontier_map = frontier_tensor.cpu().numpy()
+        def remove_small_frontiers(frontier_map, min_size=10):
             labeled_map, num_features = label(frontier_map)
             cleaned_map = np.zeros_like(frontier_map)
             for region_id in range(1, num_features + 1):
                 region = labeled_map == region_id
                 if np.sum(region) >= min_size:
                     cleaned_map[region] = 1
-            cleaned_map = torch.tensor(cleaned_map, dtype=frontier_tensor.dtype).to(frontier_tensor.device)
             return cleaned_map
 
-        selected_map = self.local_map if local else self.global_map
-        known_map = (selected_map[MC.EXPLORED_MAP, :, :] != 0).float()
-        obstacle_map = (selected_map[MC.OBSTACLE_MAP, :, :] != 0).float()
+        known_map = self.get_explored_map(local)
+        obstacle_map = self.get_obstacle_map(local)
 
-        device = known_map.device
         free_space = (known_map == 1) & (obstacle_map == 0)
 
-        unknown = (known_map == 0).to(torch.float32)
+        unknown = torch.tensor(known_map == 0, dtype=torch.float32)
 
         kernel = torch.tensor(
-                [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=torch.float32, device=device
+                [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=torch.float32
             ).unsqueeze(0).unsqueeze(0)
 
-        unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0)
-        frontier_map = (free_space & (unknown_neighbors > 0)).float()
+        unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0).numpy()
+        frontier_map = free_space & (unknown_neighbors > 0)
         frontier_map2 = remove_small_frontiers(frontier_map, min_size=10)
         frontier_map3 = self.remove_close_frontiers(frontier_map2)
-        frontier_map4 = torch.logical_and(frontier_map3, 1-selected_map[MC.UNREACHABLE_FRONTIERS_MAP])
+        frontier_map4 = frontier_map3 & (1-self.get_unreachable_frontiers_map(local))
         self.print_maps(
             frontier_map=frontier_map,
             frontier_map2=frontier_map2,
@@ -269,9 +265,9 @@ class Categorical2DSemanticMapState:
             local=local,
             # robot_pos=(50, 50),  # optional
         )
-        return frontier_map4.cpu().numpy()
+        return frontier_map4
 
-    def remove_close_frontiers(self, frontier_map: torch.Tensor) -> torch.Tensor:
+    def remove_close_frontiers(self, frontier_map: np.ndarray) -> np.ndarray:
         """
         Remove frontiers closer than 'radius' to 'location' from the frontier map.
 
@@ -284,16 +280,15 @@ class Categorical2DSemanticMapState:
         """
         logger.debug("Removing close frontiers from the frontier map.")
         H, W = frontier_map.shape
-        device = frontier_map.device
+        y_coords = np.arange(H).reshape(-1, 1).repeat(W, axis=1)
+        x_coords = np.arange(W).reshape(1, -1).repeat(H, axis=0)
 
-        y_coords = torch.arange(H, device=device).unsqueeze(1).expand(H, W)
-        x_coords = torch.arange(W, device=device).unsqueeze(0).expand(H, W)
+        dist = np.sqrt((x_coords - self.local_loc[1].item()) ** 2 + (y_coords - self.local_loc[0].item()) ** 2)
 
-        dist = torch.sqrt((x_coords - self.local_loc[1]) ** 2 + (y_coords - self.local_loc[0]) ** 2)
         close_mask = dist <= self.close_frontier_radius
-        new_frontier_map = frontier_map.clone()
+        new_frontier_map = frontier_map.copy()
         new_frontier_map[close_mask] = 0
-        if not (new_frontier_map.cpu() == 1).any().item():
+        if not np.any(new_frontier_map == 1):
             logger.warning("No frontiers left after removing close frontiers, returning original frontier map.")
             return frontier_map
 
@@ -315,13 +310,6 @@ class Categorical2DSemanticMapState:
             return
 
         #! myTODO: Can use visualize_map function from home_robot.visualization.visualize_map
-        frontier_map = frontier_map.cpu().numpy()
-        frontier_map2 = frontier_map2.cpu().numpy()
-        frontier_map3 = frontier_map3.cpu().numpy()
-        frontier_map4 = frontier_map4.cpu().numpy()
-        obstacle_map = obstacle_map.cpu().numpy()
-        known_map = known_map.cpu().numpy()
-
         H, W = known_map.shape
         vis_map = np.ones((H, W, 3), dtype=np.uint8) * 255
         vis_map[known_map == 1] = [117, 117, 117]
@@ -340,12 +328,12 @@ class Categorical2DSemanticMapState:
         )
     def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:
         if local:
-            return np.copy(
-                self.local_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().float().numpy()
+            return (np.copy(
+                self.local_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(np.uint8)
             )
         else:
-            return np.copy(
-                self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().float().numpy()
+            return (np.copy(
+                self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(np.uint8)
             )
 
 

@@ -190,7 +190,7 @@ class NavVisualizer:
         semantic_frame: np.ndarray,
         timestep: int,
         last_goal_image,
-        inst_goal_found,
+        inst_goal_found = False,
         last_td_map: Dict[str, Any] = None,
         last_collisions: Dict[str, Any] = None,
         semantic_map: Optional[np.ndarray] = None,

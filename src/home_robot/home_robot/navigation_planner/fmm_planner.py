@@ -73,7 +73,7 @@ class FMMPlanner:
                 (traversible.shape[1] // scale, traversible.shape[0] // scale),
                 interpolation=cv2.INTER_NEAREST,
             )
-            self.traversible = np.rint(self.traversible)
+            self.traversible = np.rint(self.traversible).astype(np.uint8)
         else:
             self.traversible = traversible
 
@@ -287,22 +287,24 @@ class FMMPlanner:
         subset[ratio1 < -1.5] = 1
 
         reachable_subset = self.filter_unreachable_goals(
-            subset, mask, (self.du, self.du), obstacle_mask
+            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
         )
         vis_list.append(reachable_subset.copy())
 
+
+        # #1 First attemp: Choose a safe reachable stg
+        stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+        # if stg_x == self.du and stg_y == self.du:
+        #     #2 Second attemp: Choose a reachable stg
+        #     reachable_subset = self.filter_unreachable_goals(
+        #         subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
+        #     )
+        #     stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+        #     vis_list.append(reachable_subset.copy())
+
+
         if self.print_images:
             self.visualize_get_short_term_goal(vis_list, timestep)
-
-        #1 First attemp: Choose a safe reachable stg
-        stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
-        if stg_x == self.du and stg_y == self.du:
-            #2 Second attemp: Choose a reachable stg
-            reachable_subset = self.filter_unreachable_goals(
-                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
-            )
-            stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
-
 
         # Rechable if stg distance is less than current location (negative).
         reachable = (subset[stg_x, stg_y] < -0.0001) or stop

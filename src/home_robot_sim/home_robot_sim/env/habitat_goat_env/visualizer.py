@@ -239,7 +239,7 @@ class Visualizer:
         rl_obs_frame: Optional[np.ndarray] = None,
         caption: str = None,
         landmarks: List = None,
-        instance_map: Optional[np.ndarray] = None,
+        instances_map: Optional[np.ndarray] = None,
         top_down_map = None,
         is_local=True,
         inst_goal_found: bool = False,
@@ -348,8 +348,8 @@ class Visualizer:
             no_category_mask = (
                 semantic_map == PI.SEM_START + self.num_sem_categories - 1
             )  # Assumes the last category is "other"
-            obstacle_mask = np.rint(obstacle_map) == 1
-            explored_mask = np.rint(explored_map) == 1
+            obstacle_mask = obstacle_map == 1
+            explored_mask = explored_map == 1
             visited_mask = self.visited_map_vis[gy1:gy2, gx1:gx2] == 1
             semantic_map[no_category_mask] = PI.EMPTY_SPACE
             semantic_map[np.logical_and(no_category_mask, explored_mask)] = PI.EXPLORED
@@ -383,15 +383,15 @@ class Visualizer:
                     short_term_goal_mask = short_term_goal_mask == 1
                     semantic_map[short_term_goal_mask] = PI.SHORT_TERM_GOAL
 
-            if instance_map is not None:
-                self.update_semantic_map_with_instances(semantic_map, instance_map)
+            if instances_map is not None:
+                self.update_semantic_map_with_instances(semantic_map, instances_map)
 
             # Semantic categories
             semantic_map_vis = self.get_semantic_vis(semantic_map)
             semantic_map_vis = np.flipud(semantic_map_vis)
 
             # overlay the regions the agent has been close to
-            been_close_map = np.flipud(np.rint(been_close_map) == 1)
+            been_close_map = np.flipud(been_close_map == 1)
             color_index = PI.BEEN_CLOSE * 3
             color = self.semantic_category_mapping.map_color_palette[
                 color_index : color_index + 3

@@ -251,6 +251,9 @@ class GoatAgent(Agent):
         last_step_local_id_to_global_id_map = (
             self.instance_memory.local_id_to_global_id_map.copy()
         )
+        #! myTODO: Clean this up
+        self.semantic_map_module.vis_dir = self.planner.vis_dir
+        self.semantic_map_module.timestep = self.sub_task_timesteps[self.current_task_idx] + 1
         # Update map with observations and generate map features
         (
             self.semantic_map.local_map,
@@ -381,7 +384,6 @@ class GoatAgent(Agent):
         if self.visualize:
             is_local = vis_inputs.get("is_local", True)
             vis_inputs = {
-                "inst_goal_found": self.inst_goal_found,
                 "inst_goal_id": self.inst_goal_id,
                 "timestep": self.sub_task_timesteps[self.current_task_idx],
                 "total_timesteps": self.total_timesteps,
