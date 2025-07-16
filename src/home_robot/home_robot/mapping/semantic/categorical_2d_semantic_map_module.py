@@ -82,7 +82,7 @@ def get_fp_exp_pred(self, fp_map_pred):
     if self.exploration_type == "raycast":
         fp_exp_pred = compute_known_cells_map(
             fp_map_pred.cpu().numpy(),
-            (0, fp_map_pred.shape[-1] // 2),
+            (0, fp_map_pred.shape[1] // 2),
             self.gaze_distance * 100 / self.resolution,
             self.gaze_width,
             num_beams=360,
@@ -222,6 +222,12 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         self.screen_h = frame_height
         self.screen_w = frame_width
+        self.hfov = hfov
+        aspect_ratio = self.screen_h / self.screen_w
+        hfov_rad = np.deg2rad(self.hfov)
+        vfov_rad = 2 * np.arctan(np.tan(hfov_rad / 2) * aspect_ratio)
+        self.vfov = np.rad2deg(vfov_rad)
+
         self.camera_matrix = du.get_camera_matrix(self.screen_w, self.screen_h, hfov)
         self.num_sem_categories = num_sem_categories
         self.must_explore_close = must_explore_close
@@ -275,6 +281,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.gaze_width = gaze_width
         self.gaze_distance = gaze_distance
         self.agent_cell_radius = agent_cell_radius
+        self.vis_dir = None
+        self.timestep = 0
 
     @torch.no_grad()
     def forward(
@@ -486,6 +494,89 @@ class Categorical2DSemanticMapModule(nn.Module):
                 err += dx
                 y1 += sy
 
+    def get_stairs(self, voxels, visible_ground):
+        """
+        Heuristic to mark stair-like regions as obstacles
+        based on absence of ground in visible region.
+        """
+        visible_ground = visible_ground.cpu().numpy()
+        #! myTODO: Hardcoded. Fix this later
+        visible_ground[80:] = 0
+
+        ground_plane = voxels[
+            0, :, :, -2 - self.min_voxel_height : 2 - self.min_voxel_height
+        ]
+        assert ground_plane.shape[0] == voxels.shape[1]
+        assert ground_plane.shape[1] == voxels.shape[2]
+
+        ground_plane = ground_plane.sum(axis=2).cpu().numpy()
+        ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
+
+        # ground_points = np.column_stack(np.nonzero(ground_plane))
+        # points = ground_points[:, [1, 0]].astype(np.float32)  # (x, y)
+        # polygon = alpha_shape(points, alpha=0.005)
+        # ground_plane = rasterize_polygon(polygon, ground_plane.shape)
+        selem = np.ones((7,7), dtype=np.uint8)
+        ground_plane = cv2.dilate(ground_plane, selem, iterations=1)
+
+        X, Y = ground_plane.shape
+        robot_x = 0
+        robot_y = Y // 2
+
+        xx, yy = np.meshgrid(np.arange(X), np.arange(Y), indexing='ij')
+        dx = (xx - robot_x) * self.xy_resolution
+        dy = (yy - robot_y) * self.xy_resolution
+
+        dx[dx == 0] = 1e-6  # avoid division by zero
+
+        # Convert FOVs to radians
+        hfov_rad = np.deg2rad(self.hfov)
+        vfov_rad = np.deg2rad(self.vfov)
+
+
+        horizontal_angle = np.arctan2(dy, dx)
+        within_hfov = np.abs(horizontal_angle) <= (hfov_rad / 2)
+
+        min_visible_dist = int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 1
+        within_vfov = np.zeros_like(within_hfov, dtype=bool)
+        within_vfov[min_visible_dist:,:] = 1
+        # ground_dist = np.sqrt(dx**2 + dy**2)
+        # within_vfov = ground_dist >= min_visible_dist
+
+        within_fov = within_hfov & within_vfov
+
+        stair_mask = (ground_plane == 0) & within_fov & visible_ground
+        if True:
+            import matplotlib
+
+            # matplotlib.use("TkAgg")
+            plt.clf() 
+            matplotlib.use("Agg")
+            plt.subplot(321)
+            plt.title("ground plane")
+            plt.imshow(ground_plane)
+            plt.subplot(322)
+            plt.title("hfov")
+            plt.imshow(within_hfov)
+            plt.subplot(323)
+            plt.title("vfov")
+            plt.imshow(within_vfov)
+            plt.subplot(324)
+            plt.title("withinfov")
+            plt.imshow(within_fov)
+            plt.subplot(325)
+            plt.title("visible_ground")
+            plt.imshow(visible_ground)
+            plt.subplot(326)
+            plt.title("stairs_mask")
+            plt.imshow(stair_mask)
+            # plt.subplot(336)
+            # plt.imshow(been_close * obstacles)
+            # plt.show()
+            plt.savefig(self.vis_dir + f"/{self.timestep}_00.stairs.png")
+        return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device)
+
+
     def _update_local_map_and_pose(  # noqa: C901
         self,
         obs: Tensor,
@@ -685,7 +776,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         all_height_proj = voxels.sum(3)
         #* Shape is: [voxech_channels, height, width]
 
-
         fp_map_pred = agent_height_proj[0, :, :]
 
         # +rows is away from the camera, with the camra origin at row 0
@@ -696,6 +786,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.imshow(fp_exp_pred[0,0].cpu())
         # plt.pause(0.01)
         fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
+
+        # NOTE: Only works in fp_exp_pred is 'raycast'
+        stairs_map = self.get_stairs(voxels, fp_exp_pred>=1)
+        fp_map_pred += stairs_map
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
