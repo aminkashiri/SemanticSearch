@@ -163,15 +163,14 @@ class FMMPlanner:
         self.fmm_dist = dd
         # self.goal_map = goal_map
 
-        if self.print_images and timestep != 0:
+        if self.print_images and timestep != 0 and len(number) > 0:
             r, c = traversible.shape  # for visualizing (downsampled) traversible map
             dist_vis = np.zeros((r, c * 3))
             dist_vis[:, :c] = np.flipud(traversible)
             dist_vis[:, c : 2 * c] = np.flipud(goal_map)
             dist_vis[:, 2 * c :] = np.flipud(self.fmm_dist / self.fmm_dist.max())
 
-            # logger.debug(f"SAVING {number}.planner_snapshot")
-            output_name = f"{timestep}_{number}.planner_snapshot{self.vis_postfix}.png"
+            output_name = f"{timestep}_{number}.distance_to_goal{self.vis_postfix}.png"
             cv2.imwrite(
                 os.path.join(self.vis_dir, output_name),
                 (dist_vis * 255).astype(int),
@@ -189,7 +188,7 @@ class FMMPlanner:
         # logger.debug(f"SAVING 6.get_stg")
         cv2.imwrite(
             os.path.join(
-                self.vis_dir, f"{timestep}_6.get_stg_details{self.vis_postfix}.png"
+                self.vis_dir, f"{timestep}_9.get_stg_details{self.vis_postfix}.png"
             ),
             (dist_vis).astype(int),
         )
@@ -376,7 +375,7 @@ class FMMPlanner:
             vis_postfix=self.vis_postfix,
         )
         # Plan to the goal mask
-        planner.set_multi_goal(goal, timestep=timestep, number="3")
+        planner.set_multi_goal(goal, timestep=timestep)
 
         # Now mask out anything here based on distance to the goal mask
         mask = self.traversible
@@ -411,7 +410,7 @@ class FMMPlanner:
             visualize_map(
                 dilated_goal_map.shape,
                 self.vis_dir,
-                f"{timestep}_4.dilate_goal{self.vis_postfix}.png",
+                f"{timestep}_7.dilate_goal{self.vis_postfix}.png",
                 traversible=self.traversible.astype(np.uint8),
                 goal_map=goal,
                 dilated_goal_map=dilated_goal_map.astype(np.uint8),

@@ -456,7 +456,7 @@ class DiscretePlanner:
             self.dd,
             self.map_downsample_factor,
             self.map_update_frequency,
-            number="5",
+            number="8",
         )
 
         # goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
@@ -610,7 +610,7 @@ class DiscretePlanner:
         visualize_map(
             goal_instance_map.shape,
             self.vis_dir,
-            f"{self.timestep}_02.cluster_goal.png",
+            f"{self.timestep}_2.cluster_goal.png",
             goal_map=clustered_map,
             dilated_goal_map=goal_instance_map,
             traversible=1 - self.semantic_map.get_obstacle_map(is_local),
@@ -645,29 +645,29 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_1.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                f"{self.timestep}_3.visited_map{postfix}.png",
+                points=[(robot_loc, [255, 0, 0])],
+                traversible=1 - obstacle_map,
+                frontier_map=self.semantic_map.get_visited_map(is_local)
+            )
+            visualize_map(
+                obstacle_map.shape,
+                self.vis_dir,
+                f"{self.timestep}_4.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                points=[(robot_loc, [255, 0, 0])],
+                traversible=1 - obstacle_map,
+                frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
+            )
+            visualize_map(
+                obstacle_map.shape,
+                self.vis_dir,
+                f"{self.timestep}_5.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 dilated_goal_map=frontier_map,
                 frontier_map=best_frontier_map,
             )
-            visualize_map(
-                obstacle_map.shape,
-                self.vis_dir,
-                f"{self.timestep}_0.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
-                points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
-                frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
-            )
 
-            visualize_map(
-                obstacle_map.shape,
-                self.vis_dir,
-                f"{self.timestep}_0.visited_map{postfix}.png",
-                points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
-                frontier_map=self.semantic_map.get_visited_map(is_local)
-            )
 
             (
                 reachable,
@@ -740,11 +740,10 @@ class DiscretePlanner:
                 neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0]
 
                 if len(neighbor_classes) > 0:
-                    frontier_sem_score = np.mean(
-                        sem_weights[neighbor_classes]
-                    ) /  distance
+                    frontier_sem_score = np.mean(sem_weights[neighbor_classes])
                 else:
-                    frontier_sem_score = np.mean(sem_weights) / distance
+                    frontier_sem_score = np.mean(sem_weights)
+                frontier_sem_score /= distance
                 frontier_scores.append(frontier_sem_score)
 
 
@@ -771,19 +770,19 @@ class DiscretePlanner:
         visualize_map(
             obstacle_map.shape,
             self.vis_dir,
-            f"{self.timestep}_1.planning_input_instance{postfix}.png",
-            points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
+            f"{self.timestep}_3.visited_map{postfix}.png",
+            points=[(robot_loc, [255, 0, 0])],
             traversible=1 - obstacle_map,
-            goal_map=goal_instance_map,
-            features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
+            frontier_map=self.semantic_map.get_visited_map(is_local)
         )
         visualize_map(
             obstacle_map.shape,
             self.vis_dir,
-            f"{self.timestep}_0.visited_map{postfix}.png",
-            points=[(robot_loc, [255, 0, 0])],
+            f"{self.timestep}_5.planning_input_instance{postfix}.png",
+            points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
             traversible=1 - obstacle_map,
-            frontier_map=self.semantic_map.get_visited_map(is_local)
+            goal_map=goal_instance_map,
+            features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
         )
 
         logger.info(
@@ -939,7 +938,7 @@ class DiscretePlanner:
         visualize_map(
             traversible.shape,
             self.vis_dir,
-            f"{self.timestep}_2.interpolate_goal_idx{index}{'' if is_local else '_global'}.png",
+            f"{self.timestep}_6.interpolate_goal_idx{index}{'' if is_local else '_global'}.png",
             traversible=traversible,
             features=features,
             points=points,

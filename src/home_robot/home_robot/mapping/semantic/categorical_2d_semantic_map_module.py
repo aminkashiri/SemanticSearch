@@ -573,7 +573,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             # plt.subplot(336)
             # plt.imshow(been_close * obstacles)
             # plt.show()
-            plt.savefig(self.vis_dir + f"/{self.timestep}_00.stairs.png")
+            plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
         return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device)
 
 
