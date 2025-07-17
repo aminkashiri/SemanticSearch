@@ -61,26 +61,8 @@ class HabitatGoatEnv(HabitatEnv):
         self.config = config
         self.current_episode = None
 
-        ovon_semantic_ids = []
-
         self.hm3d_mapping = {}
-
-        for obj in self.habitat_env.sim.semantic_scene.objects:
-            main_category = hm3d_mapping_df[hm3d_mapping_df['raw_category'] == obj.category.name()]
-            
-            # raw -> main category
-            if len(main_category) == 0:
-                continue
-            else:
-                if len(main_category) > 1:
-                    raise Exception("Multiple categories found for", obj.category.name())
-                main_category = main_category['category'].item()
-
-            main_category = "_".join(main_category.split(" "))
-
-            if main_category in all_ovon_categories:
-                self.hm3d_mapping[int(obj.id.split('_')[-1])] = all_ovon_categories.index(main_category) + 1
-
+        self.reset_semantic_mapping()
 
         # for cat in hm3d_mapping_df['category'].tolist():
         #     if cat in all_ovon_categories:
@@ -121,6 +103,8 @@ class HabitatGoatEnv(HabitatEnv):
         if not self.ground_truth_semantics:
             self.init_perception_module()
 
+        #! MyTODO: I guess semantics mapping should have been updated here, but they are not using this. 
+        self.reset_semantic_mapping()
         self.semantic_category_mapping.reset_instance_id_to_category_id(
             self.habitat_env
         )
@@ -132,6 +116,26 @@ class HabitatGoatEnv(HabitatEnv):
         self.visualizer.set_vis_dir(
             scene_id, self.habitat_env.current_episode.episode_id
         )
+    
+    def reset_semantic_mapping(self):
+        # semantic_scene.objects is same as semantic_annotations().objects
+        for obj in self.habitat_env.sim.semantic_scene.objects:
+            main_category = hm3d_mapping_df[hm3d_mapping_df['raw_category'] == obj.category.name()]
+            
+            # raw -> main category
+            if len(main_category) == 0:
+                continue
+            else:
+                if len(main_category) > 1:
+                    raise Exception("Multiple categories found for", obj.category.name())
+                main_category = main_category['category'].item()
+
+            main_category = "_".join(main_category.split(" "))
+
+            if main_category in all_ovon_categories:
+                self.hm3d_mapping[int(obj.id.split('_')[-1])] = all_ovon_categories.index(main_category) + 1
+
+
 
     def init_perception_module(self, vocabulary=None):
         from home_robot.perception.detection.detic.detic_perception import (
@@ -197,8 +201,7 @@ class HabitatGoatEnv(HabitatEnv):
         vocabulary=None,
     ) -> home_robot.core.interfaces.Observations:
         if self.ground_truth_semantics:
-
-            # * shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
+            #* shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
             obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
 
@@ -236,7 +239,7 @@ class HabitatGoatEnv(HabitatEnv):
             # obs.semantic[obs.semantic >= 0] = 0
             # obs.semantic = obs.semantic * -1
             # TODO Ground-truth semantic visualization
-            obs.task_observations["semantic_frame"] = obs.rgb
+            # obs.task_observations["semantic_frame"] = obs.rgb
         else:
             obs = self.segmentation.predict(obs)
 
