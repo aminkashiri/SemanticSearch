@@ -304,7 +304,7 @@ class NavVisualizer:
         except Exception as e:
             import pdb; pdb.set_trace()
         for i in range(nframes):
-            name = f"{timestep}_10.snapshot_{i}.png"
+            name = f"{timestep}_12.snapshot_{i}.png"
             cv2.imwrite(os.path.join(self.vis_dir, name), frame)
 
     def pad_frame(self, frame: np.ndarray, width: int) -> np.ndarray:

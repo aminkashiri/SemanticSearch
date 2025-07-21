@@ -201,7 +201,7 @@ class Categorical2DSemanticMapState:
     def global_pose_to_local_location(self, global_pose):
         return self.global_location_to_local_location(self.global_pose_to_global_location(global_pose))
     
-    def is_in_local_map(self, local_location):
+    def is_location_in_local_map(self, local_location):
         return 0 <= local_location[0] < self.local_map_size and 0 <= local_location[1] < self.local_map_size
 
     @property

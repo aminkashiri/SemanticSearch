@@ -503,8 +503,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         #! myTODO: Hardcoded. Fix this later
         visible_ground[80:] = 0
 
+        #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
+        x = self.min_obs_height_cm / self.z_resolution
         ground_plane = voxels[
-            0, :, :, -2 - self.min_voxel_height : 2 - self.min_voxel_height
+            0, :, :, -x - self.min_voxel_height : x - self.min_voxel_height
         ]
         assert ground_plane.shape[0] == voxels.shape[1]
         assert ground_plane.shape[1] == voxels.shape[2]
@@ -516,14 +518,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         # points = ground_points[:, [1, 0]].astype(np.float32)  # (x, y)
         # polygon = alpha_shape(points, alpha=0.005)
         # ground_plane = rasterize_polygon(polygon, ground_plane.shape)
-        selem = np.ones((7,7), dtype=np.uint8)
+        selem = np.ones((7, 7), dtype=np.uint8)
         ground_plane = cv2.dilate(ground_plane, selem, iterations=1)
 
         X, Y = ground_plane.shape
         robot_x = 0
         robot_y = Y // 2
 
-        xx, yy = np.meshgrid(np.arange(X), np.arange(Y), indexing='ij')
+        xx, yy = np.meshgrid(np.arange(X), np.arange(Y), indexing="ij")
         dx = (xx - robot_x) * self.xy_resolution
         dy = (yy - robot_y) * self.xy_resolution
 
@@ -533,13 +535,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         hfov_rad = np.deg2rad(self.hfov)
         vfov_rad = np.deg2rad(self.vfov)
 
-
         horizontal_angle = np.arctan2(dy, dx)
         within_hfov = np.abs(horizontal_angle) <= (hfov_rad / 2)
 
-        min_visible_dist = int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 1
+        min_visible_dist = (
+            int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 1
+        )
         within_vfov = np.zeros_like(within_hfov, dtype=bool)
-        within_vfov[min_visible_dist:,:] = 1
+        within_vfov[min_visible_dist:, :] = 1
         # ground_dist = np.sqrt(dx**2 + dy**2)
         # within_vfov = ground_dist >= min_visible_dist
 
@@ -550,32 +553,28 @@ class Categorical2DSemanticMapModule(nn.Module):
             import matplotlib
 
             # matplotlib.use("TkAgg")
-            plt.clf() 
-            matplotlib.use("Agg")
+            # matplotlib.use("Agg")
+            plt.clf()
             plt.subplot(321)
             plt.title("ground plane")
-            plt.imshow(ground_plane)
+            plt.imshow(np.flipud(ground_plane))
             plt.subplot(322)
             plt.title("hfov")
-            plt.imshow(within_hfov)
+            plt.imshow(np.flipud(within_hfov))
             plt.subplot(323)
             plt.title("vfov")
-            plt.imshow(within_vfov)
+            plt.imshow(np.flipud(within_vfov))
             plt.subplot(324)
             plt.title("withinfov")
-            plt.imshow(within_fov)
+            plt.imshow(np.flipud(within_fov))
             plt.subplot(325)
             plt.title("visible_ground")
-            plt.imshow(visible_ground)
+            plt.imshow(np.flipud(visible_ground))
             plt.subplot(326)
             plt.title("stairs_mask")
-            plt.imshow(stair_mask)
-            # plt.subplot(336)
-            # plt.imshow(been_close * obstacles)
-            # plt.show()
+            plt.imshow(np.flipud(stair_mask))
             plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
         return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device)
-
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -638,6 +637,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         depth = obs[3, :, :].float()
         depth[depth > self.max_depth] = 0
 
+        # * This point cloud is with respect to cameras location. Is it not converted to world's coords.
         point_cloud_t = du.get_point_cloud_from_z_t(
             depth, self.camera_matrix, device, scale=self.du_scale
         )
@@ -774,7 +774,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             ..., self.min_mapped_height : self.max_mapped_height
         ].sum(3)
         all_height_proj = voxels.sum(3)
-        #* Shape is: [voxech_channels, height, width]
+        # * Shape is: [voxech_channels, height, width]
 
         fp_map_pred = agent_height_proj[0, :, :]
 
@@ -788,7 +788,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
 
         # NOTE: Only works in fp_exp_pred is 'raycast'
-        stairs_map = self.get_stairs(voxels, fp_exp_pred>=1)
+        stairs_map = self.get_stairs(voxels, fp_exp_pred >= 1)
         fp_map_pred += stairs_map
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
@@ -906,7 +906,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         prev_loc = prev_pose[:2].flip(0)
         prev_loc = (prev_loc * 100.0 / self.xy_resolution).int()
 
-
         y, x = curr_loc
         current_map[
             MC.CURRENT_LOCATION,
@@ -918,20 +917,30 @@ class Categorical2DSemanticMapModule(nn.Module):
             """
             Marks the visited_map with a thick line between start and end.
             """
-            thickness = self.agent_cell_radius+1
-            line_points = list(bresenham(prev_loc[0], prev_loc[1], current_loc[0], current_loc[1]))
+            thickness = self.agent_cell_radius + 1
+            line_points = list(
+                bresenham(prev_loc[0], prev_loc[1], current_loc[0], current_loc[1])
+            )
 
             for x, y in line_points:
                 if 0 <= x < visited_map.shape[0] and 0 <= y < visited_map.shape[1]:
                     rr, cc = disk((x, y), radius=thickness, shape=visited_map.shape)
                     visited_map[rr, cc] = 1
             visited_map[
-                current_loc[0] - self.agent_cell_radius: current_loc[0] + self.agent_cell_radius+1,
-                current_loc[1] - self.agent_cell_radius: current_loc[1] + self.agent_cell_radius+1
+                current_loc[0]
+                - self.agent_cell_radius : current_loc[0]
+                + self.agent_cell_radius
+                + 1,
+                current_loc[1]
+                - self.agent_cell_radius : current_loc[1]
+                + self.agent_cell_radius
+                + 1,
             ] = 1
             return visited_map
 
-        current_map[MC.VISITED_MAP] = update_visited_map(curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP])
+        current_map[MC.VISITED_MAP] = update_visited_map(
+            curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP]
+        )
 
         # if self.old_x and self.old_y:
         #     # Draw a line from the previous location to the current location
