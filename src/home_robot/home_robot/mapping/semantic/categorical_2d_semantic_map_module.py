@@ -504,7 +504,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         visible_ground[80:] = 0
 
         #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
-        x = self.min_obs_height_cm / self.z_resolution
+        x = int(self.min_obs_height_cm / self.z_resolution)
         ground_plane = voxels[
             0, :, :, -x - self.min_voxel_height : x - self.min_voxel_height
         ]

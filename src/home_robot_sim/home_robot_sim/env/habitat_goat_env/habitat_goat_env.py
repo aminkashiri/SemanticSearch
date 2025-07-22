@@ -50,6 +50,7 @@ class HabitatGoatEnv(HabitatEnv):
         self.max_depth = config.ENVIRONMENT.max_depth
         self.ground_truth_semantics = config.GROUND_TRUTH_SEMANTICS
         self.visualizer = Visualizer(config)
+        self.timestep = 0
 
         self.episodes_data_path = config.habitat.dataset.data_path
 
@@ -194,6 +195,61 @@ class HabitatGoatEnv(HabitatEnv):
         obs = self._preprocess_semantic(obs, habitat_obs["semantic"])
         return obs
 
+    #! THis is inside habitat goat env:
+    def visualize_semantic_with_labels(
+        self,
+        semantic_array: np.ndarray,
+        palette: list,
+        label_min_pixels: int = 50,
+        font_scale: float = 0.4,
+        thickness: int = 1,
+    ):
+        """
+        Visualizes a semantic map with color palette and overlays ID numbers on each region.
+
+        Args:
+            semantic_array (np.ndarray): 2D array of shape (H, W) with semantic IDs.
+            palette (list): A flat list of RGB values, e.g., [R0, G0, B0, R1, G1, B1, ...].
+            save_path (str): File path to save the resulting image (e.g., 'out.png').
+            label_min_pixels (int): Minimum number of pixels required to label a region.
+            font_scale (float): Font scale for the overlaid text.
+            thickness (int): Text thickness.
+        """
+        import os
+        import numpy as np
+        import cv2
+        from PIL import Image
+        palette_img = Image.new("P", (semantic_array.shape[1], semantic_array.shape[0]))
+        palette_img.putpalette(palette)
+        palette_img.putdata(semantic_array.flatten().astype(np.uint8))
+        palette_img = palette_img.convert("RGB")
+
+        semantic_map_cv = np.array(palette_img)[:, :, ::-1].copy()  # RGB -> BGR, and make it OpenCV-safe
+
+        unique_ids = np.unique(semantic_array)
+        for sid in unique_ids:
+            coords = np.argwhere(semantic_array == sid)
+            center_coord = coords[len(coords) // 2]
+            if len(coords) < label_min_pixels:
+                continue
+            y, x = center_coord[:2]
+            cv2.putText(
+                semantic_map_cv,
+                str(int(sid)),
+                (x, y),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                fontScale=font_scale,
+                color=(0, 0, 0),
+                thickness=thickness,
+                lineType=cv2.LINE_AA,
+            )
+
+        if not self.visualizer.vis_dir is None:
+            save_path = os.path.join(self.visualizer.vis_dir, f"{self.timestep}_0.sem_input.png")
+            cv2.imwrite(save_path, semantic_map_cv)
+
+
+
     def _preprocess_semantic(
         self,
         obs: home_robot.core.interfaces.Observations,
@@ -204,6 +260,10 @@ class HabitatGoatEnv(HabitatEnv):
             #* shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
             obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
+            # self.visualize_semantic_with_labels(
+            #     semantic_array=obs.semantic+10,
+            #     palette=self.semantic_category_mapping.map_color_palette,
+            # )
 
             # import pdb;pdb.set_trace()
             # instance_id_to_category_id = (
