@@ -57,3 +57,6 @@ projects/slap_manipulation/assets/**
 projects/habitat_ovmm/configs/agent/generated/*
 
 logs/*
+
+
+.llm_venv/
