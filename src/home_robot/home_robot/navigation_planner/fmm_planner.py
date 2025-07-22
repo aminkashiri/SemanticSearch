@@ -188,7 +188,7 @@ class FMMPlanner:
         # logger.debug(f"SAVING 6.get_stg")
         cv2.imwrite(
             os.path.join(
-                self.vis_dir, f"{timestep}_10.get_stg_details{self.vis_postfix}.png"
+                self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}.png"
             ),
             (dist_vis).astype(int),
         )
@@ -282,8 +282,8 @@ class FMMPlanner:
         logger.debug(f"stop {stop}")
 
         subset -= subset[self.du, self.du]
-        ratio1 = subset / dist_mask
-        subset[ratio1 < -1.5] = 1
+        # ratio1 = subset / dist_mask
+        # subset[ratio1 < -1.5] = 1
 
         reachable_subset = self.filter_unreachable_goals(
             subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
@@ -302,11 +302,14 @@ class FMMPlanner:
         #     vis_list.append(reachable_subset.copy())
 
 
-        if self.print_images:
-            self.visualize_get_short_term_goal(vis_list, timestep)
-
         # Rechable if stg distance is less than current location (negative).
         reachable = (subset[stg_x, stg_y] < -0.0001) or stop
+
+        if not reachable:
+            stg_x, stg_y = np.unravel_index(np.argmin(reachable), subset.shape)
+
+        if self.print_images:
+            self.visualize_get_short_term_goal(vis_list, timestep)
 
         return (
             (stg_x + state[0] - self.du) * scale,
@@ -410,7 +413,7 @@ class FMMPlanner:
             visualize_map(
                 dilated_goal_map.shape,
                 self.vis_dir,
-                f"{timestep}_8.dilate_goal{self.vis_postfix}.png",
+                f"{timestep}_9.dilate_goal{self.vis_postfix}.png",
                 traversible=self.traversible.astype(np.uint8),
                 goal_map=goal,
                 dilated_goal_map=dilated_goal_map.astype(np.uint8),

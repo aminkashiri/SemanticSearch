@@ -323,7 +323,7 @@ class Categorical2DSemanticMapState:
         vis_map[:,3*W:4*W,:][frontier_map4 == 1] = [255, 0, 0]
 
         cv2.imwrite(
-            os.path.join(self.vis_dir, f"{timestep}_0.frontiers{'' if local else '_global'}.png"),
+            os.path.join(self.vis_dir, f"{timestep}_2.frontiers{'' if local else '_global'}.png"),
             np.flipud(vis_map)
         )
     def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:

@@ -12,8 +12,10 @@ import skimage.morphology
 from typing import List, Tuple
 from scipy.ndimage import label
 from bresenham import bresenham
+from skimage.draw import polygon
 import home_robot.utils.pose as pu
 from .fmm_planner import FMMPlanner
+from scipy.spatial import ConvexHull
 from home_robot.core.interfaces import (
     ContinuousNavigationAction,
     DiscreteNavigationAction,
@@ -459,7 +461,7 @@ class DiscretePlanner:
             self.dd,
             self.map_downsample_factor,
             self.map_update_frequency,
-            number="9",
+            number="10",
         )
 
         # goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
@@ -492,7 +494,7 @@ class DiscretePlanner:
             visualize_map(
                 dilated_goal_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_11.stg{postfix}.png",
+                f"{self.timestep}_12.stg{postfix}.png",
                 points=points,
                 traversible=traversible,
                 goal_map=dilated_goal_map,
@@ -533,10 +535,10 @@ class DiscretePlanner:
         # Otherwise we assume there has been a collision
         if abs(x1 - x2) < 0.05 and abs(y1 - y2) < 0.05:
             self.col_width += 2
-            if self.col_width == 7:
-                length = 4
+            # if self.col_width == 7:
+            #     length = 4
                 # buf = 3
-            self.col_width = min(self.col_width, 5)
+            self.col_width = min(self.col_width, 7)
         else:
             self.col_width = 1
 
@@ -574,7 +576,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_3.collision_map_update{postfix}.png",
+                f"{self.timestep}_4.collision_map_update{postfix}.png",
                 points=[(init_location, [120, 0, 0]), (robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 features=[(self.collision_map, [0, 120, 120]), (np.logical_and(self.collision_map, obstacle_map), [0, 255, 255])],  # light yellow / yellow
@@ -582,10 +584,19 @@ class DiscretePlanner:
 
 
     def get_largest_cluster(self, goal_instance_map, is_local) -> None:
-        """
-        Perform optional clustering of the goal channel to mitigate noisy projection
-        splatter.
-        """
+        def convex_hull(binary_map):
+            coords = np.column_stack(np.nonzero(binary_map))
+            if len(coords) < 3:
+                return binary_map
+
+            hull = ConvexHull(coords)
+            hull_coords = coords[hull.vertices]
+
+            rr, cc = polygon(hull_coords[:, 0], hull_coords[:, 1], binary_map.shape)
+            hull_mask = np.zeros_like(binary_map, dtype=np.uint8)
+            hull_mask[rr, cc] = 1
+            
+            return hull_mask
 
         if not self.goal_filtering:
             return
@@ -593,13 +604,15 @@ class DiscretePlanner:
         logger.debug("Clustering Instance map and selecting the largest cluster.")
         init_goal_map_count = goal_instance_map.sum()
 
-        labeled_map, _ = label(goal_instance_map)
+        labeled_map, _ = label(goal_instance_map, structure=np.ones((3, 3)))
         component_sizes = np.bincount(labeled_map.ravel())
         component_sizes[0] = 0
         largest_label = component_sizes.argmax()
         clustered_map = labeled_map == largest_label
 
         if clustered_map.sum() > 0:
+            # convex hull
+            clustered_map_convex_hull = convex_hull(clustered_map)
             logger.debug("Choosing largest cluster for instance map.")
             logger.debug(
                 f"Goal map cells count changed from {init_goal_map_count} to {clustered_map.sum()}"
@@ -608,17 +621,22 @@ class DiscretePlanner:
             logger.debug(
                 "Instance map not changed. Largest cluster is empty for some reason!"
             )
-            clustered_map = goal_instance_map
-
+            clustered_map = None
+            clustered_map_convex_hull = None
+            
         visualize_map(
             goal_instance_map.shape,
             self.vis_dir,
-            f"{self.timestep}_2.cluster_goal.png",
-            goal_map=clustered_map,
-            dilated_goal_map=goal_instance_map,
+            f"{self.timestep}_3.cluster_goal.png",
+            goal_map=clustered_map_convex_hull, # Clustered goal map convex hull is red
+            dilated_goal_map=goal_instance_map, # All init goal points are magenta
             traversible=1 - self.semantic_map.get_obstacle_map(is_local),
+            features=[(clustered_map, [0, 255, 0])] # Largest cluster is green
         )
-        return clustered_map
+        if clustered_map_convex_hull is None:
+            return goal_instance_map
+
+        return clustered_map_convex_hull
 
     def plan_to_frontier_goal(self, goal_category, postfix):
         is_local = True
@@ -649,7 +667,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_4.visited_map{postfix}.png",
+                f"{self.timestep}_5.visited_map{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 frontier_map=self.semantic_map.get_visited_map(is_local)
@@ -657,7 +675,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_5.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                f"{self.timestep}_6.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
@@ -665,7 +683,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_6.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                f"{self.timestep}_7.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 dilated_goal_map=frontier_map,
@@ -765,7 +783,7 @@ class DiscretePlanner:
         visualize_map(
             obstacle_map.shape,
             self.vis_dir,
-            f"{self.timestep}_4.visited_map{postfix}.png",
+            f"{self.timestep}_5.visited_map{postfix}.png",
             points=[(robot_loc, [255, 0, 0])],
             traversible=1 - obstacle_map,
             frontier_map=self.semantic_map.get_visited_map(is_local)
@@ -773,7 +791,7 @@ class DiscretePlanner:
         visualize_map(
             obstacle_map.shape,
             self.vis_dir,
-            f"{self.timestep}_6.planning_input_instance{postfix}.png",
+            f"{self.timestep}_7.planning_input_instance{postfix}.png",
             points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
             traversible=1 - obstacle_map,
             goal_map=goal_instance_map,
@@ -781,10 +799,11 @@ class DiscretePlanner:
         )
 
 
-        reachable = False
-        stop = False
         i = 0
         pose_idx = 0
+        stop = False
+        reachable = False
+        force_global = False
         while True:
             goal_map = self.get_goal_map(
                 traversible, goal_instance_map, viewpoint_loc, is_local, pose_idx
