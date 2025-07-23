@@ -506,11 +506,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
         x = int(self.min_obs_height_cm / self.z_resolution)
         ground_plane = voxels[
-            0, :, :, -x - self.min_voxel_height : x - self.min_voxel_height
+            :, :, -4*x - self.min_voxel_height : x - self.min_voxel_height
         ]
-        assert ground_plane.shape[0] == voxels.shape[1]
-        assert ground_plane.shape[1] == voxels.shape[2]
-
         ground_plane = ground_plane.sum(axis=2).cpu().numpy()
         ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
 
@@ -549,6 +546,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         within_fov = within_hfov & within_vfov
 
         stair_mask = (ground_plane == 0) & within_fov & visible_ground
+        stair_mask_vis = stair_mask.copy()
+
+        #! myTODO: 10 is hardcoded
+        # Extend to agents location
+        x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
+        rows = np.arange(10, min_visible_dist + 1).reshape(-1, 1)  # shape: (min_visible_dist-10+1, 1)
+        rr, cc = np.meshgrid(rows, x_indices, indexing='ij')
+        stair_mask[rr, cc] = 1
         if True:
             import matplotlib
 
@@ -558,20 +563,23 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.subplot(321)
             plt.title("ground plane")
             plt.imshow(np.flipud(ground_plane))
+            # plt.subplot(322)
+            # plt.title("hfov")
+            # plt.imshow(np.flipud(within_hfov))
+            # plt.subplot(323)
+            # plt.title("vfov")
+            # plt.imshow(np.flipud(within_vfov))
             plt.subplot(322)
-            plt.title("hfov")
-            plt.imshow(np.flipud(within_hfov))
-            plt.subplot(323)
-            plt.title("vfov")
-            plt.imshow(np.flipud(within_vfov))
-            plt.subplot(324)
             plt.title("withinfov")
             plt.imshow(np.flipud(within_fov))
-            plt.subplot(325)
+            plt.subplot(323)
             plt.title("visible_ground")
             plt.imshow(np.flipud(visible_ground))
-            plt.subplot(326)
+            plt.subplot(324)
             plt.title("stairs_mask")
+            plt.imshow(np.flipud(stair_mask_vis))
+            plt.subplot(325)
+            plt.title("stairs_mask extended")
             plt.imshow(np.flipud(stair_mask))
             plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
         return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device)
@@ -788,7 +796,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
 
         # NOTE: Only works in fp_exp_pred is 'raycast'
-        stairs_map = self.get_stairs(voxels, fp_exp_pred >= 1)
+        stairs_map = self.get_stairs(voxels[0], fp_exp_pred >= 1)
         fp_map_pred += stairs_map
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
