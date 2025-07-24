@@ -142,20 +142,19 @@ class Categorical2DSemanticMapState:
                 self.global_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
             ) > 0).astype(np.uint8)
 
-    def get_semantic_map(self, local=True) -> np.ndarray:
+    def get_semantic_map(self, local=True, full=False) -> np.ndarray:
         """Get local map of semantic categories for an environment."""
         if local:
             map = self.local_map
         else:
             map = self.global_map
 
-        semantic_map = np.copy(map.cpu().float().numpy())
-        semantic_map[
-            MC.NON_SEM_CHANNELS + self.num_sem_categories - 1, :, :
-        ] = 1e-5  # Last category is unlabeled
-        semantic_map = semantic_map[
-            MC.NON_SEM_CHANNELS : MC.NON_SEM_CHANNELS + self.num_sem_categories, :, :
-        ].argmax(0)
+        semantic_map = np.copy(map.cpu().float().numpy())[MC.NON_SEM_CHANNELS : MC.NON_SEM_CHANNELS + self.num_sem_categories]
+        if not full:
+            semantic_map[
+                self.num_sem_categories - 1, :, :
+            ] = 1e-5  # Last category is unlabeled
+            semantic_map = semantic_map.argmax(0)
         return semantic_map
 
     def get_instances_map(self, local=True) -> np.ndarray:
@@ -208,13 +207,13 @@ class Categorical2DSemanticMapState:
     def local_loc(self):
         """local_loc is the index in local map as it is (don't need to flip)"""
         location = self.local_pose[:2]
-        location = (location * 100.0 / self.resolution).int()
+        location = (location * 100.0 / self.resolution).int().tolist()
         return location[1], location[0]
 
     @property
     def global_loc(self):
         location = self.global_pose[:2]
-        location = (location * 100.0 / self.resolution).int()
+        location = (location * 100.0 / self.resolution).int().tolist()
         return location[1], location[0]
     
     def get_frontier_map(self, local=True, timestep=None):
@@ -283,7 +282,7 @@ class Categorical2DSemanticMapState:
         y_coords = np.arange(H).reshape(-1, 1).repeat(W, axis=1)
         x_coords = np.arange(W).reshape(1, -1).repeat(H, axis=0)
 
-        dist = np.sqrt((x_coords - self.local_loc[1].item()) ** 2 + (y_coords - self.local_loc[0].item()) ** 2)
+        dist = np.sqrt((x_coords - self.local_loc[1]) ** 2 + (y_coords - self.local_loc[0]) ** 2)
 
         close_mask = dist <= self.close_frontier_radius
         new_frontier_map = frontier_map.copy()

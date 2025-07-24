@@ -177,7 +177,7 @@ class FMMPlanner:
             )
         return dd
 
-    def visualize_get_short_term_goal(self, vis_list, timestep):
+    def visualize_get_short_term_goal(self, vis_list, timestep, postfix=""):
         sub_h, sub_w = vis_list[0].shape
         dist_vis = np.zeros((sub_h * 2, sub_w * 2, 3))
         dist_vis[:sub_h, :sub_w] = convert_to_cmap(vis_list[0])
@@ -188,7 +188,7 @@ class FMMPlanner:
         # logger.debug(f"SAVING 6.get_stg")
         cv2.imwrite(
             os.path.join(
-                self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}.png"
+                self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
             ),
             (dist_vis).astype(int),
         )
@@ -227,8 +227,14 @@ class FMMPlanner:
         masked_subset = np.copy(subset)
         masked_subset[np.logical_and(mask, ~safe_mask)] = np.max(subset)
         return masked_subset
+    def get_short_term_goal(self, state: List[float], timestep=0):
+        for radius in range(2, self.step_size+1)[::-1]:
+            stg_x, stg_y, reachable, stop = self.get_short_term_goal_util(state, radius, timestep, postfix=f"_step{radius}")
+            if reachable:
+                break
+        return stg_x, stg_y, reachable, stop
 
-    def get_short_term_goal(self, state: List[float], continuous=True, timestep=0):
+    def get_short_term_goal_util(self, state: List[float], radius, timestep=0, postfix=""):
         """Compute the short-term goal closest to the current state.
 
         Arguments:
@@ -238,9 +244,9 @@ class FMMPlanner:
         state = [x / scale for x in state]
         dx, dy = state[0] - int(state[0]), state[1] - int(state[1])
         mask = FMMPlanner.get_mask(
-            dx, dy, scale, self.step_size, min_radius=0 if continuous else None
+            dx, dy, scale, radius, self.step_size
         )
-        dist_mask = FMMPlanner.get_dist(dx, dy, scale, self.step_size)
+        # dist_mask = FMMPlanner.get_dist(dx, dy, scale, step_size)
 
         state = [int(x) for x in state]
         # max_value = self.fmm_dist.shape[0] ** 2
@@ -305,11 +311,8 @@ class FMMPlanner:
         # Rechable if stg distance is less than current location (negative).
         reachable = (subset[stg_x, stg_y] < -0.0001) or stop
 
-        if not reachable:
-            stg_x, stg_y = np.unravel_index(np.argmin(reachable), subset.shape)
-
         if self.print_images:
-            self.visualize_get_short_term_goal(vis_list, timestep)
+            self.visualize_get_short_term_goal(vis_list, timestep, postfix)
 
         return (
             (stg_x + state[0] - self.du) * scale,
@@ -319,10 +322,9 @@ class FMMPlanner:
         )
 
     @staticmethod
-    def get_mask(sx, sy, scale, step_size, min_radius=None):
+    def get_mask(sx, sy, scale, radius, step_size):
         """Set everything in a circle around the agent to 1; else set to zero"""
-        if min_radius is None:
-            min_radius = (step_size - 1) ** 2
+        min_radius = (radius - 1) ** 2
         size = int(step_size // scale) * 2 + 1
         mask = np.zeros((size, size))
         for i in range(size):
@@ -330,7 +332,7 @@ class FMMPlanner:
                 cond1 = (
                     ((i + 0.5) - (size // 2 + sx)) ** 2
                     + ((j + 0.5) - (size // 2 + sy)) ** 2
-                ) <= step_size**2
+                ) <= radius**2
                 cond2 = (
                     ((i + 0.5) - (size // 2 + sx)) ** 2
                     + ((j + 0.5) - (size // 2 + sy)) ** 2
