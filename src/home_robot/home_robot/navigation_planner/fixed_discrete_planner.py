@@ -595,6 +595,7 @@ class DiscretePlanner:
             rr, cc = polygon(hull_coords[:, 0], hull_coords[:, 1], binary_map.shape)
             hull_mask = np.zeros_like(binary_map, dtype=np.uint8)
             hull_mask[rr, cc] = 1
+            hull_mask = cv2.dilate(hull_mask, np.ones((3,3)), iterations=1)
             
             return hull_mask
 
@@ -662,7 +663,7 @@ class DiscretePlanner:
             robot_loc = (
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
-            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, obstacle_map)
+            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local)
             # best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
             visualize_map(
                 obstacle_map.shape,
@@ -779,6 +780,8 @@ class DiscretePlanner:
                 # print(f"Score: {frontier_sem_score}, Classes: {top_classes}")
                 frontier_scores.append(frontier_sem_score*1000)
                 top_k_semantic_classes.append(top_classes)
+            else:
+                raise Exception(f"Unknown metric: {metric}")
 
         visualize_frontier_scores_matplotlib(
             self.vis_dir,
