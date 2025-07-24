@@ -536,7 +536,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         within_hfov = np.abs(horizontal_angle) <= (hfov_rad / 2)
 
         min_visible_dist = (
-            int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 1
+            int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 5
         )
         within_vfov = np.zeros_like(within_hfov, dtype=bool)
         within_vfov[min_visible_dist:, :] = 1

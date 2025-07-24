@@ -20,7 +20,7 @@ from home_robot.core.interfaces import (
     ContinuousNavigationAction,
     DiscreteNavigationAction,
 )
-from home_robot.utils.visualization import visualize_map
+from home_robot.utils.visualization import visualize_map, visualize_frontier_scores_matplotlib
 from home_robot.utils.logger import get_logger
 from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
     Categorical2DSemanticMapState,
@@ -477,7 +477,7 @@ class DiscretePlanner:
 
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
-            state, continuous=(not self.discrete_actions), timestep=self.timestep
+            state, timestep=self.timestep
         )
         stg_x, stg_y = stg_x - 1, stg_y - 1
 
@@ -662,8 +662,8 @@ class DiscretePlanner:
             robot_loc = (
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
-            # best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, obstacle_map)
-            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local)
+            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, obstacle_map)
+            # best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
@@ -683,7 +683,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_7.planning_input_frontier{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                f"{self.timestep}_7.planning_input_frontier{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 dilated_goal_map=frontier_map,
@@ -700,7 +700,7 @@ class DiscretePlanner:
                 traversible,
                 best_frontier_map,
                 robot_loc,
-                postfix="_frontier",
+                postfix=f"_frontier_{i}",
             )
             if reachable:
                 logger.info("Planning to frontier successfull.")
@@ -738,34 +738,59 @@ class DiscretePlanner:
         ]
 
         sem_weights = CO_LOCATION_WEIGHTS[goal_category]
-        sem_layers = self.semantic_map.get_semantic_map(is_local)
+        sem_layers = self.semantic_map.get_semantic_map(is_local, full=True)
         r = 40
 
         frontier_scores = []
-        for frontier in frontiers:
+        frontier_centers = []
+        top_k_semantic_classes = []
+
+        # print(f"Step {self.timestep}")
+        for k, frontier in enumerate(frontiers):
             center = frontier.mean(axis=0).astype(int)
+            frontier_centers.append(center)
+
             traversible_ma = np.ma.masked_values(traversible * 1, 0)
-            traversible_ma[center[0], center[1]] = 0 # the goal
+            traversible_ma[center[0], center[1]] = 0
             distance = skfmm.distance(traversible_ma)
             distance = np.ma.filled(distance, np.max(distance) + 1)
             distance = distance[robot_loc[0], robot_loc[1]]
 
             if metric == "distance":
-                frontier_scores.append(1/(distance+1))
+                frontier_scores.append(1 / (distance + 1))
+                top_k_semantic_classes.append([])
 
             elif metric == "semantics":
                 local_map = sem_layers[
-                    :, center[0] - r : center[0] + r, center[1] - r : center[1] + r
+                    1:52+1, center[0] - r : center[0] + r, center[1] - r : center[1] + r
                 ]
-                neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0]
+                neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0] + 1 # +1 to match ids
 
+                # print(f"frontier {k}")
                 if len(neighbor_classes) > 0:
-                    frontier_sem_score = np.mean(sem_weights[neighbor_classes])
+                    scores = sem_weights[neighbor_classes]
+                    frontier_sem_score = np.mean(scores)
+                    top_classes = neighbor_classes[np.argsort(scores)[-3:]].tolist()
                 else:
                     frontier_sem_score = np.mean(sem_weights)
-                frontier_sem_score /= distance
-                frontier_scores.append(frontier_sem_score)
+                    top_classes = []
 
+                frontier_sem_score /= distance
+                # print(f"Score: {frontier_sem_score}, Classes: {top_classes}")
+                frontier_scores.append(frontier_sem_score*1000)
+                top_k_semantic_classes.append(top_classes)
+
+        visualize_frontier_scores_matplotlib(
+            self.vis_dir,
+            traversible=traversible,
+            frontier_map=frontier_map,
+            frontier_centers=frontier_centers,
+            frontier_scores=frontier_scores,
+            top_k_semantic_classes=top_k_semantic_classes,
+            robot_loc=robot_loc,
+            top_k=5,
+            save_path=f"{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png"
+        )
 
         # Select the frontier with the highest score
         best_frontier = np.argmax(frontier_scores)
