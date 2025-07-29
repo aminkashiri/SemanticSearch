@@ -119,7 +119,8 @@ def visualize_frontier_scores_matplotlib(
     ax.imshow(img)
 
     # Sort and select top-k frontiers by score
-    top_indices = np.argsort(frontier_scores)[-top_k:]
+    # top_indices = np.argsort(frontier_scores)[-top_k:]
+    top_indices = np.argsort(frontier_scores)
 
     for i in top_indices:
         center = frontier_centers[i]

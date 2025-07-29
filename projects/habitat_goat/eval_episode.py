@@ -89,7 +89,7 @@ if __name__ == "__main__":
     #     "4ok3usBNeis"
     # ]  # TODO: for debugging. REMOVE later.
     # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
-    config.habitat.dataset.content_scenes = all_scenes[2:3]
+    config.habitat.dataset.content_scenes = all_scenes[0:2]
     # config.habitat.dataset.content_scenes = ['5cdEh9F2hJL']
 
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         if f"{scene_id}_{episode_id}" in scene_ep_pairs:
             continue
 
-        # if episode_id != '3':
+        # if episode_id != '4':
         #     continue
 
         # if scene_id != "HkseAnWCgqk":
@@ -176,7 +176,7 @@ if __name__ == "__main__":
             t += 1
             logger.info(f"-------------------- Episode step {t} --------------------")
             logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
-            env.timestep = t+1
+            env.timestep = agent.get_subtask_timestep() + 1
             obs = env.get_observation()
             if t == 1:
                 obs_tasks = []
