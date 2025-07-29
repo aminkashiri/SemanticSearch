@@ -68,19 +68,25 @@ class GoatMatching(Matching):
         # TODO We should restrict detections in the current frame by category
         detections = []
         instance_ids = []
+        logger.debug(f"In get_matches_against_current_frame, categories: {categories}")
         # first collect crops of instances found in the current frame
         for local_instance_id, inst_view in instance_memory.unprocessed_views.items():
-            cropped_image_shape = np.array(inst_view.cropped_image.shape[:2]) - 2* instance_memory.padding_cropped_instances
+            logger.debug(
+                f"Processing instance {local_instance_id} with category {inst_view.category_id}."
+            )
             if categories is not None and inst_view.category_id not in categories:
                 continue
-            if (
-                cropped_image_shape[0] * cropped_image_shape[1] < MIN_PIXELS
-                or (cropped_image_shape < MIN_EDGE).any()
-            ):
+            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
+            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+
+            logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
+            logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
+
+            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
                 continue
-            # logger.debug(
-            #     f"Added to detections. Cropped image shape is: {inst_view.cropped_image.shape}, that changed to: {cropped_image_shape}."
-            # )
+            logger.debug(
+                f">>>>>> Added to detections."
+            )
             if use_full_image:
                 img = instance_memory.images[-1].cpu().numpy()
             else:
@@ -207,13 +213,11 @@ class GoatMatching(Matching):
             inst_views = inst.instance_views
             views_added = 0
             for view_idx, inst_view in enumerate(inst_views):
-                cropped_image_shape = np.array(inst_view.cropped_image.shape[:2]) - 2* instance_memory.padding_cropped_instances
                 if categories is not None and inst_view.category_id not in categories:
                     continue
-                if (
-                    cropped_image_shape[0] * cropped_image_shape[1] < MIN_PIXELS
-                    or (cropped_image_shape < MIN_EDGE).any()
-                ):
+                # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
+                bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+                if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
                     continue
                 if use_full_image:
                     img = instance_memory.images[inst_view.timestep].cpu().numpy()
