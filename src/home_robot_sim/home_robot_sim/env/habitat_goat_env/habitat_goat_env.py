@@ -260,10 +260,10 @@ class HabitatGoatEnv(HabitatEnv):
             #* shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
             obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
-            # self.visualize_semantic_with_labels(
-            #     semantic_array=obs.semantic+10,
-            #     palette=self.semantic_category_mapping.map_color_palette,
-            # )
+            self.visualize_semantic_with_labels(
+                semantic_array=obs.semantic+10,
+                palette=self.semantic_category_mapping.map_color_palette,
+            )
 
             # import pdb;pdb.set_trace()
             # instance_id_to_category_id = (

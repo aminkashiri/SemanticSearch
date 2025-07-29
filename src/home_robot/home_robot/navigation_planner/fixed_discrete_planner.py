@@ -131,6 +131,7 @@ class DiscretePlanner:
         self.semantic_map = semantic_map
         self.instance_memory: InstanceMemory = instance_memory
         self.goal_filtering = goal_filtering
+        self.prev_frontier = None
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -528,7 +529,7 @@ class DiscretePlanner:
         x1, y1, t1 = self.last_global_pose.cpu().numpy()
         x2, y2, _ = self.curr_global_pose.cpu().numpy()
         # buf = 4
-        buf = 3
+        buf = 2
         length = 2
 
         # You must move at least 5 cm when doing forward actions
@@ -663,8 +664,14 @@ class DiscretePlanner:
             robot_loc = (
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
-            best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local)
-            # best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
+            if self.prev_frontier is None or not np.any(self.prev_frontier & frontier_map):
+                best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
+                if best_frontier_map is None:
+                    return False, False, None, None, None, {}
+            else:
+                logger.debug("Using previous frontier map for planning.")
+                best_frontier_map = self.prev_frontier
+
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
@@ -676,7 +683,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_6.unreachable_frontiers{f'_{i}' if i>0 else ''}{'' if is_local else '_global'}{postfix}.png",
+                f"{self.timestep}_6.unreachable_frontiers{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
@@ -705,6 +712,7 @@ class DiscretePlanner:
             )
             if reachable:
                 logger.info("Planning to frontier successfull.")
+                self.prev_frontier = best_frontier_map
                 break
 
             logger.info("Frontier not reachable.")
@@ -731,6 +739,7 @@ class DiscretePlanner:
         return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
     
     def get_best_frontier(self, frontier_map, traversible, robot_loc, goal_category, is_local, metric="distance"):
+        frontier_map = frontier_map & traversible
         structure = np.ones((3, 3))  # 8-connectivity
         labeled_map, num_features = label(frontier_map, structure=structure)
         frontiers = [
@@ -746,16 +755,25 @@ class DiscretePlanner:
         frontier_centers = []
         top_k_semantic_classes = []
 
-        # print(f"Step {self.timestep}")
+        logger.debug(f"Getting best frontier")
+        traversible_ma = np.ma.masked_values(traversible * 1, 0)
+        assert traversible[robot_loc[0], robot_loc[1]] == 1, "Robot location is not traversible"
+        traversible_ma[robot_loc[0], robot_loc[1]] = 0
+        distances = skfmm.distance(traversible_ma)
+        distances = np.ma.filled(distances, np.max(distances) + 1)
         for k, frontier in enumerate(frontiers):
             center = frontier.mean(axis=0).astype(int)
             frontier_centers.append(center)
 
-            traversible_ma = np.ma.masked_values(traversible * 1, 0)
-            traversible_ma[center[0], center[1]] = 0
-            distance = skfmm.distance(traversible_ma)
-            distance = np.ma.filled(distance, np.max(distance) + 1)
-            distance = distance[robot_loc[0], robot_loc[1]]
+            # Choose the closest point in the frontier to the robot
+            dists = np.linalg.norm(frontier - robot_loc, axis=1)
+            closest = frontier[np.argmin(dists)]
+            assert traversible[closest[0], closest[1]] == 1, "Closest point is not traversible"
+            logger.debug(f"Frontier: {k}, closest: {closest}")
+            distance = distances[closest[0], closest[1]]
+
+            # Choose the center. Problem: Sometimes occupide. 
+            # distance = distances[center[0], center[1]]
 
             if metric == "distance":
                 frontier_scores.append(1 / (distance + 1))
@@ -767,17 +785,19 @@ class DiscretePlanner:
                 ]
                 neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0] + 1 # +1 to match ids
 
-                # print(f"frontier {k}")
+                logger.debug(f"frontier {k}")
                 if len(neighbor_classes) > 0:
                     scores = sem_weights[neighbor_classes]
                     frontier_sem_score = np.mean(scores)
                     top_classes = neighbor_classes[np.argsort(scores)[-3:]].tolist()
+                    logger.debug(f"Top classes: {top_classes}, Scores: {scores}, Frontier score: {frontier_sem_score}")
                 else:
                     frontier_sem_score = np.mean(sem_weights)
+                    logger.debug(f"No classes found in the local map. Using mean score: {frontier_sem_score}")
                     top_classes = []
 
                 frontier_sem_score /= distance
-                # print(f"Score: {frontier_sem_score}, Classes: {top_classes}")
+                logger.debug(f"distance: {distance}, final score: {frontier_sem_score*1000}")
                 frontier_scores.append(frontier_sem_score*1000)
                 top_k_semantic_classes.append(top_classes)
             else:
@@ -795,6 +815,9 @@ class DiscretePlanner:
             save_path=f"{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png"
         )
 
+        if len(frontier_scores) == 0:
+            logger.info("No frontiers remaninig.")
+            return None
         # Select the frontier with the highest score
         best_frontier = np.argmax(frontier_scores)
         best_frontier_map = np.zeros_like(traversible)

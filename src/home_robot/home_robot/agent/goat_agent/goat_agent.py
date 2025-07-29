@@ -253,7 +253,7 @@ class GoatAgent(Agent):
         )
         #! myTODO: Clean this up
         self.semantic_map_module.vis_dir = self.planner.vis_dir
-        self.semantic_map_module.timestep = self.sub_task_timesteps[self.current_task_idx] + 1
+        self.semantic_map_module.timestep = self.get_subtask_timestep() + 1
         # Update map with observations and generate map features
         (
             self.semantic_map.local_map,
@@ -280,7 +280,7 @@ class GoatAgent(Agent):
             logger.info(f"Already found instance goal, not searching anymore.")
         else:
             logger.debug(
-                f"candidate matches in memory: {len(mem_match_confidences)}, candidate matches in observation: {len(obs_match_confidences) > 0}"
+                f"candidate matches in memory: {len(mem_match_confidences)}, candidate matches in observation: {len(obs_match_confidences)}"
             )
             if len(mem_match_confidences) > 0 or len(obs_match_confidences) > 0:
                 (
@@ -300,6 +300,9 @@ class GoatAgent(Agent):
 
         self.total_timesteps = self.total_timesteps + 1
         self.sub_task_timesteps[self.current_task_idx] += 1
+    
+    def get_subtask_timestep(self) -> int:
+        return self.sub_task_timesteps[self.current_task_idx]
 
     def reset_sub_episode(self) -> None:
         """Reset for a new sub-episode since pre-processing is temporally dependent."""
@@ -344,7 +347,7 @@ class GoatAgent(Agent):
         """Act end-to-end."""
         is_local = True
         logger.info(
-            f"---------------- Subtask step {self.sub_task_timesteps[self.current_task_idx]+1} ----------------"
+            f"---------------- Subtask step {self.get_subtask_timestep() + 1} ----------------"
         )
         logger.debug(f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB")
         current_task = obs.task_observations["tasks"][self.current_task_idx]
@@ -370,7 +373,7 @@ class GoatAgent(Agent):
         )
 
         if (
-            self.sub_task_timesteps[self.current_task_idx]
+            self.get_subtask_timestep() 
             >= self.max_steps[self.current_task_idx]
         ) or stop:
             logger.warning(
@@ -385,7 +388,7 @@ class GoatAgent(Agent):
             is_local = vis_inputs.get("is_local", True)
             vis_inputs = {
                 "inst_goal_id": self.inst_goal_id,
-                "timestep": self.sub_task_timesteps[self.current_task_idx],
+                "timestep": self.get_subtask_timestep(),
                 "total_timesteps": self.total_timesteps,
                 "explored_map": self.semantic_map.get_explored_map(is_local),
                 "obstacle_map": self.semantic_map.get_obstacle_map(is_local),
@@ -502,7 +505,7 @@ class GoatAgent(Agent):
 
         # Match a goal against every instance in memory the moment we get it
         # or when the map just got fully explored
-        if self.sub_task_timesteps[self.current_task_idx] == 0:
+        if self.get_subtask_timestep() == 0:
             mem_match_confidences, mem_match_instance_ids = self._match_against_memory(
                 current_task
             )
@@ -597,7 +600,7 @@ class GoatAgent(Agent):
         action, vis_input = self.planner.plan(
             self.inst_goal_found,
             self.inst_goal_id,
-            self.sub_task_timesteps[self.current_task_idx],
+            self.get_subtask_timestep(),
             self.total_timesteps,
             current_task["semantic_id"],
         )
@@ -636,7 +639,7 @@ class GoatAgent(Agent):
         action, vis_input = self.planner.plan(
             self.inst_goal_found,
             self.inst_goal_id,
-            self.sub_task_timesteps[self.current_task_idx],
+            self.get_subtask_timestep(),
             self.total_timesteps,
             current_task["semantic_id"],
             fallback_to_frontier=False,
