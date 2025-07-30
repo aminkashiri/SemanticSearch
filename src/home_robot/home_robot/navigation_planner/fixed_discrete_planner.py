@@ -302,6 +302,8 @@ class DiscretePlanner:
                     logger.debug("Already toward the goal, stopping.")
                     action = DiscreteNavigationAction.STOP
 
+        # if action == DiscreteNavigationAction.STOP:
+        #     self.reset_obs_dilation_selem_radius()
         return action
 
     def get_traversible(self, obstacles, is_local):
@@ -614,11 +616,17 @@ class DiscretePlanner:
 
         if clustered_map.sum() > 0:
             # convex hull
-            clustered_map_convex_hull = convex_hull(clustered_map)
-            logger.debug("Choosing largest cluster for instance map.")
-            logger.debug(
-                f"Goal map cells count changed from {init_goal_map_count} to {clustered_map.sum()}"
-            )
+            try:
+                clustered_map_convex_hull = convex_hull(clustered_map)
+                logger.debug("Choosing largest cluster for instance map.")
+                logger.debug(
+                    f"Goal map cells count changed from {init_goal_map_count} to {clustered_map.sum()}"
+                )
+            except:
+                logger.debug(
+                    "Convex hull failed. Using the largest cluster without convex hull."
+                )
+                clustered_map_convex_hull = None
         else:
             logger.debug(
                 "Instance map not changed. Largest cluster is empty for some reason!"
@@ -635,42 +643,51 @@ class DiscretePlanner:
             traversible=1 - self.semantic_map.get_obstacle_map(is_local),
             features=[(clustered_map, [0, 255, 0])] # Largest cluster is green
         )
-        if clustered_map_convex_hull is None:
+        if clustered_map is None:
             return goal_instance_map
-
+        if clustered_map_convex_hull is None:
+            return clustered_map
         return clustered_map_convex_hull
+    
+    def get_frontier_planning_maps(self):
+        frontier_map = self.semantic_map.get_frontier_map(
+            local=True, timestep=self.timestep
+        )
+        obstacle_map = self.semantic_map.get_obstacle_map(True)
+        traversible = self.get_traversible(obstacle_map, True)
+        frontier_map = frontier_map & traversible
+
+        if frontier_map.any():
+            return frontier_map, obstacle_map, traversible, True
+            
+        frontier_map = self.semantic_map.get_frontier_map(
+            local=False, timestep=self.timestep
+        )
+        obstacle_map = self.semantic_map.get_obstacle_map(False)
+        traversible = self.get_traversible(obstacle_map, False)
+
+        if frontier_map.any():
+            return frontier_map, obstacle_map, traversible, False
+
+        return None, None, None, False
 
     def plan_to_frontier_goal(self, goal_category, postfix):
-        is_local = True
 
         i = 0
         while True:
-            frontier_map = self.semantic_map.get_frontier_map(
-                local=is_local, timestep=self.timestep
-            )
-            if not frontier_map.any():
-                if is_local == True:
-                    is_local = False
-                    frontier_map = self.semantic_map.get_frontier_map(
-                        local=False, timestep=self.timestep
-                    )
-
-            if not frontier_map.any():
+            frontier_map, obstacle_map, traversible, is_local = self.get_frontier_planning_maps()
+            if frontier_map is None:
                 logger.info("No frontiers remaining.")
                 return False, False, None, None, None, {}
 
-            obstacle_map = self.semantic_map.get_obstacle_map(is_local)
-            traversible = self.get_traversible(obstacle_map, is_local)
             robot_loc = (
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
-            if self.prev_frontier is None or not np.any(self.prev_frontier & frontier_map):
+            if self.prev_frontier is None or np.all((self.prev_frontier & frontier_map)==0):
                 best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
-                if best_frontier_map is None:
-                    return False, False, None, None, None, {}
             else:
                 logger.debug("Using previous frontier map for planning.")
-                best_frontier_map = self.prev_frontier
+                best_frontier_map = self.prev_frontier & frontier_map
 
             visualize_map(
                 obstacle_map.shape,
@@ -815,9 +832,7 @@ class DiscretePlanner:
             save_path=f"{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png"
         )
 
-        if len(frontier_scores) == 0:
-            logger.info("No frontiers remaninig.")
-            return None
+        assert len(frontier_scores) != 0, "No frontiers found, but frontier_map is not empty."
         # Select the frontier with the highest score
         best_frontier = np.argmax(frontier_scores)
         best_frontier_map = np.zeros_like(traversible)
@@ -860,17 +875,11 @@ class DiscretePlanner:
                 traversible, goal_instance_map, viewpoint_loc, is_local, pose_idx
             )
             if goal_map is None:
-                traversible, success = self.decrease_obstacle_dilation_radius(
-                    traversible, obstacle_map, is_local
-                    )
-                if success:
-                    pose_idx = 0
-                    continue
                 # This mean we couldn't find any traversible pose. Even with the minimum dilation radius.
                 break
 
             logger.info(
-                f"Trying to plan to instance goal with - pose_idx: {pose_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}\n\t "
+                f"Trying to plan to instance goal with\n\t - pose_idx: {pose_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
             )
 
             (
@@ -894,9 +903,14 @@ class DiscretePlanner:
             if is_local:
                 force_global = True
             else:
-                pose_idx += 1
+                force_global = False
+                traversible, success = self.decrease_obstacle_dilation_radius(
+                    traversible, obstacle_map, is_local
+                    )
+                if not success:
+                    pose_idx += 1
+                    self.reset_obs_dilation_selem_radius()
             goal_instance_map, viewpoint_loc, viewpoint_orientation, is_local, obstacle_map, robot_loc, traversible = self.get_instance_planning_maps(instance_goal_id, force_global=force_global)
-            force_global = False
 
 
         if reachable:
