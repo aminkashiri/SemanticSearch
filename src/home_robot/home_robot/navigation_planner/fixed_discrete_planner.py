@@ -958,12 +958,17 @@ class DiscretePlanner:
             is_local = self.semantic_map.is_location_in_local_map(viewpoint_local_location)
         
             instances_map = self.semantic_map.get_instances_map(local=True)
+            global_instances_map = self.semantic_map.get_instances_map(local=False)
             inst_map_idx = instances_map == instance_goal_id
             inst_map_idx = np.argmax(np.sum(inst_map_idx, axis=(1, 2)))
             goal_instance_map = (instances_map[inst_map_idx] == instance_goal_id).astype(
                 int
             )
-            is_local = is_local and np.any(goal_instance_map)
+            global_goal_instance_map = (global_instances_map[inst_map_idx] == instance_goal_id).astype(
+                int
+            )
+            is_local = is_local and np.any(goal_instance_map) and np.count_nonzero(goal_instance_map) == np.count_nonzero(global_goal_instance_map)
+            logger.debug(f"Getting goal instance map for instance {instance_goal_id} with is_local={is_local}, and local nonzero count {np.count_nonzero(goal_instance_map)} and global nonzero count {np.count_nonzero(global_goal_instance_map)}.")
 
             if is_local:
                 logger.debug(f">>> Goal instance {instance_goal_id} present in local map.")
