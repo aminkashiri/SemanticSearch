@@ -76,6 +76,7 @@ class DiscretePlanner:
         semantic_map: Categorical2DSemanticMapState = None,
         instance_memory: InstanceMemory = None,
         goal_filtering=False,
+        frontier_metric: str = "distance"
     ):
         """
         Similar to old DiscretePlanner, but with changes to:
@@ -132,6 +133,7 @@ class DiscretePlanner:
         self.instance_memory: InstanceMemory = instance_memory
         self.goal_filtering = goal_filtering
         self.prev_frontier = None
+        self.frontier_metric = frontier_metric
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -684,7 +686,7 @@ class DiscretePlanner:
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
             if self.prev_frontier is None or np.all((self.prev_frontier & frontier_map)==0):
-                best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric="semantics")
+                best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric=self.frontier_metric)
             else:
                 logger.debug("Using previous frontier map for planning.")
                 best_frontier_map = self.prev_frontier & frontier_map

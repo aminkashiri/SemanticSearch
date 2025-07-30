@@ -24,6 +24,7 @@ AGENT:
   max_steps: 500          # maximum number of steps before stopping an episode
   panorama_start: 1       # 1: turn around 360 degrees when starting an episode, 0: don't
   exploration_strategy: fixed  # exploration strategy ("seen_frontier", "been_close_to_frontier", or "fixed")
+  frontier_metric: distance  # metric to use for frontier selection ("distance", "semantics")
   radius: 0.05            # robot radius (in meters)
   store_all_categories: True  # whether to store all semantic categories in the map or just task-relevant ones
 
@@ -56,7 +57,7 @@ AGENT:
 
   PLANNER:
     collision_threshold: 0.20       # forward move distance under which we consider there's a collision (in meters)
-    min_obs_dilation_selem_radius: 2    # radius (in cells) of obstacle dilation structuring element
+    min_obs_dilation_selem_radius: 1    # radius (in cells) of obstacle dilation structuring element
     obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 

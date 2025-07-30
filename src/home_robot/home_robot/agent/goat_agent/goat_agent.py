@@ -176,6 +176,7 @@ class GoatAgent(Agent):
             instance_memory=self.instance_memory,
             goal_filtering=config.AGENT.SEMANTIC_MAP.goal_filtering,
             semantic_map=self.semantic_map,
+            frontier_metric=config.AGENT.frontier_metric,
         )
         self.one_hot_encoding = torch.eye(
             config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
