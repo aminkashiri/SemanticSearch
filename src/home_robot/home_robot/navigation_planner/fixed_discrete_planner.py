@@ -132,7 +132,7 @@ class DiscretePlanner:
         self.semantic_map = semantic_map
         self.instance_memory: InstanceMemory = instance_memory
         self.goal_filtering = goal_filtering
-        self.prev_frontier = None
+        self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.frontier_metric = frontier_metric
 
     def reset(self):
@@ -152,6 +152,7 @@ class DiscretePlanner:
             self.curr_obs_dilation_selem_radius
         )
         self.episode_panorama_start_steps = self.panorama_start_steps
+        self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
 
     def set_vis_dir(self, scene_id: str, episode_id: str):
         self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
@@ -667,6 +668,7 @@ class DiscretePlanner:
         )
         obstacle_map = self.semantic_map.get_obstacle_map(False)
         traversible = self.get_traversible(obstacle_map, False)
+        frontier_map = frontier_map & traversible
 
         if frontier_map.any():
             return frontier_map, obstacle_map, traversible, False
@@ -685,7 +687,7 @@ class DiscretePlanner:
             robot_loc = (
                 self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
             )
-            if self.prev_frontier is None or np.all((self.prev_frontier & frontier_map)==0):
+            if  self.prev_frontier.shape != frontier_map or np.all((self.prev_frontier & frontier_map)==0):
                 best_frontier_map = self.get_best_frontier(frontier_map, traversible, robot_loc, goal_category, is_local, metric=self.frontier_metric)
             else:
                 logger.debug("Using previous frontier map for planning.")
@@ -758,7 +760,6 @@ class DiscretePlanner:
         return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
     
     def get_best_frontier(self, frontier_map, traversible, robot_loc, goal_category, is_local, metric="distance"):
-        frontier_map = frontier_map & traversible
         structure = np.ones((3, 3))  # 8-connectivity
         labeled_map, num_features = label(frontier_map, structure=structure)
         frontiers = [
