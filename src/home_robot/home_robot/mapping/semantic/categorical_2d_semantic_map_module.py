@@ -582,7 +582,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.title("stairs_mask extended")
             plt.imshow(np.flipud(stair_mask))
             plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
-        return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device)
+        return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -796,8 +796,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
 
         # NOTE: Only works in fp_exp_pred is 'raycast'
-        stairs_map = self.get_stairs(voxels[0], fp_exp_pred >= 1)
-        fp_map_pred += stairs_map
+        stairs_map, ground_plane = self.get_stairs(voxels[0], fp_exp_pred>=1)
+        # fp_map_pred += stairs_map
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
@@ -818,6 +818,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         x2 = x1 + self.vision_range
         y1 = self.local_map_size_cm // (self.xy_resolution * 2)
         y2 = y1 + self.vision_range
+        agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane*1.0
+        agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map
         agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
         agent_view[MC.EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
 
@@ -875,6 +877,25 @@ class Categorical2DSemanticMapModule(nn.Module):
         # to false negatives in one frame but makes it impossible to remove false positives
         maps = torch.cat((prev_map.unsqueeze(1), translated.unsqueeze(1)), 1)
         current_map, _ = torch.max(maps, 1)
+
+        plt.clf()
+        plt.subplot(221)
+        plt.title("ground plane")
+        plt.imshow(np.flipud((current_map[MC.GROUND_PLANE]>0).cpu()))
+        plt.subplot(222)
+        plt.title("stairs")
+        plt.imshow(np.flipud((current_map[MC.STAIRS]>0).cpu()))
+        plt.subplot(223)
+        plt.title("Obstacle map")
+        plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
+        plt.subplot(224)
+
+        # Add stairs to obstacle map
+        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | ((current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0))
+
+        plt.title("Final obstacle map")
+        plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
+        plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs2.png")
 
         # Aggregate by trusting the current map — this is not robust to false negatives in
         # one frame, but it makes it possible to remove false positives
