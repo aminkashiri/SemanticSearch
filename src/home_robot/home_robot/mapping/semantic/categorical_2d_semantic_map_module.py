@@ -995,11 +995,20 @@ class Categorical2DSemanticMapModule(nn.Module):
         radius = self.been_close_to_radius // self.resolution
         been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
 
-        current_map[
-            MC.BEEN_CLOSE_MAP,
-            y - radius : y + radius + 1,
-            x - radius : x + radius + 1,
-        ][been_close_disk == 1] = 1
+        H, W = current_map.shape[1:]
+        y_min = max(y - radius, 0)
+        y_max = min(y + radius + 1, H)
+        x_min = max(x - radius, 0)
+        x_max = min(x + radius + 1, W)
+
+        disk_y_min = y_min - (y - radius) 
+        disk_y_max = disk_y_min + (y_max - y_min)
+        disk_x_min = x_min - (x - radius)
+        disk_x_max = disk_x_min + (x_max - x_min)
+
+        current_map[MC.BEEN_CLOSE_MAP, y_min:y_max, x_min:x_max][
+            been_close_disk[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
+        ] = 1
 
         if blacklist_target:
             # Record the region the agent has been close to using a disc centered at the agent
