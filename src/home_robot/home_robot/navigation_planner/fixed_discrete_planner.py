@@ -479,21 +479,21 @@ class DiscretePlanner:
         #! myTODO: Looks like this is no needed
         # self.timestep += 1
 
-        state = [location[0] + 1, location[1] + 1]
+        state = [location[0], location[1]]
 
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
             state, timestep=self.timestep
         )
-        stg_x, stg_y = stg_x - 1, stg_y - 1
+        stg_x, stg_y = stg_x, stg_y
 
         short_term_goal = int(stg_x), int(stg_y)
 
         if self.print_images:
             points = [
-                ([location[0] + 1, location[1] + 1], [255, 0, 0]),  # start blue
+                ([location[0], location[1]], [255, 0, 0]),  # start blue
                 (
-                    [short_term_goal[0] + 1, short_term_goal[1] + 1],
+                    [short_term_goal[0], short_term_goal[1]],
                     [0, 255, 0],
                 ),  # stg green
             ]
@@ -544,7 +544,7 @@ class DiscretePlanner:
             # if self.col_width == 7:
             #     length = 4
                 # buf = 3
-            self.col_width = min(self.col_width, 7)
+            self.col_width = min(self.col_width, 5)
         else:
             self.col_width = 1
 
@@ -816,9 +816,10 @@ class DiscretePlanner:
                     logger.debug(f"No classes found in the local map. Using mean score: {frontier_sem_score}")
                     top_classes = []
 
+                frontier_sem_score = np.exp(4*frontier_sem_score)
                 frontier_sem_score /= distance
-                logger.debug(f"distance: {distance}, final score: {frontier_sem_score*1000}")
-                frontier_scores.append(frontier_sem_score*1000)
+                logger.debug(f"distance: {distance}, final score: {frontier_sem_score}")
+                frontier_scores.append(frontier_sem_score)
                 top_k_semantic_classes.append(top_classes)
             else:
                 raise Exception(f"Unknown metric: {metric}")
