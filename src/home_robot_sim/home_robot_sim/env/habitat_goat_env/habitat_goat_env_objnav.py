@@ -23,13 +23,14 @@ from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
     MaskRCNNPerception,
 )
 
-from home_robot.perception.constants import df as hm3d_mapping_df
+from home_robot.perception.constants import hm3d_raw_to_mp3d
 
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
 # all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
-all_ovon_categories_path = "./data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
+all_ovon_categories_path = "./data/datasets/objectnav_hm3d_v1/cat.json"
+# all_ovon_categories_path = "./data/datasets/goat_openvocab/hm3d/v0.1.2_fixed/val_seen/goat_object_goals.json"
 with open(all_ovon_categories_path, "r") as f:
     all_ovon_categories = json.load(f)
 
@@ -119,24 +120,33 @@ class HabitatGoatEnv(HabitatEnv):
         )
     
     def reset_semantic_mapping(self):
-        # semantic_scene.objects is same as semantic_annotations().objects
         self.hm3d_mapping = {}
+        # print("--------------------")
+        # semantic_scene.objects is same as semantic_annotations().objects
         for obj in self.habitat_env.sim.semantic_scene.objects:
-            main_category = hm3d_mapping_df[hm3d_mapping_df['raw_category'] == obj.category.name()]
+            mp3d_cat = hm3d_raw_to_mp3d.get(obj.category.name())
+            # main_category = hm3d_mapping_df[hm3d_mapping_df['raw_category'] == obj.category.name()]
             
-            # raw -> main category
-            if len(main_category) == 0:
-                continue
-            else:
-                if len(main_category) > 1:
-                    raise Exception("Multiple categories found for", obj.category.name())
-                main_category = main_category['category'].item()
+            # # raw -> main category
+            # if len(main_category) == 0:
+            #     print("Not found: ")
+            #     print("Raw cat: ", obj.category.name())
+            #     continue
+            # else:
+            #     if len(main_category) > 1:
+            #         raise Exception("Multiple categories found for", obj.category.name())
+            #     # main_category = main_category['category'].item()
+            #     main_category = main_category['mpcat40'].item()
 
-            main_category = "_".join(main_category.split(" "))
+            # main_category = "_".join(main_category.split(" "))
 
-            if main_category in all_ovon_categories:
-                self.hm3d_mapping[int(obj.id.split('_')[-1])] = all_ovon_categories.index(main_category) + 1
+            if mp3d_cat in all_ovon_categories:
+                # print(f"In all ovon")
+                self.hm3d_mapping[int(obj.id.split('_')[-1])] = all_ovon_categories.index(mp3d_cat) + 1
 
+            
+        # print(f"Mapping is: ")
+        # print(self.hm3d_mapping)
 
 
     def init_perception_module(self, vocabulary=None):
@@ -178,9 +188,17 @@ class HabitatGoatEnv(HabitatEnv):
         self, habitat_obs: habitat.core.simulator.Observations
     ) -> home_robot.core.interfaces.Observations:
         depth = self._preprocess_depth(habitat_obs["depth"])
+        # print(f"attr of current episode: {dir(self.current_episode)}")
+        # print(f"current episode goals: {self.current_episode.goals}")
+        # print(f"current episode goals key: {self.current_episode.goals_key}")
+        # print(f"current episode obj cat: {self.current_episode.object_category}")
+        # print(habitat_obs["objectgoal"])
         goals = self._preprocess_goals(
-            habitat_obs
+            {"multigoal": [{"category": self.current_episode.object_category, "image":None, "description": None}]}
         )
+        # goals = self._preprocess_goals(
+        #     habitat_obs
+        # )
         obs = home_robot.core.interfaces.Observations(
             rgb=habitat_obs["rgb"],
             depth=depth,
@@ -188,7 +206,7 @@ class HabitatGoatEnv(HabitatEnv):
             gps=self._preprocess_xy(habitat_obs["gps"]),
             task_observations={
                 "tasks": goals,
-                "top_down_map": self.get_episode_metrics()["goat_top_down_map"],
+                # "top_down_map": self.get_episode_metrics()["goat_top_down_map"],
             },
             camera_pose=None,
             third_person_image=None,
@@ -204,6 +222,7 @@ class HabitatGoatEnv(HabitatEnv):
         label_min_pixels: int = 50,
         font_scale: float = 0.4,
         thickness: int = 1,
+        postfix="",
     ):
         """
         Visualizes a semantic map with color palette and overlays ID numbers on each region.
@@ -246,7 +265,7 @@ class HabitatGoatEnv(HabitatEnv):
             )
 
         if not self.visualizer.vis_dir is None:
-            save_path = os.path.join(self.visualizer.vis_dir, f"{self.timestep}_0.sem_input.png")
+            save_path = os.path.join(self.visualizer.vis_dir, f"{self.timestep}_0.sem_input{postfix}.png")
             cv2.imwrite(save_path, semantic_map_cv)
 
 
@@ -258,12 +277,17 @@ class HabitatGoatEnv(HabitatEnv):
         vocabulary=None,
     ) -> home_robot.core.interfaces.Observations:
         if self.ground_truth_semantics:
+            self.visualize_semantic_with_labels(
+                semantic_array=habitat_semantic,
+                palette=self.semantic_category_mapping.map_color_palette,
+            )
             #* shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
             obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
             self.visualize_semantic_with_labels(
                 semantic_array=obs.semantic+10,
                 palette=self.semantic_category_mapping.map_color_palette,
+                postfix="2"
             )
 
             # import pdb;pdb.set_trace()
@@ -318,10 +342,14 @@ class HabitatGoatEnv(HabitatEnv):
     def _preprocess_goals(self, habitat_obs):
         # goals = []
         # vocabulary = []
-
         goals = habitat_obs['multigoal']
+        
 
         for goal_v in goals:
+            # if goal_v["category"] == "tv_monitor":
+            #     goal_v["category"] = "tv"
+            # if goal_v["category"] == "sofa":
+            #     goal_v["category"] = "couch"
             goal_v["semantic_id"] = all_ovon_categories.index("_".join(goal_v["category"].split(" "))) + 1
             if goal_v["image"] is not None:
                 goal_v["type"] = "imagenav"
@@ -344,11 +372,11 @@ class HabitatGoatEnv(HabitatEnv):
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
         if info:
-            if (
-                self.habitat_env.current_episode.tasks[
-                    self.habitat_env.task.current_task_idx
-                ][1]
-                != "image"
-            ):
-                info["top_down_map"] = self.get_observation().task_observations.get("top_down_map")
-                self.visualizer.visualize(**info)
+            # if (
+            #     self.habitat_env.current_episode.tasks[
+            #         self.habitat_env.task.current_task_idx
+            #     ][1]
+            #     != "image"
+            # ):
+            #     info["top_down_map"] = self.get_observation().task_observations.get("top_down_map")
+            self.visualizer.visualize(**info)

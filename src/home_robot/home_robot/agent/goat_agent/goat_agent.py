@@ -179,7 +179,7 @@ class GoatAgent(Agent):
             frontier_metric=config.AGENT.frontier_metric,
         )
         self.one_hot_encoding = torch.eye(
-            config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
+            config.AGENT.SEMANTIC_MAP.num_sem_categories+1, device=self.device
         )
 
         self.sub_task_timesteps = None

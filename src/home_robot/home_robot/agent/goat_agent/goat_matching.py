@@ -71,9 +71,9 @@ class GoatMatching(Matching):
         logger.debug(f"In get_matches_against_current_frame, categories: {categories}")
         # first collect crops of instances found in the current frame
         for local_instance_id, inst_view in instance_memory.unprocessed_views.items():
-            logger.debug(
-                f"Processing instance {local_instance_id} with category {inst_view.category_id}."
-            )
+            # logger.debug(
+            #     f"Processing instance {local_instance_id} with category {inst_view.category_id}."
+            # )
             if categories is not None and inst_view.category_id not in categories:
                 continue
             # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
