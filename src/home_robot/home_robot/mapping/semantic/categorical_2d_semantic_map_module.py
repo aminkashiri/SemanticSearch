@@ -878,24 +878,26 @@ class Categorical2DSemanticMapModule(nn.Module):
         maps = torch.cat((prev_map.unsqueeze(1), translated.unsqueeze(1)), 1)
         current_map, _ = torch.max(maps, 1)
 
-        plt.clf()
-        plt.subplot(221)
-        plt.title("ground plane")
-        plt.imshow(np.flipud((current_map[MC.GROUND_PLANE]>0).cpu()))
-        plt.subplot(222)
-        plt.title("stairs")
-        plt.imshow(np.flipud((current_map[MC.STAIRS]>0).cpu()))
-        plt.subplot(223)
-        plt.title("Obstacle map")
-        plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
-        plt.subplot(224)
+        # plt.clf()
+        # plt.subplot(221)
+        # plt.title("ground plane")
+        # plt.imshow(np.flipud((current_map[MC.GROUND_PLANE]>0).cpu()))
+        # plt.subplot(222)
+        # plt.title("stairs")
+        # plt.imshow(np.flipud((current_map[MC.STAIRS]>0).cpu()))
+        # plt.subplot(223)
+        # plt.title("Obstacle map")
+        # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
+        # plt.subplot(224)
 
         # Add stairs to obstacle map
         current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | ((current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0))
 
-        plt.title("Final obstacle map")
-        plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
-        plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs2.png")
+        # plt.title("Final obstacle map")
+        # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
+        # plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs2.png")
+
+
 
         # Aggregate by trusting the current map — this is not robust to false negatives in
         # one frame, but it makes it possible to remove false positives

@@ -693,14 +693,14 @@ class DiscretePlanner:
                 logger.debug("Using previous frontier map for planning.")
                 best_frontier_map = self.prev_frontier & frontier_map
 
-            visualize_map(
-                obstacle_map.shape,
-                self.vis_dir,
-                f"{self.timestep}_5.visited_map{postfix}.png",
-                points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
-                frontier_map=self.semantic_map.get_visited_map(is_local)
-            )
+            # visualize_map(
+            #     obstacle_map.shape,
+            #     self.vis_dir,
+            #     f"{self.timestep}_5.visited_map{postfix}.png",
+            #     points=[(robot_loc, [255, 0, 0])],
+            #     traversible=1 - obstacle_map,
+            #     frontier_map=self.semantic_map.get_visited_map(is_local)
+            # )
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
@@ -789,7 +789,7 @@ class DiscretePlanner:
             dists = np.linalg.norm(frontier - robot_loc, axis=1)
             closest = frontier[np.argmin(dists)]
             assert traversible[closest[0], closest[1]] == 1, "Closest point is not traversible"
-            logger.debug(f"Frontier: {k}, closest: {closest}")
+            # logger.debug(f"Frontier: {k}, closest: {closest}")
             distance = distances[closest[0], closest[1]]
 
             # Choose the center. Problem: Sometimes occupide. 
@@ -805,36 +805,36 @@ class DiscretePlanner:
                 ]
                 neighbor_classes = np.where(local_map.any(axis=(1, 2)))[0] + 1 # +1 to match ids
 
-                logger.debug(f"frontier {k}")
+                # logger.debug(f"frontier {k}")
                 if len(neighbor_classes) > 0:
                     scores = sem_weights[neighbor_classes]
                     frontier_sem_score = np.mean(scores)
                     top_classes = neighbor_classes[np.argsort(scores)[-3:]].tolist()
-                    logger.debug(f"Top classes: {top_classes}, Scores: {scores}, Frontier score: {frontier_sem_score}")
+                    # logger.debug(f"Top classes: {top_classes}, Scores: {scores}, Frontier score: {frontier_sem_score}")
                 else:
                     frontier_sem_score = np.mean(sem_weights)
-                    logger.debug(f"No classes found in the local map. Using mean score: {frontier_sem_score}")
+                    # logger.debug(f"No classes found in the local map. Using mean score: {frontier_sem_score}")
                     top_classes = []
 
-                frontier_sem_score = np.exp(4*frontier_sem_score)
+                frontier_sem_score = np.exp(8*frontier_sem_score)
                 frontier_sem_score /= distance
-                logger.debug(f"distance: {distance}, final score: {frontier_sem_score}")
+                # logger.debug(f"distance: {distance}, final score: {frontier_sem_score}")
                 frontier_scores.append(frontier_sem_score)
                 top_k_semantic_classes.append(top_classes)
             else:
                 raise Exception(f"Unknown metric: {metric}")
 
-        visualize_frontier_scores_matplotlib(
-            self.vis_dir,
-            traversible=traversible,
-            frontier_map=frontier_map,
-            frontier_centers=frontier_centers,
-            frontier_scores=frontier_scores,
-            top_k_semantic_classes=top_k_semantic_classes,
-            robot_loc=robot_loc,
-            top_k=5,
-            save_path=f"{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png"
-        )
+        # visualize_frontier_scores_matplotlib(
+        #     self.vis_dir,
+        #     traversible=traversible,
+        #     frontier_map=frontier_map,
+        #     frontier_centers=frontier_centers,
+        #     frontier_scores=frontier_scores,
+        #     top_k_semantic_classes=top_k_semantic_classes,
+        #     robot_loc=robot_loc,
+        #     top_k=5,
+        #     save_path=f"{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png"
+        # )
 
         assert len(frontier_scores) != 0, "No frontiers found, but frontier_map is not empty."
         # Select the frontier with the highest score
@@ -850,14 +850,14 @@ class DiscretePlanner:
             goal_instance_map == 1, obstacle_map == 1
         )
 
-        visualize_map(
-            obstacle_map.shape,
-            self.vis_dir,
-            f"{self.timestep}_5.visited_map{postfix}.png",
-            points=[(robot_loc, [255, 0, 0])],
-            traversible=1 - obstacle_map,
-            frontier_map=self.semantic_map.get_visited_map(is_local)
-        )
+        # visualize_map(
+        #     obstacle_map.shape,
+        #     self.vis_dir,
+        #     f"{self.timestep}_5.visited_map{postfix}.png",
+        #     points=[(robot_loc, [255, 0, 0])],
+        #     traversible=1 - obstacle_map,
+        #     frontier_map=self.semantic_map.get_visited_map(is_local)
+        # )
         visualize_map(
             obstacle_map.shape,
             self.vis_dir,

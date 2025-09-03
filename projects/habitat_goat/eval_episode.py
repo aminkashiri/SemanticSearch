@@ -23,25 +23,36 @@ from habitat.core.env import Env
 
 from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
-from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
 from home_robot.utils.logger import get_logger
+
+GOAT_OBJECT_NAV = True
+if GOAT_OBJECT_NAV:
+    from home_robot_sim.env.habitat_goat_env.habitat_goat_env_objnav import HabitatGoatEnv
+else:
+    from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    if GOAT_OBJECT_NAV:
+        habitat_config_default = "objectnav/modular_objectnav_hm3d.yaml"
+        baseline_config_default = "projects/habitat_goat/configs/agent/habitat_objnav_2022.yaml"
+        stuck_metric = "distance_to_goal"
+    else:
+        habitat_config_default = "goat/modular_goat_hm3d_fixed.yaml"
+        baseline_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
+        stuck_metric = "goat_distance_to_sub-goal"
     parser.add_argument(
         "--habitat_config_path",
         type=str,
-        # default="goat/modular_goat_hm3d.yaml",
-        default="goat/modular_goat_hm3d_fixed.yaml", #only difference is min depth set to 0
+        default=habitat_config_default,
         help="Path to config yaml",
     )
     parser.add_argument(
         "--baseline_config_path",
         type=str,
-        # default="projects/habitat_goat/configs/agent/hm3d_eval.yaml",
-        default="projects/habitat_goat/configs/agent/hm3d_eval_new.yaml",
+        default=baseline_config_default,
         help="Path to config yaml",
     )
     parser.add_argument(
@@ -50,12 +61,6 @@ if __name__ == "__main__":
         default=0,
         help="Scene indices (for parallel eval)",
     )
-    # parser.add_argument(
-    #     "--log",
-    #     type=str,
-    #     default="output",
-    #     help="Name of log file",
-    # )
     parser.add_argument(
         "opts",
         default=None,
@@ -89,7 +94,7 @@ if __name__ == "__main__":
     #     "4ok3usBNeis"
     # ]  # TODO: for debugging. REMOVE later.
     # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
-    config.habitat.dataset.content_scenes = all_scenes[0:2]
+    config.habitat.dataset.content_scenes = all_scenes[0:3]
     # config.habitat.dataset.content_scenes = ['5cdEh9F2hJL']
 
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
@@ -197,7 +202,7 @@ if __name__ == "__main__":
             pbar.update(1)
 
             if (
-                env.get_episode_metrics()["goat_distance_to_sub-goal"]
+                env.get_episode_metrics()[stuck_metric]
                 == old_distance_to_goal
             ):
                 ctr += 1
@@ -210,9 +215,7 @@ if __name__ == "__main__":
             else:
                 ctr = 0
 
-            old_distance_to_goal = env.get_episode_metrics()[
-                "goat_distance_to_sub-goal"
-            ]
+            old_distance_to_goal = env.get_episode_metrics()[stuck_metric]
 
             if action == DiscreteNavigationAction.STOP:
                 stop = False
