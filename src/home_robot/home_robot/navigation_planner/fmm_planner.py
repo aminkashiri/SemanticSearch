@@ -186,12 +186,12 @@ class FMMPlanner:
         dist_vis[sub_h:, sub_w:] = convert_to_cmap(vis_list[3])
 
         # logger.debug(f"SAVING 6.get_stg")
-        cv2.imwrite(
-            os.path.join(
-                self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
-            ),
-            (dist_vis).astype(int),
-        )
+        # cv2.imwrite(
+        #     os.path.join(
+        #         self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
+        #     ),
+        #     (dist_vis).astype(int),
+        # )
 
     def filter_unreachable_goals(
         self, subset, mask, robot_pos, obstacle_mask, ray_thickness=1
@@ -411,14 +411,14 @@ class FMMPlanner:
         initial_navigable_goal_map = np.logical_and(self.traversible, goal)
         dilated_goal_map = np.logical_or(initial_navigable_goal_map, dilated_goal_map)
 
-        if self.print_images:
-            visualize_map(
-                dilated_goal_map.shape,
-                self.vis_dir,
-                f"{timestep}_9.dilate_goal{self.vis_postfix}.png",
-                traversible=self.traversible.astype(np.uint8),
-                goal_map=goal,
-                dilated_goal_map=dilated_goal_map.astype(np.uint8),
-            )
+        # if self.print_images:
+        #     visualize_map(
+        #         dilated_goal_map.shape,
+        #         self.vis_dir,
+        #         f"{timestep}_9.dilate_goal{self.vis_postfix}.png",
+        #         traversible=self.traversible.astype(np.uint8),
+        #         goal_map=goal,
+        #         dilated_goal_map=dilated_goal_map.astype(np.uint8),
+        #     )
 
         return dilated_goal_map

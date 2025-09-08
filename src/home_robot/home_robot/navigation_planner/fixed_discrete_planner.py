@@ -322,23 +322,14 @@ class DiscretePlanner:
 
         traversible = 1 - dilated_obstacles
         return traversible
-
-    def get_goal_map(
-        self, traversible, goal_instance_map, viewpoint_location, is_local, pose_idx, method="com"
-    ):
-        """
-        Args:
-            goal_map
-            view_pose: Global loc that we can see the goal instance.
-        """
+    
+    def get_goal_map_pose(self, traversible, goal_instance_map, viewpoint_location, is_local, pose_idx, method):
         logger.info(
             f"Creating goal map using viewpoint. Choosing {pose_idx}th traversible viewpoint."
         )
 
         logger.debug(f"Viewpoint is : {viewpoint_location}")
-
-
-        if method == "com":
+        if method == "line_to_com":
             goal_indices = np.argwhere(goal_instance_map == 1)
             center_of_mass = goal_indices.mean(axis=0).astype(int)
             logger.debug(
@@ -390,8 +381,8 @@ class DiscretePlanner:
             logger.info(f"No traversible view found for the instance goal.")
             return None
 
-        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
         goal_location = first_pixels[pose_idx]
+        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
         goal_map[goal_location[0], goal_location[1]] = 1
         self.visualize_get_goal_map(
             traversible,
@@ -402,6 +393,79 @@ class DiscretePlanner:
             pose_idx,
             is_local,
         )
+        return goal_map
+
+    def get_goal_map_closest_to_viewpoint(self, traversible, goal_instance_map, viewpoint_location, is_local, try_index):
+        logger.info(
+            f"Creating goal map using closest goal to viewpoint."
+        )
+        if try_index != 0:
+            logger.info(f"Closest to viewpoint only works for try_index=0")
+            return None
+        # Here, I have to first dilate the goal instance map a bit, then from all free goal cells, choose closest to the viewpoint
+        kernel_size = 2
+        while kernel_size < 20:
+            dilated_goal_instance_map = cv2.dilate(
+                goal_instance_map.astype(np.uint8),
+                skimage.morphology.disk(kernel_size),
+                iterations=1,
+            )
+            free_goal_cells = np.logical_and(dilated_goal_instance_map == 1, traversible == 1)
+            if np.any(free_goal_cells):
+                break
+            kernel_size += 1
+        planner = FMMPlanner(
+            traversible,
+            step_size=self.step_size,
+            vis_dir=self.vis_dir,
+            print_images=self.print_images,
+            goal_tolerance=self.goal_tolerance,
+            # vis_postfix="_closest_to_viewpoint",
+        )
+        viewpoint_map = np.zeros_like(goal_instance_map)
+        viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
+        distances_from_viewpoint = planner.set_multi_goal(viewpoint_map, self.timestep)
+        distances_from_viewpoint[free_goal_cells == 0] = 100000
+
+        closest_goal_map = distances_from_viewpoint == distances_from_viewpoint.min()
+        goal_location = np.unravel_index(
+            closest_goal_map.argmax(), closest_goal_map.shape
+        )
+        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
+        goal_map[goal_location[0], goal_location[1]] = 1
+
+        features = [(goal_instance_map, [0, 165, 255])]  # orange - All instance cells
+        points = []
+        points.append((viewpoint_location, [255, 0, 0]))
+        points.append((goal_location, [0, 0, 255]))
+
+        visualize_map(
+            traversible.shape,
+            self.vis_dir,
+            f"{self.timestep}_6.get_closest_to_viewpoint{'' if is_local else '_global'}.png",
+            traversible=traversible,
+            features=features,
+            points=points,
+        )
+        return goal_map
+        
+
+    def get_goal_map(
+        self, traversible, goal_instance_map, viewpoint_location, is_local, try_index, method="line_to_com"
+    ):
+        """
+        Args:
+            goal_map
+            view_pose: Global loc that we can see the goal instance.
+            method: "line_to_com" or "line_to_closest" or "closest_to_viewpoint"
+        """
+
+
+        if method in ["line_to_com", "line_to_closest"]:
+            goal_map = self.get_goal_map_pose(traversible, goal_instance_map, viewpoint_location, is_local, try_index, method)
+        else:  # closest_to_viewpoint
+            goal_map = self.get_goal_map_closest_to_viewpoint(traversible, goal_instance_map, viewpoint_location, is_local, try_index)
+
         return goal_map
 
     def _get_short_term_goal(
@@ -467,7 +531,7 @@ class DiscretePlanner:
             self.dd,
             self.map_downsample_factor,
             self.map_update_frequency,
-            number="10",
+            # number="10",
         )
 
         # goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
@@ -637,15 +701,15 @@ class DiscretePlanner:
             clustered_map = None
             clustered_map_convex_hull = None
             
-        visualize_map(
-            goal_instance_map.shape,
-            self.vis_dir,
-            f"{self.timestep}_3.cluster_goal.png",
-            goal_map=clustered_map_convex_hull, # Clustered goal map convex hull is red
-            dilated_goal_map=goal_instance_map, # All init goal points are magenta
-            traversible=1 - self.semantic_map.get_obstacle_map(is_local),
-            features=[(clustered_map, [0, 255, 0])] # Largest cluster is green
-        )
+        # visualize_map(
+        #     goal_instance_map.shape,
+        #     self.vis_dir,
+        #     f"{self.timestep}_3.cluster_goal.png",
+        #     goal_map=clustered_map_convex_hull, # Clustered goal map convex hull is red
+        #     dilated_goal_map=goal_instance_map, # All init goal points are magenta
+        #     traversible=1 - self.semantic_map.get_obstacle_map(is_local),
+        #     features=[(clustered_map, [0, 255, 0])] # Largest cluster is green
+        # )
         if clustered_map is None:
             return goal_instance_map
         if clustered_map_convex_hull is None:
@@ -701,23 +765,23 @@ class DiscretePlanner:
             #     traversible=1 - obstacle_map,
             #     frontier_map=self.semantic_map.get_visited_map(is_local)
             # )
-            visualize_map(
-                obstacle_map.shape,
-                self.vis_dir,
-                f"{self.timestep}_6.unreachable_frontiers{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
-                points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
-                frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
-            )
-            visualize_map(
-                obstacle_map.shape,
-                self.vis_dir,
-                f"{self.timestep}_7.planning_input_frontier{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
-                points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
-                dilated_goal_map=frontier_map,
-                frontier_map=best_frontier_map,
-            )
+            # visualize_map(
+            #     obstacle_map.shape,
+            #     self.vis_dir,
+            #     f"{self.timestep}_6.unreachable_frontiers{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
+            #     points=[(robot_loc, [255, 0, 0])],
+            #     traversible=1 - obstacle_map,
+            #     frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
+            # )
+            # visualize_map(
+            #     obstacle_map.shape,
+            #     self.vis_dir,
+            #     f"{self.timestep}_7.planning_input_frontier{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
+            #     points=[(robot_loc, [255, 0, 0])],
+            #     traversible=1 - obstacle_map,
+            #     dilated_goal_map=frontier_map,
+            #     frontier_map=best_frontier_map,
+            # )
 
 
             (
@@ -858,32 +922,32 @@ class DiscretePlanner:
         #     traversible=1 - obstacle_map,
         #     frontier_map=self.semantic_map.get_visited_map(is_local)
         # )
-        visualize_map(
-            obstacle_map.shape,
-            self.vis_dir,
-            f"{self.timestep}_7.planning_input_instance{postfix}.png",
-            points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
-            traversible=1 - obstacle_map,
-            goal_map=goal_instance_map,
-            features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
-        )
+        # visualize_map(
+        #     obstacle_map.shape,
+        #     self.vis_dir,
+        #     f"{self.timestep}_7.planning_input_instance{postfix}.png",
+        #     points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
+        #     traversible=1 - obstacle_map,
+        #     goal_map=goal_instance_map,
+        #     features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
+        # )
 
 
         i = 0
-        pose_idx = 0
+        try_idx = 0
         stop = False
         reachable = False
         force_global = False
         while True:
             goal_map = self.get_goal_map(
-                traversible, goal_instance_map, viewpoint_loc, is_local, pose_idx
+                traversible, goal_instance_map, viewpoint_loc, is_local, try_idx, method="closest_to_viewpoint"
             )
             if goal_map is None:
                 # This mean we couldn't find any traversible pose. Even with the minimum dilation radius.
                 break
 
             logger.info(
-                f"Trying to plan to instance goal with\n\t - pose_idx: {pose_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
+                f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
             )
 
             (
@@ -895,7 +959,7 @@ class DiscretePlanner:
                 traversible,
                 goal_map,
                 robot_loc,
-                postfix=f"_attempt_{i}_pose_{pose_idx}{'' if is_local else '_global'}{postfix}",
+                postfix=f"_attempt_{i}_pose_{try_idx}{'' if is_local else '_global'}{postfix}",
             )
 
             if stop or reachable:
@@ -912,7 +976,7 @@ class DiscretePlanner:
                     traversible, obstacle_map, is_local
                     )
                 if not success:
-                    pose_idx += 1
+                    try_idx += 1
                     self.reset_obs_dilation_selem_radius()
             goal_instance_map, viewpoint_loc, viewpoint_orientation, is_local, obstacle_map, robot_loc, traversible = self.get_instance_planning_maps(instance_goal_id, force_global=force_global)
 

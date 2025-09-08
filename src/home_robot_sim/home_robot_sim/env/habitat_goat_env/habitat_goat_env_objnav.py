@@ -277,18 +277,21 @@ class HabitatGoatEnv(HabitatEnv):
         vocabulary=None,
     ) -> home_robot.core.interfaces.Observations:
         if self.ground_truth_semantics:
-            self.visualize_semantic_with_labels(
-                semantic_array=habitat_semantic,
-                palette=self.semantic_category_mapping.map_color_palette,
-            )
+            # self.visualize_semantic_with_labels(
+            #     semantic_array=habitat_semantic,
+            #     palette=self.semantic_category_mapping.map_color_palette,
+            # )
             #* shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
             obs.semantic = np.vectorize(lambda x: self.hm3d_mapping.get(x, 0))(habitat_semantic)[..., 0]
-            obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
-            self.visualize_semantic_with_labels(
-                semantic_array=obs.semantic+10,
-                palette=self.semantic_category_mapping.map_color_palette,
-                postfix="2"
-            )
+            instance_map = habitat_semantic[:, :, -1] + 1
+            #* This ensures we only consider instances of obbjects that we do care. 
+            instance_map[obs.semantic == 0] = 1
+            obs.task_observations["instance_map"] = instance_map
+            # self.visualize_semantic_with_labels(
+            #     semantic_array=obs.semantic+10,
+            #     palette=self.semantic_category_mapping.map_color_palette,
+            #     postfix="2"
+            # )
 
             # import pdb;pdb.set_trace()
             # instance_id_to_category_id = (
