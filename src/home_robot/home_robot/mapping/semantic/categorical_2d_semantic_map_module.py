@@ -554,7 +554,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         rows = np.arange(10, min_visible_dist + 1).reshape(-1, 1)  # shape: (min_visible_dist-10+1, 1)
         rr, cc = np.meshgrid(rows, x_indices, indexing='ij')
         stair_mask[rr, cc] = 1
-        if True:
+        if False:
             import matplotlib
 
             # matplotlib.use("TkAgg")
