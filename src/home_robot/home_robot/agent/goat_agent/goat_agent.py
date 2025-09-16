@@ -33,16 +33,9 @@ class GoatAgent(Agent):
     # Flag for debugging data flow and task configuraiton
     verbose = False
 
-    def __init__(self, config, device_id: int = 0):
+    def __init__(self, config, semantic_category_mapping, device_id: int = 0):
         # self.max_steps = config.AGENT.max_steps
-        # self.max_steps = [500, 500, 500, 500, 500]
         self.max_steps = [500] * 10
-        # self.max_steps = [500, 400, 300, 200, 200, 200, 200, 200, 200, 200, 200]
-        # self.max_steps = [400, 300, 200, 200, 200, 200, 200, 200, 200, 200, 200]
-        self.num_environments = config.NUM_ENVIRONMENTS
-        self.store_all_categories_in_map = getattr(
-            config.AGENT, "store_all_categories", False
-        )
 
         self.goal_matching_vis_dir = f"{config.DUMP_LOCATION}/goal_grounding_vis"
         Path(self.goal_matching_vis_dir).mkdir(parents=True, exist_ok=True)
@@ -72,26 +65,26 @@ class GoatAgent(Agent):
         self.matching = GoatMatching(
             device=0,  # config.simulator_gpu_id
             score_func=self.goal_policy_config.score_function,
-            num_sem_categories=config.AGENT.SEMANTIC_MAP.num_sem_categories,
             config=config.AGENT.SUPERGLUE,
             default_vis_dir=f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}",
             print_images=config.PRINT_IMAGES,
             instance_memory=self.instance_memory,
         )
 
-        self.num_sem_categories = config.AGENT.SEMANTIC_MAP.num_sem_categories
+        self.num_sem_categories = semantic_category_mapping.num_sem_categories + 1
         agent_radius_cm = config.AGENT.radius * 100.0
         agent_cell_radius = int(
             np.ceil(agent_radius_cm / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
+        camera_sensor = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor
         self.semantic_map_module = Categorical2DSemanticMapModule(
-            frame_height=config.ENVIRONMENT.frame_height,
-            frame_width=config.ENVIRONMENT.frame_width,
-            camera_height=config.ENVIRONMENT.camera_height,
-            hfov=config.ENVIRONMENT.hfov,
-            num_sem_categories=config.AGENT.SEMANTIC_MAP.num_sem_categories,
+            frame_height=camera_sensor.height,
+            frame_width=camera_sensor.width,
+            camera_height=camera_sensor.position[1],
+            hfov=camera_sensor.hfov,
+            num_sem_categories=self.num_sem_categories,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
-            max_depth=config.AGENT.SEMANTIC_MAP.max_depth,
+            max_depth=camera_sensor.max_depth,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             vision_range=config.AGENT.SEMANTIC_MAP.vision_range,
             explored_radius=config.AGENT.SEMANTIC_MAP.explored_radius,
@@ -112,13 +105,13 @@ class GoatAgent(Agent):
             evaluate_instance_tracking=getattr(
                 config.ENVIRONMENT, "evaluate_instance_tracking", False
             ),
-            exploration_type=config.AGENT.SEMANTIC_MAP.exploration_type,
+            exploration_type=config.AGENT.exploration_type,
             gaze_width=(
-                40 if config.AGENT.SEMANTIC_MAP.exploration_type == "raycast" else 30
+                40 if config.AGENT.exploration_type == "raycast" else 30
             ),  #! myTODO: Hardcoded 3
             gaze_distance=(
-                config.AGENT.SEMANTIC_MAP.max_depth
-                if config.AGENT.SEMANTIC_MAP.exploration_type == "raycast"
+                camera_sensor.max_depth 
+                if config.AGENT.exploration_type == "raycast"
                 else 3
             ),  #! myTODO: Hardcoded 3
             agent_cell_radius=agent_cell_radius,
@@ -135,7 +128,7 @@ class GoatAgent(Agent):
         self.visualize = config.VISUALIZE or config.PRINT_IMAGES
         self.semantic_map = Categorical2DSemanticMapState(
             device=self.device,
-            num_sem_categories=config.AGENT.SEMANTIC_MAP.num_sem_categories,
+            num_sem_categories=self.num_sem_categories,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             global_downscaling=config.AGENT.SEMANTIC_MAP.global_downscaling,
@@ -152,12 +145,12 @@ class GoatAgent(Agent):
         self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
 
         if config.AGENT.panorama_start:
-            panorama_start_steps = int(360 / config.ENVIRONMENT.turn_angle)
+            panorama_start_steps = int(360 / config.habitat.simulator.turn_angle)
         else:
             panorama_start_steps = 0
 
         self.planner = DiscretePlanner(
-            turn_angle=config.ENVIRONMENT.turn_angle,
+            turn_angle=config.habitat.simulator.turn_angle,
             collision_threshold=config.AGENT.PLANNER.collision_threshold,
             step_size=config.AGENT.PLANNER.step_size,
             obs_dilation_selem_radius=config.AGENT.PLANNER.obs_dilation_selem_radius,
@@ -179,7 +172,7 @@ class GoatAgent(Agent):
             frontier_metric=config.AGENT.frontier_metric,
         )
         self.one_hot_encoding = torch.eye(
-            config.AGENT.SEMANTIC_MAP.num_sem_categories, device=self.device
+            self.num_sem_categories, device=self.device
         )
 
         self.sub_task_timesteps = None
@@ -191,7 +184,7 @@ class GoatAgent(Agent):
         self.current_task_idx = 0
 
         self.imagenav_visualizer = NavVisualizer(
-            num_sem_categories=config.AGENT.SEMANTIC_MAP.num_sem_categories,
+            num_sem_categories=self.num_sem_categories,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             print_images=config.PRINT_IMAGES,
@@ -423,7 +416,7 @@ class GoatAgent(Agent):
                     ].items()
                     if x != "image"
                 }
-                vis_inputs["goal_name"] = goal_text_desc
+                vis_inputs["goal_name"] = str(goal_text_desc)
                 vis_inputs["semantic_frame"] = obs.task_observations["semantic_frame"]
                 vis_inputs["third_person_image"] = obs.third_person_image
                 vis_inputs["instance_memory"] = self.instance_memory
