@@ -60,26 +60,16 @@ class Visualizer:
     This class is intended to visualize a single object goal navigation task.
     """
 
-    def __init__(self, config, dataset=None):
+    def __init__(self, config, semantic_category_mapping, dataset=None):
+        self.semantic_category_mapping = semantic_category_mapping
         self.show_images = config.VISUALIZE
         self.print_images = config.PRINT_IMAGES
         self.default_vis_dir = f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}"
         self._dataset = dataset
         os.makedirs(self.default_vis_dir, exist_ok=True)
-        if hasattr(config, "habitat"):  # hydra configs
-            self.episodes_data_path = config.habitat.dataset.data_path
-        else:
-            self.episodes_data_path = config.TASK_CONFIG.DATASET.DATA_PATH
+        self.episodes_data_path = config.habitat.dataset.data_path
 
-        assert "hm3d" in self.episodes_data_path
-
-        if "hm3d" in self.episodes_data_path:
-            if config.AGENT.SEMANTIC_MAP.semantic_categories == "langnav_cat":
-                self.semantic_category_mapping = LanguageNavCategories()
-            else:
-                raise NotImplementedError
-
-        self.num_sem_categories = config.AGENT.SEMANTIC_MAP.num_sem_categories
+        self.num_sem_categories = semantic_category_mapping.num_sem_categories + 1
         self.map_resolution = config.AGENT.SEMANTIC_MAP.map_resolution
         map_size_cm = config.AGENT.SEMANTIC_MAP.map_size_cm
         self.map_shape = (

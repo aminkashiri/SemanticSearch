@@ -1,12 +1,11 @@
-import argparse
-import json
 import os
 import sys
-from pathlib import Path
+import json
 import pprint
-
+import argparse
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
 
 # TODO Install home_robot, home_robot_sim and remove this
 sys.path.insert(
@@ -18,48 +17,22 @@ sys.path.insert(
     str(Path(__file__).resolve().parent.parent.parent / "src/home_robot_sim"),
 )
 
-from config_utils import get_config
 from habitat.core.env import Env
-
+from omegaconf import DictConfig, OmegaConf
+from habitat.config.default import get_config
+from home_robot.utils.logger import get_logger
 from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
+from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
-from home_robot.utils.logger import get_logger
-
-GOAT_OBJECT_NAV = True
-if GOAT_OBJECT_NAV:
-    from home_robot_sim.env.habitat_goat_env.habitat_goat_env_objnav import HabitatGoatEnv
-else:
-    from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
-
-
-if __name__ == "__main__":
+def read_args():
     parser = argparse.ArgumentParser()
-    if GOAT_OBJECT_NAV:
-        habitat_config_default = "objectnav/modular_objectnav_hm3d.yaml"
-        baseline_config_default = "projects/habitat_goat/configs/agent/habitat_objnav_2022.yaml"
-        stuck_metric = "distance_to_goal"
-    else:
-        habitat_config_default = "goat/modular_goat_hm3d_fixed.yaml"
-        baseline_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
-        stuck_metric = "goat_distance_to_sub-goal"
+    project_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
     parser.add_argument(
-        "--habitat_config_path",
+        "--project_config_path",
         type=str,
-        default=habitat_config_default,
+        default=project_config_default,
         help="Path to config yaml",
-    )
-    parser.add_argument(
-        "--baseline_config_path",
-        type=str,
-        default=baseline_config_default,
-        help="Path to config yaml",
-    )
-    parser.add_argument(
-        "--scene_idx",
-        type=int,
-        default=0,
-        help="Scene indices (for parallel eval)",
     )
     parser.add_argument(
         "opts",
@@ -67,15 +40,27 @@ if __name__ == "__main__":
         nargs=argparse.REMAINDER,
         help="Modify config options from command line",
     )
-    print("Arguments:")
     args = parser.parse_args()
-    print(json.dumps(vars(args), indent=4))
-    print("-" * 100)
+    return args
 
-    logger = get_logger()
+def read_configs(args):
+    project_config = OmegaConf.load(args.project_config_path)
+    if project_config.DATASET == "habitat_objnav_2022":
+        habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_2022_rgbd_with_semantic.yaml" # V1
+        stuck_metric = "distance_to_goal"
+    elif project_config.DATASET == "habitat_objnav_2023":
+        habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+        stuck_metric = "distance_to_goal"
+    elif project_config.DATASET == "goat":
+        habitat_config_path = "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml"
+        stuck_metric = "goat_distance_to_sub-goal"
 
-    config = get_config(args.habitat_config_path, args.baseline_config_path)
-
+    habitat_config = get_config(habitat_config_path)
+    config = DictConfig({**habitat_config, **project_config})
+    config.PRINT_IMAGES = 1
+    config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.0
+    if project_config.DATASET == "goat":
+        config.habitat.dataset.split = "val_seen"
 
     all_scenes = os.listdir(
         os.path.dirname(
@@ -86,53 +71,46 @@ if __name__ == "__main__":
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    # if args.scene_idx != -1:
-    #     scene_start = args.scene_idx * 5
-    #     config.habitat.dataset.content_scenes = all_scenes[scene_start:scene_start+5]
-
-    # config.habitat.dataset.content_scenes = [
-    #     "4ok3usBNeis"
-    # ]  # TODO: for debugging. REMOVE later.
-    # config.habitat.dataset.content_scenes = all_scenes[:10] + ["4ok3usBNeis"]
-    config.habitat.dataset.content_scenes = all_scenes[0:3]
-    # config.habitat.dataset.content_scenes = ['5cdEh9F2hJL']
-
+    config.habitat.dataset.content_scenes = all_scenes[:]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
-    # config.habitat.dataset.content_scenes = [scene for scene in config.habitat.dataset.content_scenes if scene not in downward_steps]
+
+    return config, stuck_metric
+    
 
 
+if __name__ == "__main__":
+    args = read_args()
 
+    print("Arguments:")
+    print(json.dumps(vars(args), indent=4))
+    print("-" * 100)
+
+    logger = get_logger()
+
+    config, stuck_metric = read_configs(args)
 
     logger.info("Starting code")
     logger.info(f"Using scenes: {config.habitat.dataset.content_scenes}")
 
-    config.NUM_ENVIRONMENTS = 1
-    config.PRINT_IMAGES = 1
-
-    config.EXP_NAME = f"{config.EXP_NAME}_{args.scene_idx}"
-
-    agent = GoatAgent(config=config)
     habitat_env = Env(config)
     env = HabitatGoatEnv(habitat_env, config=config)
+    agent = GoatAgent(config=config, semantic_category_mapping=env.semantic_category_mapping)
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
 
     metrics = {}
+    task_type = config.habitat.task.type
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
         agent.reset()
         stop = False
 
-        # while not int(env.habitat_env.current_episode.episode_id) == 4:
-        #     env.reset()
-        #     agent.reset()
-
         old_distance_to_goal = None
         ctr = 0
 
-        t = 0
+        ep_step = 0
 
         scene_id = env.habitat_env.current_episode.scene_id.split("/")[-1].split(".")[0]
         episode = env.habitat_env.current_episode
@@ -148,23 +126,18 @@ if __name__ == "__main__":
         if f"{scene_id}_{episode_id}" in scene_ep_pairs:
             continue
 
-        # if episode_id != '4':
-        #     continue
-
-        # if scene_id != "HkseAnWCgqk":
-        #     continue
-
+        current_task_idx = env.habitat_env.task.current_task_idx if task_type == "Goat-v1" else 0 
         agent.planner.set_vis_dir(
-            scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+            scene_id, f"{episode_id}_{current_task_idx}"
         )
         agent.imagenav_visualizer.set_vis_dir(
-            f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
+            f"{scene_id}_{episode_id}_{current_task_idx}"
         )
         agent.matching.set_vis_dir(
-            f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
+            f"{scene_id}_{episode_id}_{current_task_idx}"
         )
         env.visualizer.set_vis_dir(
-            scene_id, f"{episode_id}_{env.habitat_env.task.current_task_idx}"
+            scene_id, f"{episode_id}_{current_task_idx}"
         )
 
         all_subtask_metrics = []
@@ -172,18 +145,18 @@ if __name__ == "__main__":
 
         old_task_idx = -1
         while not env.episode_over:
-            current_task_idx = env.habitat_env.task.current_task_idx
+            current_task_idx = env.habitat_env.task.current_task_idx if task_type == "Goat-v1" else 0 
             if current_task_idx != old_task_idx:
                 logger.info(
                     f"Starting task {current_task_idx} in scene {scene_id} episode {episode_id}"
                 )
                 old_task_idx = current_task_idx
-            t += 1
-            logger.info(f"-------------------- Episode step {t} --------------------")
+            ep_step += 1
+            logger.info(f"-------------------- Episode step {ep_step} --------------------")
             logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
             env.timestep = agent.get_subtask_timestep() + 1
             obs = env.get_observation()
-            if t == 1:
+            if ep_step == 1:
                 obs_tasks = []
                 for task in obs.task_observations["tasks"]:
                     obs_task = {}
@@ -228,18 +201,18 @@ if __name__ == "__main__":
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
                     agent.imagenav_visualizer.set_vis_dir(
-                        f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
+                        f"{scene_id}_{episode_id}_{current_task_idx}"
                     )
                     agent.matching.set_vis_dir(
-                        f"{scene_id}_{episode_id}_{env.habitat_env.task.current_task_idx}"
+                        f"{scene_id}_{episode_id}_{current_task_idx}"
                     )
                     agent.planner.set_vis_dir(
                         scene_id,
-                        f"{episode_id}_{env.habitat_env.task.current_task_idx}",
+                        f"{episode_id}_{current_task_idx}",
                     )
                     env.visualizer.set_vis_dir(
                         scene_id,
-                        f"{episode_id}_{env.habitat_env.task.current_task_idx}",
+                        f"{episode_id}_{current_task_idx}",
                     )
                     pbar.reset()
 
@@ -248,7 +221,7 @@ if __name__ == "__main__":
         ep_metrics = env.get_episode_metrics()
         scene_ep_id = f"{scene_id}_{episode_id}"
         metrics[scene_ep_id] = {"metrics": all_subtask_metrics}
-        metrics[scene_ep_id]["total_num_steps"] = t
+        metrics[scene_ep_id]["total_num_steps"] = ep_step
         metrics[scene_ep_id]["sub_task_timesteps"] = agent.sub_task_timesteps[0]
         metrics[scene_ep_id]["tasks"] = obs_tasks
 

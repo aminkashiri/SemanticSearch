@@ -30,7 +30,6 @@ class GoatMatching(Matching):
         self,
         device: int,
         score_func: str,
-        num_sem_categories: int,
         config: Dict[str, Any],
         default_vis_dir: str,
         print_images: bool,
@@ -40,7 +39,6 @@ class GoatMatching(Matching):
 
         assert score_func in ["confidence_sum", "match_count"]
         self.score_func = score_func
-        self.num_sem_categories = num_sem_categories
 
         # generate clip embeddings by loading clip model
         self.device = device
