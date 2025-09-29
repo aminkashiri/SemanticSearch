@@ -1,8 +1,9 @@
 NO_GPU: 1                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: habitat_objnav_2022
+EXP_NAME: habitat_objnav_2023
+NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
-DATASET: habitat_objnav_2022
+DATASET: habitat_objnav_2023
 VISUALIZE: 0              # 1: render observation and predicted semantic map, 0: no visualization
 PRINT_IMAGES: 1           # 1: save visualization as images, 0: no image saving
 GROUND_TRUTH_SEMANTICS: 1 # 1: use ground-truth semantics (for debugging / ablations)
