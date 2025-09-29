@@ -234,6 +234,7 @@ class Visualizer:
         is_local=True,
         inst_goal_found: bool = False,
         goal_instance_map: Optional[np.ndarray] = None,
+        agent_id: Optional[int] = None,
         **kwargs,
     ):
         """Visualize frame input and semantic map.
@@ -470,8 +471,9 @@ class Visualizer:
             cv2.imshow("Visualization", image_vis)
             cv2.waitKey(1)
         if self.print_images:
+            agent_text = "" if agent_id is None else f"agent_{agent_id}_"
             cv2.imwrite(
-                os.path.join(self.vis_dir, f"{timestep}_13.snapshot.png"),
+                os.path.join(self.vis_dir, f"{agent_text}{timestep}_13.snapshot.png"),
                 image_vis,
             )
 

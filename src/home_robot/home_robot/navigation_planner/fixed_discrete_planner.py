@@ -76,7 +76,8 @@ class DiscretePlanner:
         semantic_map: Categorical2DSemanticMapState = None,
         instance_memory: InstanceMemory = None,
         goal_filtering=False,
-        frontier_metric: str = "distance"
+        frontier_metric: str = "distance", 
+        agent_id = None,
     ):
         """
         Similar to old DiscretePlanner, but with changes to:
@@ -134,6 +135,9 @@ class DiscretePlanner:
         self.goal_filtering = goal_filtering
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.frontier_metric = frontier_metric
+    
+        self.agent_id = agent_id
+        self.prefix = "" if self.agent_id is None else f"agent_{self.agent_id}_"
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -194,9 +198,16 @@ class DiscretePlanner:
 
         if inst_goal_found:
             self.episode_panorama_start_steps = 0
+        
+        #! TEMP
+        # if self.agent_id == 1:
+        #     if total_timesteps < 5:
+        #         return DiscreteNavigationAction.MOVE_FORWARD, vis_input # If failed to plan, visualize locally.
+        #     elif total_timesteps < self.episode_panorama_start_steps+5:
+        #         return DiscreteNavigationAction.TURN_RIGHT, vis_input # If failed to plan, visualize locally.
+
 
         if total_timesteps < self.episode_panorama_start_steps:
-            #! When total_timesteps is less than the panorama start steps, we just turn right. So if turn angle is 30, at 12th step, we don't need to turn anymore.
             return DiscreteNavigationAction.TURN_RIGHT, vis_input # If failed to plan, visualize locally.
 
         self.last_global_pose = self.curr_global_pose
@@ -442,7 +453,7 @@ class DiscretePlanner:
         visualize_map(
             traversible.shape,
             self.vis_dir,
-            f"{self.timestep}_6.get_closest_to_viewpoint{'' if is_local else '_global'}.png",
+            f"{self.prefix}{self.timestep}_6.get_closest_to_viewpoint{'' if is_local else '_global'}.png",
             traversible=traversible,
             features=features,
             points=points,
@@ -522,6 +533,7 @@ class DiscretePlanner:
             navigable_goal_map,
             self.min_goal_distance_cm / self.map_resolution,
             timestep=self.timestep,
+            prefix=self.prefix
         )
         dilated_goal_map = np.logical_and(dilated_goal_map, traversible)
 
@@ -547,7 +559,7 @@ class DiscretePlanner:
 
         # This is where we create the planner to get the trajectory to this state
         stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
-            state, timestep=self.timestep
+            state, timestep=self.timestep, prefix=self.prefix
         )
         stg_x, stg_y = stg_x, stg_y
 
@@ -564,7 +576,7 @@ class DiscretePlanner:
             visualize_map(
                 dilated_goal_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_12.stg{postfix}.png",
+                f"{self.prefix}{self.timestep}_12.stg{postfix}.png",
                 points=points,
                 traversible=traversible,
                 goal_map=dilated_goal_map,
@@ -646,7 +658,7 @@ class DiscretePlanner:
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
-                f"{self.timestep}_4.collision_map_update{postfix}.png",
+                f"{self.prefix}{self.timestep}_4.collision_map_update{postfix}.png",
                 points=[(init_location, [120, 0, 0]), (robot_loc, [255, 0, 0])],
                 traversible=1 - obstacle_map,
                 features=[(self.collision_map, [0, 120, 120]), (np.logical_and(self.collision_map, obstacle_map), [0, 255, 255])],  # light yellow / yellow
@@ -910,9 +922,6 @@ class DiscretePlanner:
 
     def plan_to_instance_goal(self, instance_goal_id, postfix):
         goal_instance_map, viewpoint_loc, viewpoint_orientation, is_local, obstacle_map, robot_loc, traversible = self.get_instance_planning_maps(instance_goal_id)
-        instance_on_obstacles = np.logical_and(
-            goal_instance_map == 1, obstacle_map == 1
-        )
 
         # visualize_map(
         #     obstacle_map.shape,
@@ -921,6 +930,9 @@ class DiscretePlanner:
         #     points=[(robot_loc, [255, 0, 0])],
         #     traversible=1 - obstacle_map,
         #     frontier_map=self.semantic_map.get_visited_map(is_local)
+        # )
+        # instance_on_obstacles = np.logical_and(
+        #     goal_instance_map == 1, obstacle_map == 1
         # )
         # visualize_map(
         #     obstacle_map.shape,

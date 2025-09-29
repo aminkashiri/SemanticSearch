@@ -38,10 +38,10 @@ class HabitatGoatEnv(HabitatEnv):
 
         self.config = config
         self.min_depth = (
-            config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth
+            config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor.min_depth
         )
         self.max_depth = (
-            config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.max_depth
+            config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor.max_depth
         )
         self.ground_truth_semantics = config.GROUND_TRUTH_SEMANTICS
         self.task_type = config.habitat.task.type
@@ -63,7 +63,6 @@ class HabitatGoatEnv(HabitatEnv):
             #! This is when we want to use custom vocabularies, and not only possible goals
             raise NotImplementedError
 
-
         self.semantic_category_mapping.reset_instance_id_to_category_id(
             self.habitat_env
         )
@@ -84,7 +83,7 @@ class HabitatGoatEnv(HabitatEnv):
             logger.info("Vocabulary: {vocabulary}")
         else:
             raise NotImplementedError
-        
+
         return vocabulary
 
         # # TODO: get open set vocabulary
@@ -108,11 +107,18 @@ class HabitatGoatEnv(HabitatEnv):
         )
         self._last_obs = self._preprocess_obs(habitat_obs)
         self.visualizer.reset()
-        scene_id = self.habitat_env.current_episode.scene_id.split("/")[-1].split(".")[
-            0
-        ]
+
+        self.scene_id = self.habitat_env.current_episode.scene_id.split("/")[-1].split(
+            "."
+        )[0]
+        self.episode = self.habitat_env.current_episode
+        self.episode_id = self.episode.episode_id
+
+        self.current_task_idx = (
+            self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
+        )
         self.visualizer.set_vis_dir(
-            scene_id, self.habitat_env.current_episode.episode_id
+            self.scene_id, f"{self.episode_id}_{self.current_task_idx}"
         )
 
     def init_perception_module(self, vocabulary=None):
@@ -182,7 +188,7 @@ class HabitatGoatEnv(HabitatEnv):
         label_min_pixels: int = 50,
         font_scale: float = 0.4,
         thickness: int = 1,
-        postfix: str = ""
+        postfix: str = "",
     ):
         """
         Visualizes a semantic map with color palette and overlays ID numbers on each region.
@@ -301,16 +307,95 @@ class HabitatGoatEnv(HabitatEnv):
         return HabitatSimActions[discrete_action.name.lower()]
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
-        if info:
-            if (
-                self.task_type == "Goat-v1" and
-                self.habitat_env.current_episode.tasks[
-                    self.habitat_env.task.current_task_idx
-                ][1]
-                == "image"
-            ):
-                return
-            info["top_down_map"] = self.get_observation().task_observations.get(
+        if (
+            self.task_type == "Goat-v1"
+            and self.habitat_env.current_episode.tasks[
+                self.habitat_env.task.current_task_idx
+            ][1]
+            == "image"
+        ):
+            return
+        info["top_down_map"] = self.get_observation().task_observations.get(
+            "top_down_map"
+        )
+        self.visualizer.visualize(**info)
+
+    def apply_action(
+        self,
+        action: List[home_robot.core.interfaces.Action],
+        info: Optional[Dict[str, Any]] = None,
+        prev_obs: Optional[home_robot.core.interfaces.Observations] = None,
+    ):
+        super().apply_action(action, info, prev_obs)
+        self.current_task_idx = (
+            self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
+        )
+
+
+class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
+    semantic_category_mapping: SemanticCategoryMapping
+
+    def __init__(self, habitat_env: habitat.core.env.Env, config):
+        super().__init__(habitat_env, config)
+
+    def _preprocess_obs(
+        self, habitat_obs: habitat.core.simulator.Observations
+    ) -> home_robot.core.interfaces.Observations:
+        if habitat_obs.get("multigoal") is None:
+            # I can also get habitat_obs["objectgoal"] here, but it is not compatible, because multigoal returns text category
+            goals = self._preprocess_goals(
+                [{"category": self.current_episode.object_category}]
+            )
+        else:
+            goals = self._preprocess_goals(habitat_obs["multigoal"])
+
+        observations = []
+        for agent_id in range(self.config.NUM_AGENTS):
+            agent_obs = habitat_obs[agent_id]
+            depth = self._preprocess_depth(agent_obs[f"depth"])
+            obs = home_robot.core.interfaces.Observations(
+                rgb=agent_obs[f"rgb"],
+                depth=depth,
+                compass=habitat_obs["compass"][agent_id],
+                gps=self._preprocess_xy(habitat_obs["gps"][agent_id]),
+                task_observations={
+                    "tasks": goals,
+                    "top_down_map": self.get_episode_metrics().get("goat_top_down_map"),
+                },
+                camera_pose=None,
+                third_person_image=None,
+            )
+            obs = self._preprocess_semantic(obs, agent_obs[f"semantic"])
+            observations.append(obs)
+        return observations
+
+    def _preprocess_action(self, actions: home_robot.core.interfaces.Action) -> int:
+
+        if type(actions[0]) == int:
+            return actions
+
+        discrete_actions = []
+        for action in actions:
+            discrete_actions.append(
+                cast(home_robot.core.interfaces.DiscreteNavigationAction, action)
+            )
+        return {
+            i: HabitatSimActions[discrete_action.name.lower()]
+            for i, discrete_action in enumerate(discrete_actions)
+        }
+
+    def _process_info(self, infos: List[Dict[str, Any]]) -> Any:
+        if (
+            self.task_type == "Goat-v1"
+            and self.habitat_env.current_episode.tasks[
+                self.habitat_env.task.current_task_idx
+            ][1]
+            == "image"
+        ):
+            return
+        for i, info in enumerate(infos):
+            info["top_down_map"] = self.get_observation()[i].task_observations.get(
                 "top_down_map"
             )
+            info["agent_id"] = i
             self.visualizer.visualize(**info)

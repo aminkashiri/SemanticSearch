@@ -33,8 +33,9 @@ class GoatAgent(Agent):
     # Flag for debugging data flow and task configuraiton
     verbose = False
 
-    def __init__(self, config, semantic_category_mapping, device_id: int = 0):
+    def __init__(self, config, semantic_category_mapping, agent_id = None, device_id: int = 0):
         # self.max_steps = config.AGENT.max_steps
+        self.agent_id = agent_id
         self.max_steps = [500] * 10
 
         self.goal_matching_vis_dir = f"{config.DUMP_LOCATION}/goal_grounding_vis"
@@ -76,7 +77,7 @@ class GoatAgent(Agent):
         agent_cell_radius = int(
             np.ceil(agent_radius_cm / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
-        camera_sensor = config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor
+        camera_sensor = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
         self.semantic_map_module = Categorical2DSemanticMapModule(
             frame_height=camera_sensor.height,
             frame_width=camera_sensor.width,
@@ -170,6 +171,7 @@ class GoatAgent(Agent):
             goal_filtering=config.AGENT.SEMANTIC_MAP.goal_filtering,
             semantic_map=self.semantic_map,
             frontier_metric=config.AGENT.frontier_metric,
+            agent_id=self.agent_id,
         )
         self.one_hot_encoding = torch.eye(
             self.num_sem_categories, device=self.device
@@ -306,7 +308,7 @@ class GoatAgent(Agent):
         self.inst_goal_found = False
         self.inst_goal_id = None
 
-    def reset(self):
+    def reset(self, scene_id, episode_id, current_task_idx):
         """Initialize agent state. Reset is at the beginning of a new episode (not each task)."""
         self.total_timesteps = 0
         self.sub_task_timesteps = [0] * self.max_num_sub_task_episodes
@@ -327,6 +329,21 @@ class GoatAgent(Agent):
         self.inst_goal_found = False
         self.inst_goal_id = None
 
+        self.stuck_counter = 0
+        self.reset_vis_dir(scene_id, episode_id, current_task_idx)
+
+    
+    def reset_vis_dir(self, scene_id, episode_id, current_task_idx):
+        self.planner.set_vis_dir(
+            scene_id, f"{episode_id}_{current_task_idx}"
+        )
+        self.imagenav_visualizer.set_vis_dir(
+            f"{scene_id}_{episode_id}_{current_task_idx}"
+        )
+        self.matching.set_vis_dir(
+            f"{scene_id}_{episode_id}_{current_task_idx}"
+        )
+
     def score_thresh(self, task_type):
         if task_type == "languagenav":
             return self.goal_policy_config.score_thresh_lang
@@ -336,7 +353,7 @@ class GoatAgent(Agent):
             return 0.0
 
     def act(
-        self, obs: Observations, stop=False
+        self, obs: Observations
     ) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
         is_local = True
@@ -366,13 +383,19 @@ class GoatAgent(Agent):
             score_thresh=self.score_thresh(current_task["type"]),
         )
 
+        if torch.norm(pose_delta[:2]).item() < 0.05:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter= 0
+
         if (
             self.get_subtask_timestep() 
             >= self.max_steps[self.current_task_idx]
-        ) or stop:
+        ) or self.stuck_counter > 20:
             logger.warning(
                 "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
             )
+            self.stuck_counter= 0
             action = DiscreteNavigationAction.STOP
             vis_inputs = {}
         else:

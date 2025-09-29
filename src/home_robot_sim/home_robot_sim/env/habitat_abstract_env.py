@@ -5,7 +5,7 @@
 
 
 from abc import abstractmethod
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Dict, Optional, TypeVar, List, Union
 
 import habitat
 import numpy as np
@@ -37,7 +37,7 @@ class HabitatEnv(home_robot.core.abstract_env.Env):
 
     def apply_action(
         self,
-        action: home_robot.core.interfaces.Action,
+        action:  Union[home_robot.core.interfaces.Action, List[home_robot.core.interfaces.Action]],
         info: Optional[Dict[str, Any]] = None,
         prev_obs: Optional[home_robot.core.interfaces.Observations] = None,
     ):

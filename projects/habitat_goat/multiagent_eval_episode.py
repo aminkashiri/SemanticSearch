@@ -23,53 +23,43 @@ from habitat.config.default import get_config
 from home_robot.utils.logger import get_logger
 from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
-from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
+from home_robot_sim.env.habitat_goat_env.habitat_goat_env import MultiAgentHabitatGoatEnv
 
-
-def read_args():
-    parser = argparse.ArgumentParser()
-    project_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
-    parser.add_argument(
-        "--project_config_path",
-        type=str,
-        default=project_config_default,
-        help="Path to config yaml",
-    )
-    parser.add_argument(
-        "opts",
-        default=None,
-        nargs=argparse.REMAINDER,
-        help="Modify config options from command line",
-    )
-    args = parser.parse_args()
-    return args
+from eval_episode import read_args, save_results
 
 
 def read_configs(args):
     project_config = OmegaConf.load(args.project_config_path)
-    if project_config.DATASET == "habitat_objnav_2022":
-        habitat_config_path = (
-            "benchmark/nav/objectnav/objectnav_hm3d_2022_rgbd_with_semantic.yaml"  # V1
-        )
-    elif project_config.DATASET == "habitat_objnav_2023":
-        habitat_config_path = (
-            "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml"  # V2
-        )
-    elif project_config.DATASET == "goat":
-        habitat_config_path = "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml"
+    if project_config.DATASET == "habitat_objnav_2023":
+        habitat_config_path = "benchmark/nav/objectnav/multiagent_objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+    else:
+        raise NotImplementedError("Support for other datasets is not tested.")
+
+    
 
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
+
+
     config.PRINT_IMAGES = 1
-    config.habitat.simulator.agents.agent0 = config.habitat.simulator.agents.pop(
-        "main_agent"
-    )
-    config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor.min_depth = 0.0
-    config.habitat.simulator.agents_order = ["agent0"]
-    if project_config.DATASET == "goat":
-        config.habitat.dataset.split = "val_seen"
-    else:
-        config.habitat.dataset.split = "val"
+    config.habitat.dataset.split = "val"
+    config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.0
+
+
+    base_agent_conf = config.habitat.simulator.agents.pop("main_agent")
+    import copy
+    agents = []
+    for i in range(config.NUM_AGENTS):
+        agents.append(f"agent{i}")
+        agent_conf = copy.deepcopy(base_agent_conf)
+
+        config.habitat.simulator.agents[f"agent{i}"] = agent_conf
+    config.habitat.simulator.agents_order = agents
+    
+    import yaml
+    with open("./ma_merged_config.yaml", "w") as f:
+        f.write(yaml.dump(OmegaConf.to_container(config), sort_keys=False))
+
 
     all_scenes = os.listdir(
         os.path.dirname(
@@ -84,66 +74,7 @@ def read_configs(args):
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
-
-
-def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs):
-    obs_tasks = []
-    for task in obs.task_observations["tasks"]:
-        obs_task = {}
-        for key, value in task.items():
-            if key == "image":
-                continue
-            obs_task[key] = value
-        obs_tasks.append(obs_task)
-
-    ep_results = {}
-    ep_results["metrics"] = all_subtask_metrics
-    ep_results["total_num_steps"] = ep_step
-    ep_results["sub_task_timesteps"] = agent.sub_task_timesteps
-    ep_results["tasks"] = obs_tasks
-
-    for metric in all_subtask_metrics[0].keys():
-        values = [y[metric] for y in all_subtask_metrics]
-        if isinstance(values[0], dict):
-            for i, v in enumerate(values):
-                values[i] = min(v.values())
-
-
-        ep_results[f"{metric}_mean"] = np.round(
-            np.nanmean(values),
-            4,
-        )
-        ep_results[f"{metric}_median"] = np.round(
-            np.nanmedian(values),
-            4,
-        )
-
-    results[f"{env.scene_id}_{env.episode_id}"] = ep_results
-    with open(os.path.join(results_dir, "per_episode_metrics.json"), "w") as fp:
-        json.dump(results, fp, indent=4)
-
-    stats = {}
-
-    for metric in all_subtask_metrics[0].keys():
-        values = [
-            y[metric]
-            for scene_ep_id in results.keys()
-            for y in results[scene_ep_id]["metrics"]
-        ]
-        if isinstance(values[0], dict):
-            for i, v in enumerate(values):
-                values[i] = min(v.values())
-        stats[f"{metric}_mean"] = np.round(
-            np.nanmean(values),
-            4,
-        )
-        stats[f"{metric}_median"] = np.round(
-            np.nanmedian(values),
-            4,
-        )
-
-    with open(os.path.join(results_dir, "cumulative_metrics.json"), "w") as fp:
-        json.dump(stats, fp, indent=4)
+    
 
 
 if __name__ == "__main__":
@@ -161,10 +92,10 @@ if __name__ == "__main__":
     logger.info(f"Using scenes: {config.habitat.dataset.content_scenes}")
 
     habitat_env = Env(config)
-    env = HabitatGoatEnv(habitat_env, config=config)
-    agent = GoatAgent(
-        config, env.semantic_category_mapping
-    )
+    env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
+    agents = []
+    for i in range(config.NUM_AGENTS):
+        agents.append(GoatAgent(config, env.semantic_category_mapping, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
@@ -173,7 +104,8 @@ if __name__ == "__main__":
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
-        agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
+        for agent in agents:
+            agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
 
         ep_step = 0
 
@@ -184,6 +116,9 @@ if __name__ == "__main__":
                 results = json.load(fp)
 
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
+            continue
+
+        if env.episode_id in ["57", "76", "11"]:
             continue
 
         all_subtask_metrics = []
@@ -207,14 +142,20 @@ if __name__ == "__main__":
             )
             logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
             env.timestep = agent.get_subtask_timestep() + 1
-            obs = env.get_observation()
+            observations = env.get_observation()
 
-            action, info = agent.act(obs)
-            logger.info(f"Action taken: {action}")
-            env.apply_action(action, info=info)
+            actions = []
+            infos = []
+            for agent, obs in zip(agents, observations):
+                action, info = agent.act(obs)
+                
+                actions.append(action)
+                infos.append(info)
+            logger.info(f"Actions taken: {action}")
+            env.apply_action(actions, info=infos)
             pbar.update(1)
 
-            if action == DiscreteNavigationAction.STOP:
+            if DiscreteNavigationAction.STOP in actions:
                 ep_metrics = env.get_episode_metrics()
                 ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")
@@ -225,9 +166,10 @@ if __name__ == "__main__":
 
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
-                    agent.reset_vis_dir(
-                        env.scene_id, env.episode_id, env.current_task_idx
-                    )
+                    for agent in agents:
+                        agent.reset_vis_dir(
+                            env.scene_id, env.episode_id, env.current_task_idx
+                        )
                     env.visualizer.set_vis_dir(
                         env.scene_id,
                         f"{env.episode_id}_{env.current_task_idx}",

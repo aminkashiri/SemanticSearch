@@ -177,7 +177,7 @@ class FMMPlanner:
             )
         return dd
 
-    def visualize_get_short_term_goal(self, vis_list, timestep, postfix=""):
+    def visualize_get_short_term_goal(self, vis_list, timestep, prefix="", postfix=""):
         sub_h, sub_w = vis_list[0].shape
         dist_vis = np.zeros((sub_h * 2, sub_w * 2, 3))
         dist_vis[:sub_h, :sub_w] = convert_to_cmap(vis_list[0])
@@ -186,12 +186,12 @@ class FMMPlanner:
         dist_vis[sub_h:, sub_w:] = convert_to_cmap(vis_list[3])
 
         # logger.debug(f"SAVING 6.get_stg")
-        # cv2.imwrite(
-        #     os.path.join(
-        #         self.vis_dir, f"{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
-        #     ),
-        #     (dist_vis).astype(int),
-        # )
+        cv2.imwrite(
+            os.path.join(
+                self.vis_dir, f"{prefix}{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
+            ),
+            (dist_vis).astype(int),
+        )
 
     def filter_unreachable_goals(
         self, subset, mask, robot_pos, obstacle_mask, ray_thickness=1
@@ -227,14 +227,14 @@ class FMMPlanner:
         masked_subset = np.copy(subset)
         masked_subset[np.logical_and(mask, ~safe_mask)] = np.max(subset)
         return masked_subset
-    def get_short_term_goal(self, state: List[float], timestep=0):
+    def get_short_term_goal(self, state: List[float], timestep=0, prefix=""):
         for radius in range(2, self.step_size+1)[::-1]:
-            stg_x, stg_y, reachable, stop = self.get_short_term_goal_util(state, radius, timestep, postfix=f"_step{radius}")
+            stg_x, stg_y, reachable, stop = self.get_short_term_goal_util(state, radius, timestep, prefix=prefix, postfix=f"_step{radius}")
             if reachable:
                 break
         return stg_x, stg_y, reachable, stop
 
-    def get_short_term_goal_util(self, state: List[float], radius, timestep=0, postfix=""):
+    def get_short_term_goal_util(self, state: List[float], radius, timestep=0, prefix="", postfix=""):
         """Compute the short-term goal closest to the current state.
 
         Arguments:
@@ -312,7 +312,7 @@ class FMMPlanner:
         reachable = (subset[stg_x, stg_y] < -0.0001) or stop
 
         if self.print_images:
-            self.visualize_get_short_term_goal(vis_list, timestep, postfix)
+            self.visualize_get_short_term_goal(vis_list, timestep, prefix, postfix)
 
         return (
             (stg_x + state[0] - self.du) * scale,
@@ -367,6 +367,7 @@ class FMMPlanner:
         goal: np.ndarray,
         distance: float,
         timestep=0,
+        prefix=""
     ) -> np.ndarray:
         """
         Find the nearest point to a goal which is traversible
@@ -411,14 +412,14 @@ class FMMPlanner:
         initial_navigable_goal_map = np.logical_and(self.traversible, goal)
         dilated_goal_map = np.logical_or(initial_navigable_goal_map, dilated_goal_map)
 
-        # if self.print_images:
-        #     visualize_map(
-        #         dilated_goal_map.shape,
-        #         self.vis_dir,
-        #         f"{timestep}_9.dilate_goal{self.vis_postfix}.png",
-        #         traversible=self.traversible.astype(np.uint8),
-        #         goal_map=goal,
-        #         dilated_goal_map=dilated_goal_map.astype(np.uint8),
-        #     )
+        if self.print_images:
+            visualize_map(
+                dilated_goal_map.shape,
+                self.vis_dir,
+                f"{prefix}{timestep}_9.dilate_goal{self.vis_postfix}.png",
+                traversible=self.traversible.astype(np.uint8),
+                goal_map=goal,
+                dilated_goal_map=dilated_goal_map.astype(np.uint8),
+            )
 
         return dilated_goal_map
