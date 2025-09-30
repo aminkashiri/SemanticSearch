@@ -118,8 +118,8 @@ if __name__ == "__main__":
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
 
-        if env.episode_id in ["57", "76", "11"]:
-            continue
+        # if env.episode_id in ["57", "76", "11"]:
+        #     continue
 
         all_subtask_metrics = []
         pbar = tqdm(
@@ -147,7 +147,7 @@ if __name__ == "__main__":
             actions = []
             infos = []
             for agent, obs in zip(agents, observations):
-                action, info = agent.act(obs)
+                action, info = agent.act(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
                 
                 actions.append(action)
                 infos.append(info)
