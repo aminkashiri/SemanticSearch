@@ -24,8 +24,6 @@ from home_robot.mapping.semantic.categorical_2d_semantic_map_module import (
     Categorical2DSemanticMapModule,
 )
 
-logger = get_logger()
-
 
 class GoatAgent(Agent):
     """Simple object nav agent based on a 2D semantic map"""
@@ -36,6 +34,7 @@ class GoatAgent(Agent):
     def __init__(self, config, semantic_category_mapping, agent_id = None, device_id: int = 0):
         # self.max_steps = config.AGENT.max_steps
         self.agent_id = agent_id
+        self.log = get_logger(agent_id=agent_id)
         self.max_steps = [500] * 10
 
         self.goal_matching_vis_dir = f"{config.DUMP_LOCATION}/goal_grounding_vis"
@@ -273,9 +272,9 @@ class GoatAgent(Agent):
         )
 
         if self.inst_goal_found:
-            logger.info(f"Already found instance goal, not searching anymore.")
+            self.log.info(f"Already found instance goal, not searching anymore.")
         else:
-            logger.debug(
+            self.log.debug(
                 f"candidate matches in memory: {len(mem_match_confidences)}, candidate matches in observation: {len(obs_match_confidences)}"
             )
             if len(mem_match_confidences) > 0 or len(obs_match_confidences) > 0:
@@ -332,7 +331,6 @@ class GoatAgent(Agent):
         self.stuck_counter = 0
         self.reset_vis_dir(scene_id, episode_id, current_task_idx)
 
-    
     def reset_vis_dir(self, scene_id, episode_id, current_task_idx):
         self.planner.set_vis_dir(
             scene_id, f"{episode_id}_{current_task_idx}"
@@ -353,14 +351,14 @@ class GoatAgent(Agent):
             return 0.0
 
     def act(
-        self, obs: Observations
+        self, obs: Observations, neighbors=None
     ) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
         is_local = True
-        logger.info(
+        self.log.info(
             f"---------------- Subtask step {self.get_subtask_timestep() + 1} ----------------"
         )
-        logger.debug(f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB")
+        self.log.debug(f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB")
         current_task = obs.task_observations["tasks"][self.current_task_idx]
 
         (
@@ -392,14 +390,14 @@ class GoatAgent(Agent):
             self.get_subtask_timestep() 
             >= self.max_steps[self.current_task_idx]
         ) or self.stuck_counter > 20:
-            logger.warning(
+            self.log.warning(
                 "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
             )
             self.stuck_counter= 0
             action = DiscreteNavigationAction.STOP
             vis_inputs = {}
         else:
-            action, vis_inputs = self.get_best_action(current_task)
+            action, vis_inputs = self.get_best_action(current_task, neighbors)
 
         if self.visualize:
             is_local = vis_inputs.get("is_local", True)
@@ -572,7 +570,7 @@ class GoatAgent(Agent):
 
     def _match_against_memory(self, current_task: Dict):
         task_type = current_task["type"]
-        logger.info("--------Matching against memory!--------")
+        self.log.info("--------Matching against memory!--------")
         image_goal = None
         language_goal = None
         goal_image_keypoints = None
@@ -613,31 +611,32 @@ class GoatAgent(Agent):
                 json.dump(stats, f, indent=4)
         return mem_match_confidences, mem_match_instance_ids
 
-    def get_best_action(self, current_task):
+    def get_best_action(self, current_task, neighbors):
         action, vis_input = self.planner.plan(
             self.inst_goal_found,
             self.inst_goal_id,
             self.get_subtask_timestep(),
             self.total_timesteps,
             current_task["semantic_id"],
+            neighbors=neighbors
         )
 
         if not action is None:
             return action, vis_input
 
-        logger.info("No reachable goal.")
+        self.log.info("No reachable goal.")
 
         if self.navigate_to_best:
-            logger.info("Already tried the best match. Stopping")
+            self.log.info("Already tried the best match. Stopping")
             return DiscreteNavigationAction.STOP, {}
         self.navigate_to_best = True
-        logger.info("Forcing a match against memory")
+        self.log.info("Forcing a match against memory")
 
         mem_match_confidences, mem_match_instance_ids = self._match_against_memory(
             current_task
         )
         if not len(mem_match_confidences) > 0:
-            logger.info("No match found in memory. Stopping")
+            self.log.info("No match found in memory. Stopping")
             return DiscreteNavigationAction.STOP, {}
         prev_inst_goal_id = self.inst_goal_id
         (
@@ -650,7 +649,7 @@ class GoatAgent(Agent):
         )
         assert self.inst_goal_found == True
         if self.inst_goal_id == prev_inst_goal_id:
-            logger.info("Best match is the same as the previous one. Stopping")
+            self.log.info("Best match is the same as the previous one. Stopping")
             return DiscreteNavigationAction.STOP, {}
 
         action, vis_input = self.planner.plan(
@@ -661,11 +660,12 @@ class GoatAgent(Agent):
             current_task["semantic_id"],
             fallback_to_frontier=False,
             postfix="_last_shot",
+            neighbors=neighbors
         )
 
         if action is None:
-            logger.info("Fully explored and no path to our best match. Stopping")
+            self.log.info("Fully explored and no path to our best match. Stopping")
             return DiscreteNavigationAction.STOP, {}
 
-        logger.info("Found a path to the last shot goal. Navigating to it.")
+        self.log.info("Found a path to the last shot goal. Navigating to it.")
         return action, vis_input
