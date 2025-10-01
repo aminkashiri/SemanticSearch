@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import pprint
+import yaml
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -70,6 +70,9 @@ def read_configs(args):
         config.habitat.dataset.split = "val_seen"
     else:
         config.habitat.dataset.split = "val"
+
+    with open("./merged_config.yaml", "w") as f:
+        f.write(yaml.dump(OmegaConf.to_container(config), sort_keys=False))
 
     all_scenes = os.listdir(
         os.path.dirname(
@@ -173,19 +176,16 @@ if __name__ == "__main__":
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
-        agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
-
-        ep_step = 0
-
-        logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
-
         if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
             with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
                 results = json.load(fp)
-
+        logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
+        env.reset_visualization()
+        agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
 
+        ep_step = 0
         all_subtask_metrics = []
         pbar = tqdm(
             total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
@@ -209,7 +209,10 @@ if __name__ == "__main__":
             env.timestep = agent.get_subtask_timestep() + 1
             obs = env.get_observation()
 
-            action, info = agent.act(obs)
+            action, info, stuck = agent.act(obs)
+            if stuck: 
+                action = DiscreteNavigationAction.STOP
+
             logger.info(f"Action taken: {action}")
             env.apply_action(action, info=info)
             pbar.update(1)
@@ -238,4 +241,4 @@ if __name__ == "__main__":
             f"------------------------ Episode {env.scene_id} {env.episode} over ------------------------"
         )
         pbar.close()
-        results = save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)
+        save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)

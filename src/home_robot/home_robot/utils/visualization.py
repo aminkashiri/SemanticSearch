@@ -156,3 +156,143 @@ def visualize_frontier_scores_matplotlib(
     plt.savefig(os.path.join(dir,save_path), dpi=300)
     plt.close()
 
+
+def visualize_frontiers(
+    dir,
+    traversible,
+    frontier_map,
+    frontier_centers,
+    frontier_scores,
+    frontier_texts,
+    robot_loc=None,
+    top_k=3,
+    save_path="frontiers_with_scores.png"
+):
+    """
+    General visualization function for frontiers.
+
+    Args:
+        dir: directory to save the plot
+        traversible: 2D numpy array of traversible map (0 = obstacle, 1 = free)
+        frontier_map: 2D numpy array marking frontiers
+        frontier_centers: list of (row, col) frontier center coordinates
+        frontier_scores: list or array of scores for each frontier
+        frontier_texts: list of strings (same length as frontier_centers), label for each frontier
+        robot_loc: optional (row, col) of robot location
+        top_k: number of frontiers to display (highest scores)
+        save_path: filename for saving
+    """
+    assert len(frontier_centers) == len(frontier_scores)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    img = np.ones(traversible.shape + (3,), dtype=np.uint8) * 255
+    img[traversible == 0] = [0, 0, 0]        # obstacles black
+    img[frontier_map == 1] = [0, 255, 255]   # frontiers cyan
+    img = np.flipud(img)
+
+    ax.imshow(img)
+
+    top_indices = np.argsort(frontier_scores)[-top_k:]
+
+    for i in top_indices:
+        center = frontier_centers[i]
+        flipped_center = (center[1], traversible.shape[0] - center[0])
+
+        ax.plot(flipped_center[0], flipped_center[1], "o", color="red", markersize=5)
+
+        # annotation with offset
+        ax.annotate(
+            frontier_texts[i],
+            xy=flipped_center,
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=5,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="gray", lw=1),
+        )
+
+    if robot_loc is not None:
+        flipped_robot = (robot_loc[1], traversible.shape[0] - robot_loc[0])
+        ax.plot(flipped_robot[0], flipped_robot[1], "x", color="blue", markersize=8, label="Robot")
+
+    ax.set_title("Top Frontier Scores")
+    ax.axis("off")
+    plt.tight_layout()
+    plt.savefig(os.path.join(dir, save_path), dpi=300)
+    plt.close()
+
+
+def visualize_semantic_frontiers(
+    dir,
+    traversible,
+    frontier_map,
+    frontier_centers,
+    frontier_scores,
+    top_k_semantic_classes,
+    robot_loc=None,
+    top_k=3,
+    save_path="frontiers_with_scores.png"
+):
+    """
+    Wrapper function that builds semantic labels and calls visualize_frontiers.
+    """
+    frontier_texts = []
+    for score, sem_classes in zip(frontier_scores, top_k_semantic_classes):
+        score_text = f"{score:.2f}"
+        sem_text = ", ".join(f"#{cls}" for cls in sem_classes)
+        full_text = f"{score_text}\n{sem_text}"
+        frontier_texts.append(full_text)
+
+    visualize_frontiers(
+        dir=dir,
+        traversible=traversible,
+        frontier_map=frontier_map,
+        frontier_centers=frontier_centers,
+        frontier_scores=frontier_scores,
+        frontier_texts=frontier_texts,
+        robot_loc=robot_loc,
+        top_k=top_k,
+        save_path=save_path,
+    )
+
+def visualize_distance_frontiers(
+    dir,
+    traversible,
+    frontier_map,
+    frontier_centers,
+    frontier_scores,
+    agent_dists,
+    other_agents_dists,
+    robot_loc=None,
+    top_k=3,
+    save_path="frontiers_with_agent_dists.png"
+):
+    """
+    Wrapper function that builds labels including agent distance,
+    other agents' distances, and final score.
+    """
+    frontier_texts = []
+    num_frontiers = len(frontier_scores)
+
+    for i in range(num_frontiers):
+        score_text = f"Score: {frontier_scores[i]:.2f}"
+        agent_text = f"MyDist: {agent_dists[i]:.2f}"
+
+        others_text = ""
+        if len(other_agents_dists) > 0:
+            others = [f"{d:.2f}" for d in other_agents_dists[i]]
+            others_text = "Others: " + ", ".join(others) if others else "Others: -"
+
+        full_text = f"{agent_text}\n{others_text}\n{score_text}"
+        frontier_texts.append(full_text)
+
+    visualize_frontiers(
+        dir=dir,
+        traversible=traversible,
+        frontier_map=frontier_map,
+        frontier_centers=frontier_centers,
+        frontier_scores=frontier_scores,
+        frontier_texts=frontier_texts,
+        robot_loc=robot_loc,
+        top_k=top_k,
+        save_path=save_path,
+    )
