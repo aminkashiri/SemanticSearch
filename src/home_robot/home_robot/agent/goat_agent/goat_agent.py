@@ -386,18 +386,20 @@ class GoatAgent(Agent):
         else:
             self.stuck_counter= 0
 
+        stuck = False
         if (
             self.get_subtask_timestep() 
             >= self.max_steps[self.current_task_idx]
-        ) or self.stuck_counter > 20:
+        ) or self.stuck_counter > 30:
             self.log.warning(
                 "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
             )
-            self.stuck_counter= 0
-            action = DiscreteNavigationAction.STOP
-            vis_inputs = {}
-        else:
-            action, vis_inputs = self.get_best_action(current_task, neighbors)
+            # self.stuck_counter= 0
+            # action = DiscreteNavigationAction.STOP
+            stuck = True
+            # vis_inputs = {}
+
+        action, vis_inputs = self.get_best_action(current_task, neighbors)
 
         if self.visualize:
             is_local = vis_inputs.get("is_local", True)
@@ -451,7 +453,7 @@ class GoatAgent(Agent):
                 self.reset_sub_episode()
                 self.current_task_idx += 1
                 self.navigate_to_best = False
-        return action, info
+        return action, info, stuck
 
     def _preprocess_obs(self, obs: Observations, task_type: str):
         """Take a home-robot observation, preprocess it to put it into the correct format for the

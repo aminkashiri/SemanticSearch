@@ -1,9 +1,7 @@
 import os
 import sys
 import json
-import pprint
-import argparse
-import numpy as np
+import yaml
 from tqdm import tqdm
 from pathlib import Path
 
@@ -56,7 +54,6 @@ def read_configs(args):
         config.habitat.simulator.agents[f"agent{i}"] = agent_conf
     config.habitat.simulator.agents_order = agents
     
-    import yaml
     with open("./ma_merged_config.yaml", "w") as f:
         f.write(yaml.dump(OmegaConf.to_container(config), sort_keys=False))
 
@@ -104,23 +101,17 @@ if __name__ == "__main__":
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
+        logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
+        if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
+            with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
+                results = json.load(fp)
+        if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
+            continue
+        env.reset_visualization()
         for agent in agents:
             agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
 
         ep_step = 0
-
-        logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
-
-        if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
-            with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
-                results = json.load(fp)
-
-        if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
-            continue
-
-        # if env.episode_id in ["57", "76", "11"]:
-        #     continue
-
         all_subtask_metrics = []
         pbar = tqdm(
             total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
@@ -146,11 +137,17 @@ if __name__ == "__main__":
 
             actions = []
             infos = []
+            stucks = []
             for agent, obs in zip(agents, observations):
-                action, info = agent.act(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
+                action, info, stuck = agent.act(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
                 
                 actions.append(action)
                 infos.append(info)
+                stucks.append(stuck)
+            
+            if all(stucks):
+                actions = [DiscreteNavigationAction.STOP]*2
+
             logger.info(f"Actions taken: {action}")
             env.apply_action(actions, info=infos)
             pbar.update(1)

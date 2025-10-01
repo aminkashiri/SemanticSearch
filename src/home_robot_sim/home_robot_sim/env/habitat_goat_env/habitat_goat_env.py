@@ -117,6 +117,8 @@ class HabitatGoatEnv(HabitatEnv):
         self.current_task_idx = (
             self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
         )
+    
+    def reset_visualization(self):
         self.visualizer.set_vis_dir(
             self.scene_id, f"{self.episode_id}_{self.current_task_idx}"
         )

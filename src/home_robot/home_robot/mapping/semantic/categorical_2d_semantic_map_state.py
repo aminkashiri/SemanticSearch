@@ -190,14 +190,14 @@ class Categorical2DSemanticMapState:
         return row_local, col_local
     
     def global_pose_to_global_location(self, global_pose):
-        global_location = [int(global_pose[1] * 100.0 / self.resolution), int(global_pose[0] * 100.0 /self.resolution)]
+        global_location = (int(global_pose[1] * 100.0 / self.resolution), int(global_pose[0] * 100.0 /self.resolution))
         return global_location
     
-    def global_location_to_local_location(self, global_location):
-        local_location = [global_location[0] - self.lmb[0].item(), global_location[1] - self.lmb[2].item()]
+    def global_location_to_local_location(self, global_location) -> tuple:
+        local_location = (global_location[0] - self.lmb[0].item(), global_location[1] - self.lmb[2].item())
         return local_location
 
-    def global_pose_to_local_location(self, global_pose):
+    def global_pose_to_local_location(self, global_pose) -> tuple:
         return self.global_location_to_local_location(self.global_pose_to_global_location(global_pose))
     
     def is_location_in_local_map(self, local_location):
