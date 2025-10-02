@@ -893,7 +893,7 @@ class DiscretePlanner:
         metric="distance",
         neighbors=None,
     ):
-        def distance_to_frontier(frontier, loc):
+        def distance_to_frontier(frontier, distances, loc):
             # Choose the closest point in the frontier to the robot
             dists = np.linalg.norm(frontier - loc, axis=1)
             closest = frontier[np.argmin(dists)]
@@ -930,7 +930,7 @@ class DiscretePlanner:
             center = frontier.mean(axis=0).astype(int)
             frontier_centers.append(center)
 
-            distance = distance_to_frontier(frontier, robot_loc)
+            distance = distance_to_frontier(frontier, distances, robot_loc)
 
             if metric == "distance":
                 agent_distances.append(distance)
@@ -938,8 +938,7 @@ class DiscretePlanner:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
-                    avg_distance = 0
-                    other_distances.append([])
+                    neighbor_distances = []
                     for neighbor in neighbors:
                         neighbor_loc = (
                             self.semantic_map.global_location_to_local_location(
@@ -948,12 +947,17 @@ class DiscretePlanner:
                             if is_local
                             else neighbor.semantic_map.global_loc
                         )
+                        traversible_ma = np.ma.masked_values(traversible * 1, 0)
+                        traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
+                        ndistances = skfmm.distance(traversible_ma)
+                        ndistances = np.ma.filled(ndistances, np.max(ndistances) + 1)
 
-                        neighbor_distance = distance_to_frontier(frontier, neighbor_loc)
-                        avg_distance += neighbor_distance
-                        other_distances[-1].append(neighbor_distance)
-                    avg_distance /= len(neighbors)
-                    frontier_scores.append(1 / (distance + 1 / avg_distance))
+                        neighbor_distance = distance_to_frontier(frontier, ndistances, neighbor_loc)
+                        neighbor_distances.append(neighbor_distance)
+
+                    other_distances.append(neighbor_distances)
+                    neighbor_distances = min(neighbor_distances)
+                    frontier_scores.append(neighbor_distance / distance)
                     top_k_semantic_classes.append([])
 
             elif metric == "semantics":
