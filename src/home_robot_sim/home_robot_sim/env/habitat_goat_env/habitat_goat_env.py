@@ -18,6 +18,7 @@ from home_robot.utils.constants import (
 )
 from home_robot_sim.env.habitat_abstract_env import HabitatEnv
 from home_robot_sim.env.habitat_goat_env.visualizer import Visualizer
+from home_robot.agent.imagenav_agent.visualizer import NavVisualizer
 from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
     MaskRCNNPerception,
 )
@@ -49,7 +50,6 @@ class HabitatGoatEnv(HabitatEnv):
         self.current_episode = None
 
         self.episodes_data_path = config.habitat.dataset.data_path
-        self.task_type = config.habitat.task.type
 
         if config.AGENT.SEMANTIC_MAP.semantic_categories == "dataset":
             dataset_type = config.habitat.dataset.type
@@ -68,6 +68,7 @@ class HabitatGoatEnv(HabitatEnv):
         )
 
         self.visualizer = Visualizer(config, self.semantic_category_mapping)
+        self.imagenav_visualizer = NavVisualizer(config, self.semantic_category_mapping)
 
         if not self.ground_truth_semantics:
             self.init_perception_module()
@@ -107,6 +108,7 @@ class HabitatGoatEnv(HabitatEnv):
         )
         self._last_obs = self._preprocess_obs(habitat_obs)
         self.visualizer.reset()
+        self.imagenav_visualizer.reset()
 
         self.scene_id = self.habitat_env.current_episode.scene_id.split("/")[-1].split(
             "."
@@ -121,6 +123,9 @@ class HabitatGoatEnv(HabitatEnv):
     def reset_visualization(self):
         self.visualizer.set_vis_dir(
             self.scene_id, f"{self.episode_id}_{self.current_task_idx}"
+        )
+        self.imagenav_visualizer.set_vis_dir(
+            f"{self.scene_id}_{self.episode_id}_{self.current_task_idx}"
         )
 
     def init_perception_module(self, vocabulary=None):
@@ -308,19 +313,34 @@ class HabitatGoatEnv(HabitatEnv):
         )
         return HabitatSimActions[discrete_action.name.lower()]
 
-    def _process_info(self, info: Dict[str, Any]) -> Any:
+    def _process_info(self, info: Dict[str, Any], agent_id=None) -> Any:
+        obs = self.get_observation()
+        if isinstance(obs, list):
+            obs = obs[agent_id]
+        current_task = obs.task_observations["tasks"][self.current_task_idx]
         if (
-            self.task_type == "Goat-v1"
-            and self.habitat_env.current_episode.tasks[
-                self.habitat_env.task.current_task_idx
-            ][1]
-            == "image"
+            self.task_type == "Goat-v1" and
+            current_task["type"] == "image"
         ):
-            return
-        info["top_down_map"] = self.get_observation().task_observations.get(
-            "top_down_map"
-        )
-        self.visualizer.visualize(**info)
+            info["rgb_frame"] = obs.rgb
+            info["semantic_frame"] = obs.semantic
+            info["last_goal_image"] = current_task["image"]
+            info["last_collisions"] = {"is_collision": False}
+            info["last_td_map"] = obs.task_observations.get("top_down_map")
+            self.imagenav_visualizer.visualize(**info)
+        else:
+            goal_text_desc = {
+                x: y
+                for x, y in current_task.items()
+                if x != "image"
+            }
+            info["goal_name"] = str(goal_text_desc)
+            info["semantic_frame"] = obs.task_observations["semantic_frame"]
+            info["third_person_image"] = obs.third_person_image
+            info["top_down_map"] = obs.task_observations.get("top_down_map")
+            info["agent_id"] = agent_id
+            self.visualizer.visualize(**info)
+
 
     def apply_action(
         self,
@@ -387,17 +407,5 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
         }
 
     def _process_info(self, infos: List[Dict[str, Any]]) -> Any:
-        if (
-            self.task_type == "Goat-v1"
-            and self.habitat_env.current_episode.tasks[
-                self.habitat_env.task.current_task_idx
-            ][1]
-            == "image"
-        ):
-            return
         for i, info in enumerate(infos):
-            info["top_down_map"] = self.get_observation()[i].task_observations.get(
-                "top_down_map"
-            )
-            info["agent_id"] = i
-            self.visualizer.visualize(**info)
+            super()._process_info(info, i)

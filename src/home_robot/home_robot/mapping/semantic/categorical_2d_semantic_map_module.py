@@ -295,9 +295,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         init_global_pose: Tensor,
         init_lmb: Tensor,
         init_origins: Tensor,
-        obstacle_locations: Optional[Tensor] = None,
-        free_locations: Optional[Tensor] = None,
-        blacklist_target: bool = False,
+        neighbors=None,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, IntTensor, Tensor]:
         """Update maps and poses with a sequence of observations and generate map
         features at each time step.
@@ -347,14 +345,11 @@ class Categorical2DSemanticMapModule(nn.Module):
             init_local_map.clone(),
             init_local_pose.clone(),
             origins,
-            lmb,
-            obstacle_locations,
-            free_locations,
-            blacklist_target,
+            lmb
         )
         # updates in place
         self._update_global_map_and_pose(
-            local_map, global_map, local_pose, global_pose, lmb, origins
+            local_map, global_map, local_pose, global_pose, lmb, origins, neighbors
         )
         local_map, local_pose, lmb, origins = mu.get_local_parameters_from_global_pose(
             global_map,
@@ -592,9 +587,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         prev_pose: Tensor,
         origins: Tensor,
         lmb: Tensor,
-        obstacle_locations: Optional[Tensor] = None,
-        free_locations: Optional[Tensor] = None,
-        blacklist_target: bool = False,
     ) -> Tuple[Tensor, Tensor]:
         """Update local map and sensor pose given a new observation using parameter-free
         differentiable projective geometry.
@@ -865,18 +857,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         #     print("Detected a person, removing previous people from the map")
         #     prev_map[:, MC.NON_SEM_CHANNELS + 11, :, :] = 0
 
-        # Update obstacles in current map
-        # TODO Implement this properly for num_environments > 1
-        if obstacle_locations is not None:
-            translated[obstacle_locations[:, 0], obstacle_locations[:, 1]] = 1
-        if free_locations is not None:
-            translated[free_locations[:, 0], free_locations[:, 1]] = 0
-            prev_map[free_locations[:, 0], free_locations[:, 1]] = 0
-
         # Aggregate by taking the max of the previous map and current map — this is robust
         # to false negatives in one frame but makes it impossible to remove false positives
-        maps = torch.cat((prev_map.unsqueeze(1), translated.unsqueeze(1)), 1)
-        current_map, _ = torch.max(maps, 1)
+        current_map = torch.maximum(prev_map, translated)
 
         # plt.clf()
         # plt.subplot(221)
@@ -944,41 +927,9 @@ class Categorical2DSemanticMapModule(nn.Module):
             x - 2 : x + 3,
         ].fill_(1.0)
 
-        def update_visited_map(current_loc, prev_loc, visited_map):
-            """
-            Marks the visited_map with a thick line between start and end.
-            """
-            thickness = self.agent_cell_radius + 1
-            line_points = list(
-                bresenham(prev_loc[0], prev_loc[1], current_loc[0], current_loc[1])
-            )
-
-            for x, y in line_points:
-                if 0 <= x < visited_map.shape[0] and 0 <= y < visited_map.shape[1]:
-                    rr, cc = disk((x, y), radius=thickness, shape=visited_map.shape)
-                    visited_map[rr, cc] = 1
-            visited_map[
-                current_loc[0]
-                - self.agent_cell_radius : current_loc[0]
-                + self.agent_cell_radius
-                + 1,
-                current_loc[1]
-                - self.agent_cell_radius : current_loc[1]
-                + self.agent_cell_radius
-                + 1,
-            ] = 1
-            return visited_map
-
-        current_map[MC.VISITED_MAP] = update_visited_map(
+        current_map[MC.VISITED_MAP] = self._get_update_visited_map(
             curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP]
         )
-
-        # if self.old_x and self.old_y:
-        #     # Draw a line from the previous location to the current location
-        #     self.draw_line(current_map[e, MC.CURRENT_LOCATION : MC.CURRENT_LOCATION + 2], x, y, self.old_x, self.old_y)
-
-        # self.old_x = x
-        # self.old_y = y
 
         # Set a disk around the agent to explored
         # This is around the current agent - we just sort of assume we know where we are
@@ -986,42 +937,15 @@ class Categorical2DSemanticMapModule(nn.Module):
             radius = self.explored_radius
         else:
             radius = 0
-        explored_disk = torch.from_numpy(skimage.morphology.disk(radius))
-        current_map[
-            MC.EXPLORED_MAP,
-            y - radius : y + radius + 1,
-            x - radius : x + radius + 1,
-        ][explored_disk == 1] = 1
+        self._set_disk_to_one(radius, current_map, MC.EXPLORED_MAP, curr_loc)
 
         # Record the region the agent has been close to using a disc centered at the agent
         radius = self.been_close_to_radius // self.resolution
-        been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
+        self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
 
-        H, W = current_map.shape[1:]
-        y_min = max(y - radius, 0)
-        y_max = min(y + radius + 1, H)
-        x_min = max(x - radius, 0)
-        x_max = min(x + radius + 1, W)
-
-        disk_y_min = y_min - (y - radius) 
-        disk_y_max = disk_y_min + (y_max - y_min)
-        disk_x_min = x_min - (x - radius)
-        disk_x_max = disk_x_min + (x_max - x_min)
-
-        current_map[MC.BEEN_CLOSE_MAP, y_min:y_max, x_min:x_max][
-            been_close_disk[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
-        ] = 1
-
-        if blacklist_target:
-            # Record the region the agent has been close to using a disc centered at the agent
-            radius = self.target_blacklisting_radius // self.resolution
-            been_close_disk = torch.from_numpy(skimage.morphology.disk(radius))
-
-            current_map[
-                MC.BLACKLISTED_TARGETS_MAP,
-                y - radius : y + radius + 1,
-                x - radius : x + radius + 1,
-            ][been_close_disk == 1] = 1
+        # Record the region the agent has been close to using a disc centered at the agent
+        radius = self.target_blacklisting_radius // self.resolution
+        self._set_disk_to_one(radius, current_map, MC.BLACKLISTED_TARGETS_MAP, curr_loc)
 
         # debug_maps = True
         if debug_maps:
@@ -1277,6 +1201,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         global_pose: Tensor,
         lmb: Tensor,
         origins: Tensor,
+        neighbors=None,
     ):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
@@ -1296,6 +1221,14 @@ class Categorical2DSemanticMapModule(nn.Module):
             ] = local_map[MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :]
         else:
             global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
+        
+        final_global_map = global_map
+        if neighbors:
+            for neighbor in neighbors:
+                final_global_map = torch.maximum(final_global_map, neighbor.semantic_map.global_map)
+
+        global_map[:] = final_global_map
+        local_map[:]  = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
         global_pose[:] = local_pose + origins
 
     def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
@@ -1352,3 +1285,48 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.show()
 
         return map_features.detach()
+
+
+    def _set_disk_to_one(self, radius, current_map, layer, curr_loc):
+        y, x = curr_loc
+        disk = torch.from_numpy(skimage.morphology.disk(radius))
+
+        H, W = current_map.shape[1:]
+        y_min = max(y - radius, 0)
+        y_max = min(y + radius + 1, H)
+        x_min = max(x - radius, 0)
+        x_max = min(x + radius + 1, W)
+
+        disk_y_min = y_min - (y - radius) 
+        disk_y_max = disk_y_min + (y_max - y_min)
+        disk_x_min = x_min - (x - radius)
+        disk_x_max = disk_x_min + (x_max - x_min)
+
+        current_map[layer, y_min:y_max, x_min:x_max][
+            disk[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
+        ] = 1
+
+    def _get_update_visited_map(self,current_loc, prev_loc, visited_map):
+        """
+        Marks the visited_map with a thick line between start and end.
+        """
+        thickness = self.agent_cell_radius + 1
+        line_points = list(
+            bresenham(prev_loc[0], prev_loc[1], current_loc[0], current_loc[1])
+        )
+
+        for x, y in line_points:
+            if 0 <= x < visited_map.shape[0] and 0 <= y < visited_map.shape[1]:
+                rr, cc = disk((x, y), radius=thickness, shape=visited_map.shape)
+                visited_map[rr, cc] = 1
+        visited_map[
+            current_loc[0]
+            - self.agent_cell_radius : current_loc[0]
+            + self.agent_cell_radius
+            + 1,
+            current_loc[1]
+            - self.agent_cell_radius : current_loc[1]
+            + self.agent_cell_radius
+            + 1,
+        ] = 1
+        return visited_map
