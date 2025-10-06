@@ -136,12 +136,8 @@ class NavVisualizer:
 
     def __init__(
         self,
-        num_sem_categories: int,
-        map_size_cm: int,
-        map_resolution: int,
-        print_images: bool,
-        dump_location: str,
-        exp_name: str,
+        config,
+        semantic_category_mapping,
     ) -> None:
         """
         Arguments:
@@ -151,13 +147,15 @@ class NavVisualizer:
             print_images: if True, save visualization as images
             coco_categories_legend: path to the legend image of coco categories
         """
-        self.print_images = print_images
-        self.default_vis_dir = f"{dump_location}/images/{exp_name}"
+        self.semantic_category_mapping = semantic_category_mapping
+        self.print_images = config.PRINT_IMAGES
+        self.default_vis_dir = f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}"
         if self.print_images:
             os.makedirs(self.default_vis_dir, exist_ok=True)
 
-        self.num_sem_categories = num_sem_categories
-        self.map_resolution = map_resolution
+        self.num_sem_categories = self.semantic_category_mapping.num_sem_categories
+        self.map_resolution = config.AGENT.SEMANTIC_MAP.map_resolution
+        map_size_cm = config.AGENT.SEMANTIC_MAP.map_size_cm
         self.map_shape = (
             map_size_cm // self.map_resolution,
             map_size_cm // self.map_resolution,
@@ -182,26 +180,26 @@ class NavVisualizer:
 
     def visualize(
         self,
-        obstacle_map: np.ndarray,
-        global_pose: np.ndarray,
-        lmb: np.ndarray,
-        explored_map: np.ndarray,
-        rgb_frame: np.ndarray,
-        semantic_frame: np.ndarray,
         timestep: int,
-        last_goal_image,
-        inst_goal_found = False,
-        last_td_map: Dict[str, Any] = None,
-        last_collisions: Dict[str, Any] = None,
+        semantic_frame: np.ndarray,
+        obstacle_map: np.ndarray,
+        closest_goal_pt: Optional[np.ndarray] = None,
+        global_pose: np.ndarray = None,
+        lmb: np.ndarray = None,
+        explored_map: np.ndarray = None,
         semantic_map: Optional[np.ndarray] = None,
-        visualize_goal: bool = True,
-        metrics: Dict[str, Any] = None,
         been_close_map=None,
         blacklisted_targets_map=None,
         frontier_map: Optional[np.ndarray] = None,
+        rgb_frame: np.ndarray = None,
+        last_goal_image = None,
+        inst_goal_found = False,
+        last_td_map: Dict[str, Any] = None,
+        last_collisions: Dict[str, Any] = None,
+        visualize_goal: bool = True,
+        metrics: Dict[str, Any] = None,
         dilated_obstacle_map: Optional[np.ndarray] = None,
         goal_instance_map: Optional[np.ndarray] = None,
-        closest_goal_pt: Optional[np.ndarray] = None,
         is_local: bool = True,
         **kwargs,
     ) -> None:

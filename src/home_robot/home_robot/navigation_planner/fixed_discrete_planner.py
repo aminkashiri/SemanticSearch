@@ -929,8 +929,10 @@ class DiscretePlanner:
         for k, frontier in enumerate(frontiers):
             center = frontier.mean(axis=0).astype(int)
             frontier_centers.append(center)
+            self.log.debug(f"Frontier: {k}")
 
             distance = distance_to_frontier(frontier, distances, robot_loc)
+            self.log.debug(f" - distance: {distance}, robot loc: {robot_loc}")
 
             if metric == "distance":
                 agent_distances.append(distance)
@@ -938,6 +940,8 @@ class DiscretePlanner:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
+                    #! TODO1: 40k 25, score at step 13,15?
+                    #! TODO2: If neighbor out of range
                     neighbor_distances = []
                     for neighbor in neighbors:
                         neighbor_loc = (
@@ -948,16 +952,23 @@ class DiscretePlanner:
                             else neighbor.semantic_map.global_loc
                         )
                         traversible_ma = np.ma.masked_values(traversible * 1, 0)
-                        traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
-                        ndistances = skfmm.distance(traversible_ma)
-                        ndistances = np.ma.filled(ndistances, np.max(ndistances) + 1)
+                        if self.semantic_map.is_location_in_local_map(neighbor_loc):
+                            traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
+                            ndistances = skfmm.distance(traversible_ma)
+                            ndistances = np.ma.filled(ndistances, np.max(ndistances) + 1)
 
-                        neighbor_distance = distance_to_frontier(frontier, ndistances, neighbor_loc)
+                            neighbor_distance = distance_to_frontier(frontier, ndistances, neighbor_loc)
+                            self.log.debug(f"     - neighbor dis: {neighbor_distance}, neighbor loc: {neighbor_loc}")
+                        else:
+                            neighbor_distance = 100000
+
                         neighbor_distances.append(neighbor_distance)
 
                     other_distances.append(neighbor_distances)
-                    neighbor_distances = min(neighbor_distances)
-                    frontier_scores.append(neighbor_distance / distance)
+                    neighbor_distance = min(neighbor_distances)
+                    # The number in denominator removes division by 0. The value in the numinator ensures that if two agents have the same distance, we choose the frontier with smallest distance.
+                    frontier_scores.append((neighbor_distance + 10e-5) / (distance+10e-6))
+                    self.log.debug(f"min neighbor dis: {neighbor_distance}, frontier score: {frontier_scores[-1]}")
                     top_k_semantic_classes.append([])
 
             elif metric == "semantics":

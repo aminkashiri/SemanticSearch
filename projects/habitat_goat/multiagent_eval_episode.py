@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import yaml
+from typing import List
 from tqdm import tqdm
 from pathlib import Path
 
@@ -90,7 +91,7 @@ if __name__ == "__main__":
 
     habitat_env = Env(config)
     env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
-    agents = []
+    agents: List[GoatAgent] = []
     for i in range(config.NUM_AGENTS):
         agents.append(GoatAgent(config, env.semantic_category_mapping, i))
 
@@ -139,7 +140,9 @@ if __name__ == "__main__":
             infos = []
             stucks = []
             for agent, obs in zip(agents, observations):
-                action, info, stuck = agent.act(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
+                agent.update_state(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
+            for agent in agents:
+                action, info, stuck = agent.act(neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
                 
                 actions.append(action)
                 infos.append(info)
@@ -153,6 +156,8 @@ if __name__ == "__main__":
             pbar.update(1)
 
             if DiscreteNavigationAction.STOP in actions:
+                for agent in agents:
+                    agent.reset_sub_episode()
                 ep_metrics = env.get_episode_metrics()
                 ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")

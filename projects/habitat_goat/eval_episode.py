@@ -83,7 +83,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:1]
+    config.habitat.dataset.content_scenes = all_scenes[:2]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -135,7 +135,7 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
         ]
         if isinstance(values[0], dict):
             for i, v in enumerate(values):
-                values[i] = min(v.values())
+                values[i] = min(values[i].values())
         stats[f"{metric}_mean"] = np.round(
             np.nanmean(values),
             4,
@@ -209,16 +209,18 @@ if __name__ == "__main__":
             env.timestep = agent.get_subtask_timestep() + 1
             obs = env.get_observation()
 
-            action, info, stuck = agent.act(obs)
+            agent.update_state(obs)
+            action, info, stuck = agent.act()
             if stuck: 
                 action = DiscreteNavigationAction.STOP
 
             logger.info(f"Action taken: {action}")
-            env.apply_action(action, info=info)
+            env.apply_action(action, info)
             pbar.update(1)
 
             if action == DiscreteNavigationAction.STOP:
                 ep_metrics = env.get_episode_metrics()
+                agent.reset_sub_episode()
                 ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")
                 logger.info(
@@ -228,7 +230,7 @@ if __name__ == "__main__":
 
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
-                    agent.reset_vis_dir(
+                    agent._reset_vis_dir(
                         env.scene_id, env.episode_id, env.current_task_idx
                     )
                     env.visualizer.set_vis_dir(

@@ -225,7 +225,6 @@ class Visualizer:
         curr_action: str = None,
         short_term_goal: np.ndarray = None,
         dilated_obstacle_map: np.ndarray = None,
-        semantic_category_mapping: Optional[RearrangeDETICCategories] = None,
         rl_obs_frame: Optional[np.ndarray] = None,
         caption: str = None,
         landmarks: List = None,
@@ -260,13 +259,9 @@ class Visualizer:
             semantic_category_mapping: contains category id to category mapping and color palette
             rl_obs_frame: variable sized image containing all observations passed to RL (useful for debugging)
         """
-        # print("kwargs is":)
         # Do nothing if visualization is off
         if not self.show_images and not self.print_images:
             return
-
-        if semantic_category_mapping is not None:
-            self.semantic_category_mapping = semantic_category_mapping
 
         td_map_frame = None if top_down_map is None else self.make_td_map(top_down_map)
 
