@@ -177,7 +177,7 @@ class GoatAgent(Agent):
 
         self.sub_task_timesteps = None
         self.total_timesteps = None
-        self.last_poses = None
+        self.last_pose = None
         self.reject_visited_targets = False
         self.blacklist_target = False
 
@@ -197,7 +197,7 @@ class GoatAgent(Agent):
         """Initialize agent state. Reset is at the beginning of a new episode (not each task)."""
         self.total_timesteps = 0
         self.sub_task_timesteps = [0] * self.max_num_sub_task_episodes
-        self.last_poses = np.zeros(3)
+        self.last_pose = np.zeros(3)
         self.semantic_map.init_map_and_pose()
         if self.instance_memory is not None:
             self.instance_memory.reset()
@@ -300,6 +300,7 @@ class GoatAgent(Agent):
             "semantic_map": self.semantic_map.get_semantic_map(is_local),
             "frontier_map": self.semantic_map.get_frontier_map(is_local),
             "been_close_map": self.semantic_map.get_been_close_map(is_local),
+            "visited_map": self.semantic_map.get_visited_map(is_local),
             "global_pose": self.semantic_map.global_pose,
             "lmb": self.semantic_map.lmb,
             "instance_memory": self.instance_memory,
@@ -345,9 +346,9 @@ class GoatAgent(Agent):
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
         pose_delta = torch.tensor(
-            pu.get_rel_pose_change(curr_pose, self.last_poses), device=rgb.device
+            pu.get_rel_pose_change(curr_pose, self.last_pose), device=rgb.device
         )
-        self.last_poses = curr_pose
+        self.last_pose = curr_pose
 
         assert obs.camera_pose is None
 

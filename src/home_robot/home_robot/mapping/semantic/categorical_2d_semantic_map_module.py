@@ -1221,11 +1221,21 @@ class Categorical2DSemanticMapModule(nn.Module):
             ] = local_map[MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :]
         else:
             global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
-        
+
+        # These channels should not be changed with other agents info
+        protected_channels = torch.tensor([
+            MC.CURRENT_LOCATION,
+            MC.VISITED_MAP,
+            MC.BEEN_CLOSE_MAP,
+            MC.BLACKLISTED_TARGETS_MAP,
+        ], device=global_map.device)
+        all_channels = torch.arange(global_map.shape[0], device=global_map.device)
+        merge_mask = ~torch.isin(all_channels, protected_channels)
+
         final_global_map = global_map
         if neighbors:
             for neighbor in neighbors:
-                final_global_map = torch.maximum(final_global_map, neighbor.semantic_map.global_map)
+                final_global_map[merge_mask] = torch.maximum(final_global_map[merge_mask], neighbor.semantic_map.global_map[merge_mask])
 
         global_map[:] = final_global_map
         local_map[:]  = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
