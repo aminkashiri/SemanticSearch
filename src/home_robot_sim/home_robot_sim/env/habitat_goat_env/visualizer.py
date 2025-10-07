@@ -79,8 +79,6 @@ class Visualizer:
 
         self.vis_dir = None
         self.image_vis = None
-        self.visited_map_vis = None
-        self.last_xy = None
         self.font = cv2.FONT_HERSHEY_SIMPLEX
         self.font_scale = 0.6
         self.text_color = (20, 20, 20)  # BGR
@@ -92,8 +90,6 @@ class Visualizer:
     def reset(self):
         self.vis_dir = self.default_vis_dir
         self.image_vis = None
-        self.visited_map_vis = np.zeros(self.map_shape)
-        self.last_xy = None
 
     def set_vis_dir(self, scene_id: str, episode_id: str):
         self.print_images = True
@@ -234,6 +230,7 @@ class Visualizer:
         inst_goal_found: bool = False,
         goal_instance_map: Optional[np.ndarray] = None,
         agent_id: Optional[int] = None,
+        visited_map=None,
         **kwargs,
     ):
         """Visualize frame input and semantic map.
@@ -310,37 +307,16 @@ class Visualizer:
             else:
                 gy1, gy2, gx1, gx2 = 0, obstacle_map.shape[0], 0, obstacle_map.shape[1]
 
-            # Update visited map with last visited area
-            if self.last_xy is not None:
-                last_x, last_y = self.last_xy
-                last_pose = [
-                    int(last_y * 100.0 / self.map_resolution - gy1),
-                    int(last_x * 100.0 / self.map_resolution - gx1),
-                ]
-                last_pose = pu.threshold_poses(last_pose, obstacle_map.shape)
-                curr_pose = [
-                    int(curr_y * 100.0 / self.map_resolution - gy1),
-                    int(curr_x * 100.0 / self.map_resolution - gx1),
-                ]
-                curr_pose = pu.threshold_poses(curr_pose, obstacle_map.shape)
-                self.visited_map_vis[gy1:gy2, gx1:gx2] = vu.draw_line(
-                    last_pose, curr_pose, self.visited_map_vis[gy1:gy2, gx1:gx2]
-                )
-            self.last_xy = (curr_x, curr_y)
-
             semantic_map += PI.SEM_START
 
             # Obstacles, explored, and visited areas
             no_category_mask = (
                 semantic_map == PI.SEM_START + self.num_sem_categories - 1
             )  # Assumes the last category is "other"
-            obstacle_mask = obstacle_map == 1
-            explored_mask = explored_map == 1
-            visited_mask = self.visited_map_vis[gy1:gy2, gx1:gx2] == 1
             semantic_map[no_category_mask] = PI.EMPTY_SPACE
-            semantic_map[np.logical_and(no_category_mask, explored_mask)] = PI.EXPLORED
-            semantic_map[np.logical_and(no_category_mask, obstacle_mask)] = PI.OBSTACLES
-            semantic_map[visited_mask] = PI.VISITED
+            semantic_map[np.logical_and(no_category_mask, explored_map == 1)] = PI.EXPLORED
+            semantic_map[np.logical_and(no_category_mask, obstacle_map == 1)] = PI.OBSTACLES
+            semantic_map[visited_map == 1] = PI.VISITED
 
             # Goal
             if inst_goal_found:
