@@ -171,6 +171,16 @@ class Categorical2DSemanticMapState:
             :,
         ]
         return instance_map
+    
+    def get_instance_map(self, instance_id, local=True):
+        instances_map = self.get_instances_map(local)
+        inst_map_idx = instances_map == instance_id
+        inst_map_idx = np.argmax(np.sum(inst_map_idx, axis=(1, 2)))
+
+        instance_map = (
+            instances_map[inst_map_idx] == instance_id
+        ).astype(int)
+        return instance_map
 
 
     # ------------------------------------------------------------------
@@ -338,14 +348,17 @@ class Categorical2DSemanticMapState:
 
     def set_unreachable_frontier(self, frontier_map, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""
+        self.merge_map(frontier_map, MC.UNREACHABLE_FRONTIERS_MAP, local)
+    
+    def merge_map(self, new_map, layer, local):
         if local:
-            unreachable_frontiers_map = self.local_map[MC.UNREACHABLE_FRONTIERS_MAP]
-            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
-            self.local_map[MC.UNREACHABLE_FRONTIERS_MAP] = new_unreachable_frontiers_map
-            self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = new_unreachable_frontiers_map 
+            unreachable_frontiers_map = self.local_map[layer]
+            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(new_map, device=self.device), unreachable_frontiers_map)
+            self.local_map[layer] = new_unreachable_frontiers_map
+            self.global_map[layer, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]] = new_unreachable_frontiers_map 
         else:
-            unreachable_frontiers_map = self.global_map[MC.UNREACHABLE_FRONTIERS_MAP]
-            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
-            self.global_map[MC.UNREACHABLE_FRONTIERS_MAP] = torch.logical_or(torch.tensor(frontier_map, device=self.device), unreachable_frontiers_map)
-            self.local_map[MC.UNREACHABLE_FRONTIERS_MAP] = self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
+            unreachable_frontiers_map = self.global_map[layer]
+            new_unreachable_frontiers_map = torch.logical_or(torch.tensor(new_map, device=self.device), unreachable_frontiers_map)
+            self.global_map[layer] = torch.logical_or(torch.tensor(new_map, device=self.device), unreachable_frontiers_map)
+            self.local_map[layer] = self.global_map[layer, self.lmb[0]:self.lmb[1], self.lmb[2]:self.lmb[3]]
             
