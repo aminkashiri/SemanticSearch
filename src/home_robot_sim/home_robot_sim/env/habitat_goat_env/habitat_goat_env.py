@@ -103,9 +103,6 @@ class HabitatGoatEnv(HabitatEnv):
         if not self.ground_truth_semantics:
             self.init_perception_module()
 
-        self.semantic_category_mapping.reset_instance_id_to_category_id(
-            self.habitat_env
-        )
         self._last_obs = self._preprocess_obs(habitat_obs)
         self.visualizer.reset()
         self.imagenav_visualizer.reset()
@@ -118,6 +115,9 @@ class HabitatGoatEnv(HabitatEnv):
 
         self.current_task_idx = (
             self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
+        )
+        self.semantic_category_mapping.reset_instance_id_to_category_id(
+            self.habitat_env
         )
     
     def reset_visualization(self):
@@ -168,7 +168,7 @@ class HabitatGoatEnv(HabitatEnv):
         depth = self._preprocess_depth(habitat_obs["depth"])
         if habitat_obs.get("multigoal") is None:
             goals = self._preprocess_goals(
-                [{"category": self.current_episode.object_category}]
+                [{"category": self.current_episode.object_category}] # we can also read from obs[objectgoal]
             )
         else:
             goals = self._preprocess_goals(habitat_obs["multigoal"])
