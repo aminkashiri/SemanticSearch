@@ -92,14 +92,22 @@ class HabitatObjNav2022Categories(SemanticCategoryMapping):
         self._instance_id_to_category_id = []
         i = 0
         for obj in env.sim.semantic_annotations().objects:
+            # obj.category.index() is a local index for that category in that scene, not a global index
             raw_category = obj.category.name().lower().strip()
             category_id = self.goal_name_to_goal_id.get(hm3d_raw_to_mp3d.get(raw_category), 0)
             # if category_id != 0:
-            #     print(f"{raw_category} -> {hm3d_raw_to_mp3d.get(raw_category)}", end=",")
-            #     print(f"mapped {i} -> {category_id}", end=" | ")
-
+                # print(f"{raw_category} -> {hm3d_raw_to_mp3d.get(raw_category)}", end=",")
+                # print(f"{i} -> {category_id}", end="|")
+                # print(f"index: {obj.category.index()}")
             i += 1
             self._instance_id_to_category_id.append(category_id)
+
+        for goal in env.current_episode.goals:
+            instance_id = int(goal.object_name.split("_")[-1])
+            if self._instance_id_to_category_id[instance_id] == 0:
+                print(f"Manually adding: {goal.object_name} -> {goal.object_category}, {instance_id}->{self.goal_name_to_goal_id[goal.object_category]}")
+                # print(f"> raw_category: {hm3d_raw_to_mp3d.get(goal.object_name.split('_')[0])}")
+                self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[goal.object_category]
 
         self._instance_id_to_category_id = np.array(self._instance_id_to_category_id)
 
