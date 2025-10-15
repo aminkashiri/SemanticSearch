@@ -249,11 +249,12 @@ class HabitatGoatEnv(HabitatEnv):
     def _preprocess_semantic(
         self, obs: home_robot.core.interfaces.Observations, habitat_semantic: np.ndarray
     ) -> home_robot.core.interfaces.Observations:
+        habitat_semantic = habitat_semantic[:,:,-1]
         if self.ground_truth_semantics:
             # * shape of habitat_semantic: (H, W, 1), shape of obs.semantic: (H, W) (only numbers change)
 
             # self.visualize_semantic_with_labels(
-            #     semantic_array=habitat_semantic[:, :, -1],
+            #     semantic_array=habitat_semantic,
             #     palette=self.semantic_category_mapping.map_color_palette,
             #     postfix="_gt",
             # )
@@ -261,8 +262,13 @@ class HabitatGoatEnv(HabitatEnv):
             instance_id_to_category_id = (
                 self.semantic_category_mapping.instance_id_to_category_id
             )
-            obs.semantic = instance_id_to_category_id[habitat_semantic[:, :, -1]]
-            obs.task_observations["instance_map"] = habitat_semantic[:, :, -1] + 1
+            max_id = habitat_semantic.max()
+            if max_id >= len(instance_id_to_category_id):
+                #! This can happen, because of the problems in labels. For some reason, the label is not in the list of all objects. This is not a problem of the code.
+                logger.warning(f"Warning: semantic ID {max_id} exceeds mapping size {len(instance_id_to_category_id)}")
+            habitat_semantic[habitat_semantic >= len(instance_id_to_category_id)] = 0
+            obs.semantic = instance_id_to_category_id[habitat_semantic]
+            obs.task_observations["instance_map"] = habitat_semantic + 1
             # self.visualize_semantic_with_labels(
             #     semantic_array=obs.semantic + 10,
             #     palette=self.semantic_category_mapping.map_color_palette,
