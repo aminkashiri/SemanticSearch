@@ -72,7 +72,8 @@ class GoatAgent(Agent):
             instance_memory=self.instance_memory,
         )
 
-        self.num_sem_categories = semantic_category_mapping.num_sem_categories + 1
+        self.semantic_category_mapping = semantic_category_mapping
+        self.num_sem_categories = semantic_category_mapping.num_sem_categories
         agent_radius_cm = config.AGENT.radius * 100.0
         agent_cell_radius = int(
             np.ceil(agent_radius_cm / config.AGENT.SEMANTIC_MAP.map_resolution)
@@ -103,9 +104,6 @@ class GoatAgent(Agent):
             ),
             instance_memory=self.instance_memory,
             max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
-            evaluate_instance_tracking=getattr(
-                config.ENVIRONMENT, "evaluate_instance_tracking", False
-            ),
             exploration_type=config.AGENT.exploration_type,
             gaze_width=(
                 40 if config.AGENT.exploration_type == "raycast" else 30
@@ -137,9 +135,6 @@ class GoatAgent(Agent):
                 config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
             ),
             max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
-            evaluate_instance_tracking=getattr(
-                config.ENVIRONMENT, "evaluate_instance_tracking", False
-            ),
             instance_memory=self.instance_memory,
             close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
         )
@@ -297,7 +292,7 @@ class GoatAgent(Agent):
             "total_timesteps": self.total_timesteps,
             "explored_map": self.semantic_map.get_explored_map(is_local),
             "obstacle_map": self.semantic_map.get_obstacle_map(is_local),
-            "semantic_map": self.semantic_map.get_semantic_map(is_local),
+            "semantic_map_1D": self.semantic_map.get_semantic_map_1D(is_local),
             "frontier_map": self.semantic_map.get_frontier_map(is_local),
             "been_close_map": self.semantic_map.get_been_close_map(is_local),
             "visited_map": self.semantic_map.get_visited_map(is_local),
@@ -325,23 +320,21 @@ class GoatAgent(Agent):
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:
-            # * Why using instance_map which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes.
-            instances = obs.task_observations["instance_map"]
-            # first create a mapping to 1, 2, ... num_instances
+            # * Why using instance_frame which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes.
+            instances = obs.task_observations["instance_frame"]
+            # first create a mapping to 1, 2, 3, ..., num_instances
             instance_ids = np.unique(instances)
-            # map instance id to index
             instance_id_to_idx = {
                 instance_id: idx for idx, instance_id in enumerate(instance_ids)
             }
-            # convert instance ids to indices, use vectorized lookup
+            # Convert from instance_ids to 1, ..., num_instances
             instances = torch.from_numpy(
                 np.vectorize(instance_id_to_idx.get)(instances)
             ).to(self.device)
-            # create a one-hot encoding
-            instances = torch.eye(len(instance_ids), device=self.device)[instances]
+            # One-hot encode
+            instance_frame_onehot = torch.eye(len(instance_ids), device=self.device)[instances]
 
-            obs_preprocessed = torch.cat([obs_preprocessed, instances], dim=-1)
-
+            obs_preprocessed = torch.cat([obs_preprocessed, instance_frame_onehot], dim=-1)
         obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
@@ -371,7 +364,7 @@ class GoatAgent(Agent):
         elif self.current_task["type"] == "languagenav":
             language_goal = self.current_task["description"]
 
-        confidences, frame_matches_local_instance_ids = (
+        confidences, frame_matches_instance_ids = (
             self.matching.get_matches_against_current_frame(
                 self.matching_fn[self.current_task["type"]],
                 self.total_timesteps,
@@ -384,7 +377,7 @@ class GoatAgent(Agent):
             )
         )
 
-        return confidences, frame_matches_local_instance_ids
+        return confidences, frame_matches_instance_ids
 
     def _match_against_memory(self):
         task_type = self.current_task["type"]
@@ -505,9 +498,6 @@ class GoatAgent(Agent):
             obs_match_confidences, obs_match_instance_ids = (
                 self._match_against_current_frame()
             )
-            last_step_local_id_to_global_id_map = (
-                self.instance_memory.local_id_to_global_id_map.copy()
-            )
             self.log.debug(
                 f"candidate matches in memory: {len(mem_match_confidences)}, candidate matches in observation: {len(obs_match_confidences)}"
             )
@@ -518,7 +508,6 @@ class GoatAgent(Agent):
                 ) = self.matching.get_best_inst_goal(
                     obs_match_confidences,
                     obs_match_instance_ids,
-                    last_step_local_id_to_global_id_map,
                     mem_match_confidences=mem_match_confidences,
                     mem_match_instance_ids=mem_match_instance_ids,
                     score_thresh=self._score_thresh(),

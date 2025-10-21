@@ -39,7 +39,6 @@ class Categorical2DSemanticMapState:
         map_size_cm: int,
         global_downscaling: int,
         record_instance_ids: bool = False,
-        evaluate_instance_tracking: bool = False,
         instance_memory: Optional[InstanceMemory] = None,
         max_instances: int = 0,
         close_frontier_radius: int = 1,
@@ -80,9 +79,6 @@ class Categorical2DSemanticMapState:
             # num_sem_categories + 5, ..., 2 * num_sem_categories + 5: Instance ids per semantic category
             num_channels += self.num_sem_categories
             self.instance_memory = instance_memory
-
-        if evaluate_instance_tracking:
-            num_channels += max_instances + 1
         
         self.num_channels = num_channels
         self.vis_dir = None
@@ -142,7 +138,7 @@ class Categorical2DSemanticMapState:
                 self.global_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
             ) > 0).astype(np.uint8)
 
-    def get_semantic_map(self, local=True, full=False) -> np.ndarray:
+    def get_semantic_map(self, local=True) -> np.ndarray:
         """Get local map of semantic categories for an environment."""
         if local:
             map = self.local_map
@@ -150,12 +146,13 @@ class Categorical2DSemanticMapState:
             map = self.global_map
 
         semantic_map = np.copy(map.cpu().float().numpy())[MC.NON_SEM_CHANNELS : MC.NON_SEM_CHANNELS + self.num_sem_categories]
-        if not full:
-            semantic_map[
-                self.num_sem_categories - 1, :, :
-            ] = 1e-5  # Last category is unlabeled
-            semantic_map = semantic_map.argmax(0)
         return semantic_map
+    
+    def get_semantic_map_1D(self, local=True) -> np.ndarray:
+        semantic_map = self.get_semantic_map(local)
+        no_cat_mask = semantic_map.sum(0) == 0
+        semantic_map = semantic_map.argmax(0)
+        return semantic_map, no_cat_mask
 
     def get_instances_map(self, local=True) -> np.ndarray:
         if local:
@@ -164,11 +161,7 @@ class Categorical2DSemanticMapState:
             map = self.global_map
         instance_map = map.cpu().float().numpy()
         instance_map = instance_map[
-            MC.NON_SEM_CHANNELS
-            + self.num_sem_categories : MC.NON_SEM_CHANNELS
-            + 2 * self.num_sem_categories,
-            :,
-            :,
+            MC.NON_SEM_CHANNELS + self.num_sem_categories:
         ]
         return instance_map
     

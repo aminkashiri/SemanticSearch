@@ -12,12 +12,12 @@ from skimage.draw import disk
 import matplotlib.pyplot as plt
 from bresenham import bresenham
 from collections import defaultdict
-from typing import Optional, Tuple
 import home_robot.utils.pose as pu
 from torch import IntTensor, Tensor
 import home_robot.utils.depth as du
 from torch.nn import functional as F
 import home_robot.utils.rotation as ru
+from typing import Optional, Tuple, List
 import home_robot.mapping.map_utils as mu
 from home_robot.utils.logger import get_logger
 from home_robot.mapping.semantic.constants import MapConstants as MC
@@ -176,7 +176,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         min_obs_height_cm: int = 25,
         target_blacklisting_radius: int = None,
         record_instance_ids: bool = False,
-        evaluate_instance_tracking: bool = False,
         instance_memory: Optional[InstanceMemory] = None,
         max_instances: int = 0,
         dilation_for_instances: int = 5,
@@ -276,7 +275,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.dilation_for_instances = dilation_for_instances
         self.instance_memory = instance_memory
         self.max_instances = max_instances
-        self.evaluate_instance_tracking = evaluate_instance_tracking
         self.exploration_type = exploration_type
         self.gaze_width = gaze_width
         self.gaze_distance = gaze_distance
@@ -345,7 +343,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             init_local_map.clone(),
             init_local_pose.clone(),
             origins,
-            lmb
+            lmb,
         )
         # updates in place
         self._update_global_map_and_pose(
@@ -377,18 +375,19 @@ class Categorical2DSemanticMapModule(nn.Module):
         self, curr_map, num_instance_channels
     ):
         """Aggregate map channels for instances (input: one binary channel per instance in [0, 1])
-        by category (output: one channel per category containing instance IDs)."""
+        by category (output: one channel per category containing instance IDs).
+        curr_map is the map created using current observation before merging with global map.
+        """
 
-        # first extract instance channels
-        top_down_instance_one_hot = curr_map[
-            (MC.NON_SEM_CHANNELS + self.num_sem_categories) : (
-                MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels
-            ),
-            :,
-            :,
+        # Called init, because it is not aggregated per semantic channel. No "id"s yet.
+        temp_instance_map = curr_map[
+            MC.NON_SEM_CHANNELS
+            + self.num_sem_categories : MC.NON_SEM_CHANNELS
+            + self.num_sem_categories
+            + num_instance_channels,
         ]
-        # now we convert the top down instance map to get a map for storing instances per channel
-        top_down_instances_per_category = torch.zeros(
+        # now we add all instances with the same category to a single channel. Again called temp, because ids are temp_ids and not global ids. Note that 0 means nothing here.
+        aggregated_temp_instance_map = torch.zeros(
             self.num_sem_categories,
             curr_map.shape[1],
             curr_map.shape[2],
@@ -398,56 +397,55 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         if num_instance_channels > 0:
             # create category id to instance id list mapping
-            category_id_to_instance_id_list = defaultdict(list)
+            category_id_to_temp_id_list = defaultdict(list)
             # retrieve unprocessed instances
             unprocessed_instances = self.instance_memory.unprocessed_views
             # loop over unprocessed instances
-            for instance_id, instance in unprocessed_instances.items():
-                category_id_to_instance_id_list[instance.category_id].append(
-                    instance_id
+            for temp_id, instance in unprocessed_instances.items():
+                category_id_to_temp_id_list[instance.category_id].append(
+                    temp_id
                 )
+            print("Category to temp id list: ", category_id_to_temp_id_list)
 
-            # loop over categories
             # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
-            for category_id in category_id_to_instance_id_list.keys():
-                if len(category_id_to_instance_id_list[category_id]) == 0:
-                    continue
-                # get the instance ids for this category
-                instance_ids = category_id_to_instance_id_list[category_id]
-                # create a tensor by slicing top_down_instance_one_hot using the instance ids
-                instance_one_hot = top_down_instance_one_hot[instance_ids]
-                # add a channel with all values equal to 1e-5 as the first channel
-                instance_one_hot = torch.cat(
+            for category_id in category_id_to_temp_id_list.keys():
+                assert len(category_id_to_temp_id_list[category_id]) != 0
+                # get all temp ids for this category
+                temp_ids = category_id_to_temp_id_list[category_id]
+                # Instance channel 0 corresponds to temp id 1
+                instance_map_onehot = temp_instance_map[[i - 1 for i in temp_ids]]
+                instance_map_onehot = torch.cat(
                     (
-                        1e-5 * torch.ones_like(instance_one_hot[:1]),
-                        instance_one_hot,
+                        1e-5 * torch.ones_like(instance_map_onehot[:1]),
+                        instance_map_onehot,
                     ),
                     dim=0,
                 )
-                # get the instance id map using argmax
-                instance_id_map = instance_one_hot.argmax(dim=0)
-                # add a zero to start of instance ids
-                instance_id = [0] + instance_ids
-                # update the ids using the list of instance ids
-                instance_id_map = torch.tensor(
-                    instance_id, device=instance_id_map.device
-                )[instance_id_map]
+
+                # Each entry is either a temp id, or 0 for no instance
+                category_instance_map = instance_map_onehot.argmax(dim=0)
+                idx_to_temp_id = [0] + temp_ids
+
+                category_instance_map = torch.tensor(
+                    idx_to_temp_id, device=category_instance_map.device
+                )[category_instance_map]
                 # update the per category instance map
-                top_down_instances_per_category[category_id] = instance_id_map
+                aggregated_temp_instance_map[category_id] = category_instance_map
 
         assert not curr_map[
             MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels :,
         ].any()
+        assert (
+            curr_map[
+                MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels :,
+            ].shape[0]
+            == 0
+        )
 
         curr_map = torch.cat(
             (
                 curr_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories],
-                top_down_instances_per_category,
-                curr_map[
-                    MC.NON_SEM_CHANNELS
-                    + self.num_sem_categories
-                    + num_instance_channels :,
-                ],
+                aggregated_temp_instance_map,
             ),
             dim=0,
         )
@@ -501,7 +499,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
         x = int(self.min_obs_height_cm / self.z_resolution)
         ground_plane = voxels[
-            :, :, -4*x - self.min_voxel_height : x - self.min_voxel_height
+            :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
         ]
         ground_plane = ground_plane.sum(axis=2).cpu().numpy()
         ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
@@ -546,8 +544,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         #! myTODO: 10 is hardcoded
         # Extend to agents location
         x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
-        rows = np.arange(10, min_visible_dist + 1).reshape(-1, 1)  # shape: (min_visible_dist-10+1, 1)
-        rr, cc = np.meshgrid(rows, x_indices, indexing='ij')
+        rows = np.arange(10, min_visible_dist + 1).reshape(
+            -1, 1
+        )  # shape: (min_visible_dist-10+1, 1)
+        rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
         stair_mask[rr, cc] = 1
         if False:
             import matplotlib
@@ -577,7 +577,9 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.title("stairs_mask extended")
             plt.imshow(np.flipud(stair_mask))
             plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
-        return torch.tensor(stair_mask, dtype=torch.uint8).to(voxels.device), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
+        return torch.tensor(stair_mask, dtype=torch.uint8).to(
+            voxels.device
+        ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -698,11 +700,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         num_instance_channels = 0
         if self.record_instance_ids:
             num_instance_channels = obs_channels - 4 - self.num_sem_categories
-            if self.evaluate_instance_tracking:
-                num_instance_channels -= self.max_instances + 1
             voxel_channels += num_instance_channels
-        if self.evaluate_instance_tracking:
-            voxel_channels += self.max_instances + 1
+
+        assert obs.shape[0] == 4 + self.num_sem_categories + num_instance_channels
 
         init_grid = torch.zeros(
             voxel_channels,
@@ -719,19 +719,12 @@ class Categorical2DSemanticMapModule(nn.Module):
             dtype=torch.float32,
         )
 
-        semantic_channels = obs[4 : 4 + self.num_sem_categories, :, :]
+        semantic_channels = obs[4 : 4 + self.num_sem_categories]
 
         current_pose = pu.get_new_pose(prev_pose.clone(), pose_delta)
 
         if self.record_instance_ids:
-            instance_channels = obs[
-                4
-                + self.num_sem_categories : 4
-                + self.num_sem_categories
-                + num_instance_channels,
-                :,
-                :,
-            ]
+            instance_channels = obs[4 + self.num_sem_categories :]
             if num_instance_channels > 0:
                 self.instance_memory.process_instances(
                     semantic_channels,
@@ -740,7 +733,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                     torch.concat([current_pose + origins, lmb], axis=0)
                     .cpu()
                     .float(),  # store the global pose
-                    image=obs[:3, :, :],
+                    image=obs[:3],
                 )
 
         feat[1:, :] = nn.AvgPool2d(self.du_scale)(obs[4:, :, :]).view(
@@ -788,15 +781,12 @@ class Categorical2DSemanticMapModule(nn.Module):
         fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
 
         # NOTE: Only works in fp_exp_pred is 'raycast'
-        stairs_map, ground_plane = self.get_stairs(voxels[0], fp_exp_pred>=1)
+        stairs_map, ground_plane = self.get_stairs(voxels[0], fp_exp_pred >= 1)
         # fp_map_pred += stairs_map
 
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
             num_channels += num_instance_channels
-
-        if self.evaluate_instance_tracking:
-            num_channels += self.max_instances + 1
 
         agent_view = torch.zeros(
             num_channels,
@@ -810,7 +800,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         x2 = x1 + self.vision_range
         y1 = self.local_map_size_cm // (self.xy_resolution * 2)
         y2 = y1 + self.vision_range
-        agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane*1.0
+        agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane * 1.0
         agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map
         agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
         agent_view[MC.EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
@@ -874,13 +864,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.subplot(224)
 
         # Add stairs to obstacle map
-        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | ((current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0))
+        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | (
+            (current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0)
+        )
 
         # plt.title("Final obstacle map")
         # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
         # plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs2.png")
-
-
 
         # Aggregate by trusting the current map — this is not robust to false negatives in
         # one frame, but it makes it possible to remove false positives
@@ -902,14 +892,8 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         if self.record_instance_ids:
             # overwrite channels containing instance IDs
-            current_map[
-                MC.NON_SEM_CHANNELS
-                + self.num_sem_categories : MC.NON_SEM_CHANNELS
-                + 2 * self.num_sem_categories,
-            ] = translated[
-                MC.NON_SEM_CHANNELS
-                + self.num_sem_categories : MC.NON_SEM_CHANNELS
-                + 2 * self.num_sem_categories,
+            current_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :] = translated[
+                MC.NON_SEM_CHANNELS + self.num_sem_categories :
             ]
 
         # Reset current location
@@ -1075,17 +1059,16 @@ class Categorical2DSemanticMapModule(nn.Module):
         else:
             extended_dilated_local_map = torch.clone(extended_local_map)
         # Get the instances from the global map within the local map's region
-        global_instances_within_local = global_instances[x_start:x_end, y_start:y_end]
 
-        instance_mapping = self._get_local_to_global_instance_mapping(
+        self._create_or_update_global_instances(
             extended_dilated_local_map,
-            global_instances_within_local,
+            global_instances[x_start:x_end, y_start:y_end],
             max_instance_id,
-            torch.unique(extended_local_map),
+            torch.unique(extended_local_map).tolist(),
         )
 
         # Update the global map with the associated instances from the local map
-        global_instances_in_local = np.vectorize(instance_mapping.get)(
+        global_instances_in_local = np.vectorize(self.instance_memory.temp_id_to_global_id.get)(
             local_map.cpu().numpy()
         )
         global_instances[x1:x2, y1:y2] = torch.maximum(
@@ -1098,32 +1081,28 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
         return global_instances
 
-    def _get_local_to_global_instance_mapping(
+    def _create_or_update_global_instances(
         self,
         extended_local_labels: Tensor,
         global_instances_within_local: Tensor,
         max_instance_id: int,
-        local_instance_ids: Tensor,
+        temp_instance_ids: List[int],
     ) -> dict:
         """
-        Creates a mapping of local instance IDs to global instance IDs.
+        Creates a global instance for each local instance if it does not already exist, otherwise only update the global instance.
+        It also creates a mapping of local instance IDs to global instance IDs internally by calling update_temp_id.
 
         Args:
             extended_local_labels: Labels of instances in the extended local map.
             global_instances_within_local: Instances from the global map within the local map's region.
-
-        Returns:
-            A mapping of local instance IDs to global instance IDs.
         """
-        instance_mapping = {}
-
         # Associate instances in the local map with corresponding instances in the global map
-        for local_instance_id in local_instance_ids:
-            if local_instance_id == 0:
+        for temp_id in temp_instance_ids:
+            if temp_id == 0:
                 # ignore 0 as it does not correspond to an instance
                 continue
             # pixels corresponding to
-            local_instance_pixels = extended_local_labels == local_instance_id
+            local_instance_pixels = extended_local_labels == temp_id
 
             # Check for overlapping instances in the global map
             overlapping_instances = global_instances_within_local[local_instance_pixels]
@@ -1135,18 +1114,14 @@ class Categorical2DSemanticMapModule(nn.Module):
             if len(unique_overlapping_instances) >= 1:
                 # If there is a corresponding instance in the global map, pick the first one and associate it
                 global_instance_id = int(unique_overlapping_instances[0].item())
-                instance_mapping[local_instance_id.item()] = global_instance_id
             else:
                 # If there are no corresponding instances, create a new instance
-                global_instance_id = max_instance_id + 1
-                instance_mapping[local_instance_id.item()] = global_instance_id
                 max_instance_id += 1
+                global_instance_id = max_instance_id
             # update the id in instance memory
-            self.instance_memory.update_instance_id(
-                int(local_instance_id.item()), global_instance_id
+            self.instance_memory.update_temp_id(
+                temp_id, global_instance_id
             )
-        instance_mapping[0.0] = 0
-        return instance_mapping
 
     def _update_global_map_instances(
         self, global_map: Tensor, local_map: Tensor, lmb: Tensor
@@ -1183,8 +1158,8 @@ class Categorical2DSemanticMapModule(nn.Module):
                 )
                 # if the local map has any object instances, update the global map with instance ids
                 instances = self._update_global_map_instances_for_one_channel(
-                    global_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
-                    local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories],
+                    global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
+                    local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
                     (lmb[0], lmb[1]),
                     (lmb[2], lmb[3]),
                     max_instance_id,
@@ -1206,6 +1181,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
         """
+        assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
 
         if self.record_instance_ids:
             self._update_global_map_instances(global_map, local_map, lmb)
@@ -1214,31 +1190,40 @@ class Categorical2DSemanticMapModule(nn.Module):
                 lmb[0] : lmb[1],
                 lmb[2] : lmb[3],
             ] = local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
-            global_map[
-                MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :,
-                lmb[0] : lmb[1],
-                lmb[2] : lmb[3],
-            ] = local_map[MC.NON_SEM_CHANNELS + 2 * self.num_sem_categories :]
         else:
             global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
 
         # These channels should not be changed with other agents info
-        protected_channels = torch.tensor([
-            MC.CURRENT_LOCATION,
-            MC.VISITED_MAP,
-            MC.BEEN_CLOSE_MAP,
-            MC.BLACKLISTED_TARGETS_MAP,
-        ], device=global_map.device)
+        protected_channels = torch.tensor(
+            [
+                MC.CURRENT_LOCATION,
+                MC.VISITED_MAP,
+                MC.BEEN_CLOSE_MAP,
+                MC.BLACKLISTED_TARGETS_MAP,
+            ],
+            device=global_map.device,
+        )
         all_channels = torch.arange(global_map.shape[0], device=global_map.device)
-        merge_mask = ~torch.isin(all_channels, protected_channels)
+        #! We should not merge instance map channels too, until we find a way to do it properly
+        merge_mask = (
+            ~torch.isin(all_channels, protected_channels) & all_channels
+            < MC.NON_SEM_CHANNELS + self.num_sem_categories
+        )
 
         final_global_map = global_map
         if neighbors:
             for neighbor in neighbors:
-                final_global_map[merge_mask] = torch.maximum(final_global_map[merge_mask], neighbor.semantic_map.global_map[merge_mask])
+                final_global_map[merge_mask] = torch.maximum(
+                    final_global_map[merge_mask],
+                    neighbor.semantic_map.global_map[merge_mask],
+                )
+        assert torch.equal(
+            final_global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
+            global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
+        )
 
         global_map[:] = final_global_map
-        local_map[:]  = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+        local_map[:] = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
         global_pose[:] = local_pose + origins
 
     def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
@@ -1258,8 +1243,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         if self.record_instance_ids:
             map_features_channels += self.num_sem_categories
-        if self.evaluate_instance_tracking:
-            map_features_channels += self.max_instances + 1
 
         map_features = torch.zeros(
             map_features_channels,
@@ -1296,7 +1279,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         return map_features.detach()
 
-
     def _set_disk_to_one(self, radius, current_map, layer, curr_loc):
         y, x = curr_loc
         disk = torch.from_numpy(skimage.morphology.disk(radius))
@@ -1307,7 +1289,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         x_min = max(x - radius, 0)
         x_max = min(x + radius + 1, W)
 
-        disk_y_min = y_min - (y - radius) 
+        disk_y_min = y_min - (y - radius)
         disk_y_max = disk_y_min + (y_max - y_min)
         disk_x_min = x_min - (x - radius)
         disk_x_max = disk_x_min + (x_max - x_min)
@@ -1316,7 +1298,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             disk[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
         ] = 1
 
-    def _get_update_visited_map(self,current_loc, prev_loc, visited_map):
+    def _get_update_visited_map(self, current_loc, prev_loc, visited_map):
         """
         Marks the visited_map with a thick line between start and end.
         """

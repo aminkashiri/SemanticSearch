@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from collections import defaultdict
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -206,12 +206,13 @@ class Visualizer:
         self,
         timestep: int,
         semantic_frame: np.ndarray,
+        rgb_frame: np.ndarray,
         obstacle_map: np.ndarray = None,
         closest_goal_pt: Optional[np.ndarray] = None,
         global_pose: np.ndarray = None,
         lmb: np.ndarray = None,
         explored_map: np.ndarray = None,
-        semantic_map: np.ndarray = None,
+        semantic_map_1D: Tuple[np.ndarray, np.ndarray] = None,
         been_close_map: np.ndarray = None,
         blacklisted_targets_map: np.ndarray = None,
         frontier_map: np.ndarray = None,
@@ -259,6 +260,8 @@ class Visualizer:
         # Do nothing if visualization is off
         if not self.show_images and not self.print_images:
             return
+
+        semantic_map, no_category_mask = semantic_map_1D
 
         td_map_frame = None if top_down_map is None else self.make_td_map(top_down_map)
 
@@ -310,9 +313,6 @@ class Visualizer:
             semantic_map += PI.SEM_START
 
             # Obstacles, explored, and visited areas
-            no_category_mask = (
-                semantic_map == PI.SEM_START + self.num_sem_categories - 1
-            )  # Assumes the last category is "other"
             semantic_map[no_category_mask] = PI.EMPTY_SPACE
             semantic_map[np.logical_and(no_category_mask, explored_map == 1)] = PI.EXPLORED
             semantic_map[np.logical_and(no_category_mask, obstacle_map == 1)] = PI.OBSTACLES
@@ -422,13 +422,12 @@ class Visualizer:
             image_vis[V.Y1 : V.Y2, V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2] = td_map_frame
 
         # First-person RGB frame
-        rgb_frame = semantic_frame[:, :, [2, 1, 0]]
         image_vis[V.Y1 : V.Y2, V.FIRST_RGB_X1 : V.FIRST_RGB_X2] = cv2.resize(
             rgb_frame, (V.FIRST_PERSON_W, V.HEIGHT)
         )
         # Semantic categories
         first_person_semantic_map_vis = self.get_semantic_vis(
-            semantic_frame[:, :, 3] + PI.SEM_START, rgb_frame
+            semantic_frame + PI.SEM_START, rgb_frame
         )
         # First-person semantic frame
         image_vis[V.Y1 : V.Y2, V.FIRST_SEM_X1 : V.FIRST_SEM_X2] = cv2.resize(

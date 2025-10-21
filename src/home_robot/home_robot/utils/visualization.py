@@ -6,6 +6,7 @@
 import os
 import cv2
 import numpy as np
+from PIL import Image
 from typing import Tuple
 import matplotlib.pyplot as plt
 
@@ -296,3 +297,61 @@ def visualize_distance_frontiers(
         top_k=top_k,
         save_path=save_path,
     )
+
+#! THis is inside habitat goat env:
+def visualize_semantic_with_labels(
+    semantic_array: np.ndarray,
+    palette: list,
+    save_path: str,
+    label_min_pixels: int = 50,
+    font_scale: float = 0.4,
+    thickness: int = 1,
+):
+    """
+    Visualizes a semantic map with color palette and overlays ID numbers on each region.
+
+    Args:
+        semantic_array (np.ndarray): 2D array of shape (H, W) with semantic IDs.
+        palette (list): A flat list of RGB values, e.g., [R0, G0, B0, R1, G1, B1, ...].
+        save_path (str): File path to save the resulting image (e.g., 'out.png').
+        label_min_pixels (int): Minimum number of pixels required to label a region.
+        font_scale (float): Font scale for the overlaid text.
+        thickness (int): Text thickness.
+    """
+    # So slow, just for debugging purposes
+    # scale_factor = 4
+    # semantic_array= cv2.resize(
+    #     semantic_array, 
+    #     (semantic_array.shape[1]*scale_factor, semantic_array.shape[0]*scale_factor),
+    #     interpolation=cv2.INTER_NEAREST
+    # )
+
+    palette_img = Image.new("P", (semantic_array.shape[1], semantic_array.shape[0]))
+    palette_img.putpalette(palette)
+    palette_img.putdata(semantic_array.flatten().astype(np.uint8))
+    palette_img = palette_img.convert("RGB")
+
+    semantic_map_cv = np.array(palette_img)[
+        :, :, ::-1
+    ].copy()  # RGB -> BGR, and make it OpenCV-safe
+
+    unique_ids = np.unique(semantic_array)
+    for sid in unique_ids:
+        coords = np.argwhere(semantic_array == sid)
+        # center_coord = coords[len(coords) // 2]
+        center_coord = np.mean(coords, axis=0).astype(int)
+        if len(coords) < label_min_pixels:
+            continue
+        y, x = center_coord[:2]
+        cv2.putText(
+            semantic_map_cv,
+            str(int(sid)),
+            (x, y),
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+            fontScale=font_scale,
+            color=(255, 0, 0),
+            thickness=thickness,
+            lineType=cv2.LINE_AA,
+        )
+
+    cv2.imwrite(save_path, semantic_map_cv)
