@@ -68,10 +68,13 @@ class GoatMatching(Matching):
         instance_ids = []
         logger.debug(f"In get_matches_against_current_frame, categories: {categories}")
         # first collect crops of instances found in the current frame
-        for local_instance_id, inst_view in instance_memory.unprocessed_views.items():
-            # logger.debug(
-            #     f"Processing instance {local_instance_id} with category {inst_view.category_id}."
-            # )
+        for temp_id, inst_view in instance_memory.unprocessed_views.items():
+            instance_id = instance_memory.temp_id_to_global_id.get(temp_id, -1)
+            if instance_id == -1:
+                continue
+            logger.debug(
+                f"Processing instance {instance_id} with category {inst_view.category_id}."
+            )
             if categories is not None and inst_view.category_id not in categories:
                 continue
             # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
@@ -90,14 +93,14 @@ class GoatMatching(Matching):
             else:
                 img = inst_view.cropped_image
             detections.append(img)
-            instance_ids.append(local_instance_id)
+            instance_ids.append(instance_id)
 
         confidences = []
         if len(detections) > 0:
             if image_goal is None and language_goal is None:
                 # * Category goal
-                instance_ids, confidences = self.match_to_category(
-                    instance_ids, global_pose, instance_memory, use_local_id=True
+                confidences = self.match_to_category(
+                    instance_ids, global_pose, instance_memory
                 )
             else:
                 confidences = self.match_images_to_goal(
@@ -118,24 +121,15 @@ class GoatMatching(Matching):
             pdb.set_trace()
 
     def match_to_category(
-        self, instance_ids, global_pose, instance_memory, use_local_id=False
+        self, instance_ids, global_pose, instance_memory
     ):
         #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
-        output_instance_ids = []
         all_confidences = []
         for instance_id in instance_ids:
-            global_instance_id = instance_id
-            if use_local_id:
-                global_instance_id = instance_memory.local_id_to_global_id_map.get(
-                    instance_id, -1
-                )
+            assert instance_id != -1
 
-            if global_instance_id == -1:
-                continue
-
-            output_instance_ids.append(instance_id)
             instance_views = instance_memory.instances[
-                global_instance_id
+                instance_id
             ].instance_views
             # pick a view with maximum object coverage
             best_view = np.argmax([view.object_coverage for view in instance_views])
@@ -154,7 +148,7 @@ class GoatMatching(Matching):
             #! However, many times when we get close, we get better views which also have lower distances. 
 
             all_confidences.append(score)
-        return output_instance_ids, all_confidences
+        return all_confidences
 
     def match_images_to_goal(
         self,
@@ -233,8 +227,8 @@ class GoatMatching(Matching):
         if len(all_views) > 0:
             if image_goal is None and language_goal is None:
                 # * Category goal
-                instance_ids, all_confidences = self.match_to_category(
-                    instance_ids, global_pose, instance_memory, use_local_id=False
+                all_confidences = self.match_to_category(
+                    instance_ids, global_pose, instance_memory
                 )
                 all_confidences = np.array(all_confidences).reshape(-1, 1)
             else:
@@ -416,7 +410,6 @@ class GoatMatching(Matching):
         self,
         obs_match_confidences: torch.Tensor = [],
         obs_match_instance_ids: List = [],
-        local_id_to_global_id_map: Optional[Dict] = None,
         mem_match_confidences: List = [],
         mem_match_instance_ids: List = [],
         score_thresh: float = 0.0,
@@ -425,8 +418,6 @@ class GoatMatching(Matching):
         """
         Select and localize an instance given computed matching scores. Note that instance map is the local map with local instance ids.
         """
-        goal_map = None
-        goal_pose = None
         inst_goal_found = False
         inst_goal_id = None
 
@@ -450,18 +441,15 @@ class GoatMatching(Matching):
             logger.debug(
                 f"Matching with observation: {len(obs_match_confidences)} instances"
             )
-            global_instance_ids = [
-                local_id_to_global_id_map.get(i, -1) for i in obs_match_instance_ids
-            ]
             logger.debug(
-                f"Global instance ids: {global_instance_ids}, local instance ids: {obs_match_instance_ids}"
+                f"Global instance ids: {obs_match_instance_ids}, local instance ids: {obs_match_instance_ids}"
             )
             agg_scores = self.aggregate_scores_per_instance(
                 obs_match_confidences, agg_fn
             )
 
             inst_goal_found, inst_goal_id = self.get_best_match(
-                agg_scores, global_instance_ids, score_thresh
+                agg_scores, obs_match_instance_ids, score_thresh
             )
             if inst_goal_found is True:
                 logger.debug(

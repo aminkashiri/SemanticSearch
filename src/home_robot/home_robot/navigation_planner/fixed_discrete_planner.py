@@ -420,7 +420,7 @@ class DiscretePlanner:
             is_local,
         )
         return goal_map
-    
+
     def _get_closest_free_cell(self, goal_instance_map, traversible):
         kernel_size = 2
         while kernel_size < 20:
@@ -516,9 +516,10 @@ class DiscretePlanner:
             break
 
         if not found_clusters:
-            free_goal_cells = self._get_closest_free_cell(goal_instance_map, traversible)
+            free_goal_cells = self._get_closest_free_cell(
+                goal_instance_map, traversible
+            )
             labeled_map, num_clusters = label(free_goal_cells)
-
 
         planner = FMMPlanner(
             traversible,
@@ -536,14 +537,13 @@ class DiscretePlanner:
         # free_goal_cells = closest_cluster_map
         min_distance_per_cluster = []
         for cluster_id in range(1, num_clusters + 1):
-            cluster_mask = (labeled_map == cluster_id)
+            cluster_mask = labeled_map == cluster_id
             min_dist_in_cluster = np.min(distances_from_viewpoint[cluster_mask])
             min_distance_per_cluster.append(min_dist_in_cluster)
 
         closest_cluster_id = np.argmin(min_distance_per_cluster) + 1
-        closest_cluster_mask = (labeled_map == closest_cluster_id)
+        closest_cluster_mask = labeled_map == closest_cluster_id
 
-        
         cluster_coords = np.argwhere(closest_cluster_mask)
         goal_center = np.argwhere(goal_instance_map == 1).mean(axis=0)
         distances_to_goal = np.linalg.norm(cluster_coords - goal_center, axis=1)
@@ -598,7 +598,9 @@ class DiscretePlanner:
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
         elif method == "hybrid":
-            goal_map = self.get_hybrid_goal_map(traversible, goal_instance_map, viewpoint_location, is_local, try_index)
+            goal_map = self.get_hybrid_goal_map(
+                traversible, goal_instance_map, viewpoint_location, is_local, try_index
+            )
 
         return goal_map
 
@@ -703,13 +705,7 @@ class DiscretePlanner:
                 goal_map=dilated_goal_map,
             )
 
-        return (
-            reachable,
-            stop,
-            short_term_goal,
-            closest_goal_pt,
-            dilated_goal_map
-        )
+        return (reachable, stop, short_term_goal, closest_goal_pt, dilated_goal_map)
 
     #! It actually gets closest geometrical goal, not closest traversible goal
     def get_closest_goal(self, goal_map, start):
@@ -845,10 +841,10 @@ class DiscretePlanner:
             goal_instance_map.shape,
             self.vis_dir,
             f"{self.prefix}{self.timestep}_3.cluster_goal.png",
-            goal_map=clustered_map_convex_hull, # Clustered goal map convex hull is red
-            dilated_goal_map=goal_instance_map, # All init goal points are magenta
+            goal_map=clustered_map_convex_hull,  # Clustered goal map convex hull is red
+            dilated_goal_map=goal_instance_map,  # All init goal points are magenta
             traversible=1 - self.semantic_map.get_obstacle_map(is_local),
-            features=[(clustered_map, [0, 255, 0])] # Largest cluster is green
+            features=[(clustered_map, [0, 255, 0])],  # Largest cluster is green
         )
         if clustered_map is None:
             return goal_instance_map
@@ -942,7 +938,7 @@ class DiscretePlanner:
                 stop,
                 short_term_goal,
                 closest_goal_pt,
-                dilated_frontier_map
+                dilated_frontier_map,
             ) = self._get_short_term_goal(
                 traversible,
                 best_frontier_map,
@@ -963,7 +959,9 @@ class DiscretePlanner:
                     f"Obstacle dilation radius is already at minimum. Could not plan to the frontier. Trying another one."
                 )
                 # self.semantic_map.set_unreachable_frontier(best_frontier_map, is_local)
-                self.semantic_map.set_unreachable_frontier(dilated_frontier_map, is_local)
+                self.semantic_map.set_unreachable_frontier(
+                    dilated_frontier_map, is_local
+                )
                 self.reset_obs_dilation_selem_radius()
 
             i += 1
@@ -1008,7 +1006,7 @@ class DiscretePlanner:
         frontiers = [np.argwhere(labeled_map == i) for i in range(1, num_features + 1)]
 
         sem_weights = CO_LOCATION_WEIGHTS[goal_category]
-        sem_layers = self.semantic_map.get_semantic_map(is_local, full=True)
+        sem_layers = self.semantic_map.get_semantic_map(is_local)
         r = 40
 
         frontier_scores, frontier_centers, top_k_semantic_classes = [], [], []
@@ -1052,10 +1050,16 @@ class DiscretePlanner:
                         if self.semantic_map.is_location_in_local_map(neighbor_loc):
                             traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
                             ndistances = skfmm.distance(traversible_ma)
-                            ndistances = np.ma.filled(ndistances, np.max(ndistances) + 1)
+                            ndistances = np.ma.filled(
+                                ndistances, np.max(ndistances) + 1
+                            )
 
-                            neighbor_distance = distance_to_frontier(frontier, ndistances, neighbor_loc)
-                            self.log.debug(f"     - neighbor dis: {neighbor_distance}, neighbor loc: {neighbor_loc}")
+                            neighbor_distance = distance_to_frontier(
+                                frontier, ndistances, neighbor_loc
+                            )
+                            self.log.debug(
+                                f"     - neighbor dis: {neighbor_distance}, neighbor loc: {neighbor_loc}"
+                            )
                         else:
                             neighbor_distance = 100000
 
@@ -1064,8 +1068,12 @@ class DiscretePlanner:
                     other_distances.append(neighbor_distances)
                     neighbor_distance = min(neighbor_distances)
                     # The number in denominator removes division by 0. The value in the numinator ensures that if two agents have the same distance, we choose the frontier with smallest distance.
-                    frontier_scores.append((neighbor_distance + 10e-5) / (distance+10e-6))
-                    self.log.debug(f"min neighbor dis: {neighbor_distance}, frontier score: {frontier_scores[-1]}")
+                    frontier_scores.append(
+                        (neighbor_distance + 10e-5) / (distance + 10e-6)
+                    )
+                    self.log.debug(
+                        f"min neighbor dis: {neighbor_distance}, frontier score: {frontier_scores[-1]}"
+                    )
                     top_k_semantic_classes.append([])
 
             elif metric == "semantics":
@@ -1207,17 +1215,13 @@ class DiscretePlanner:
                 f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
             )
 
-            (
-                reachable,
-                stop,
-                short_term_goal,
-                closest_goal_pt,
-                dilated_goal_map
-            ) = self._get_short_term_goal(
-                traversible,
-                goal_map,
-                robot_loc,
-                postfix=f"_attempt_{i}_pose_{try_idx}{'' if is_local else '_global'}{postfix}",
+            (reachable, stop, short_term_goal, closest_goal_pt, dilated_goal_map) = (
+                self._get_short_term_goal(
+                    traversible,
+                    goal_map,
+                    robot_loc,
+                    postfix=f"_attempt_{i}_pose_{try_idx}{'' if is_local else '_global'}{postfix}",
+                )
             )
 
             if stop or reachable:
@@ -1236,7 +1240,9 @@ class DiscretePlanner:
                 if not success:
                     try_idx += 1
                     #! myTODO: Important: This might not be lots of heurisitc. Maybe its better to use something like BLACKLISTED_TARGET_MAP, however, that has its own issues.
-                    self.semantic_map.merge_map(dilated_goal_map, MC.OBSTACLE_MAP, is_local)
+                    self.semantic_map.merge_map(
+                        dilated_goal_map, MC.OBSTACLE_MAP, is_local
+                    )
                     self.reset_obs_dilation_selem_radius()
             (
                 goal_instance_map,
@@ -1278,14 +1284,28 @@ class DiscretePlanner:
             vis_input,
         )
 
-    def get_goal_instance_map_and_viewpoint(self, instance_goal_id, method, force_global=False):
+    def get_goal_instance_map_and_viewpoint(
+        self, instance_goal_id, method, force_global=False
+    ):
         instance_views = self.instance_memory.instances[instance_goal_id].instance_views
 
-        local_goal_instance_map = self.semantic_map.get_instance_map(instance_goal_id, local=True)
-        global_goal_instance_map = self.semantic_map.get_instance_map(instance_goal_id, local=False)
+        local_goal_instance_map = self.semantic_map.get_instance_map(
+            instance_goal_id, local=True
+        )
+        global_goal_instance_map = self.semantic_map.get_instance_map(
+            instance_goal_id, local=False
+        )
 
-        all_views_local_locations = [self.semantic_map.global_pose_to_local_location(view.pose)  for view in instance_views]
-        are_views_local = all([self.semantic_map.is_location_in_local_map(view_local_location) for view_local_location in all_views_local_locations])
+        all_views_local_locations = [
+            self.semantic_map.global_pose_to_local_location(view.pose)
+            for view in instance_views
+        ]
+        are_views_local = all(
+            [
+                self.semantic_map.is_location_in_local_map(view_local_location)
+                for view_local_location in all_views_local_locations
+            ]
+        )
 
         is_local = (
             are_views_local
@@ -1300,20 +1320,27 @@ class DiscretePlanner:
             all_views_locations = all_views_local_locations
         else:
             goal_instance_map = global_goal_instance_map
-            all_views_locations = [self.semantic_map.global_pose_to_global_location(view.pose) for view in instance_views]
+            all_views_locations = [
+                self.semantic_map.global_pose_to_global_location(view.pose)
+                for view in instance_views
+            ]
 
         goal_instance_map = self.get_largest_cluster(goal_instance_map, is_local)
 
         if method == "hybrid":
             goal_indices = np.argwhere(goal_instance_map == 1)
-            center= goal_indices.mean(axis=0) # can be float
+            center = goal_indices.mean(axis=0)  # can be float
             all_views_locations = np.stack(all_views_locations)
             best_view = np.argmin(np.linalg.norm(all_views_locations - center, axis=1))
         else:
             best_view = np.argmax([view.object_coverage for view in instance_views])
 
         best_view_pose = instance_views[best_view].pose
-        best_view_loc = self.semantic_map.global_pose_to_local_location(best_view_pose) if is_local else self.semantic_map.global_pose_to_global_location(best_view_pose)
+        best_view_loc = (
+            self.semantic_map.global_pose_to_local_location(best_view_pose)
+            if is_local
+            else self.semantic_map.global_pose_to_global_location(best_view_pose)
+        )
 
         self.log.debug(
             f">>> Goal instance {instance_goal_id} {'not' if not is_local else ''} present in local map."
@@ -1328,7 +1355,6 @@ class DiscretePlanner:
             best_view_pose[2],
             is_local,
         )
-
 
     def get_instance_planning_maps(self, instance_goal_id, method, force_global=False):
         goal_instance_map, viewpoint_loc, viewpoint_orientation, is_local = (
