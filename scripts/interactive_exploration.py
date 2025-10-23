@@ -1,17 +1,17 @@
 import habitat
 from habitat.config.default import get_config, read_write
-from habitat_baselines.config.default import _BASELINES_CFG_DIR
 import matplotlib.pyplot as plt
-import numpy as np
 
-config_path = "/home-robot/src/third_party/habitat-lab/habitat-baselines/habitat_baselines/config/goat/modular_goat_hm3d_fixed.yaml"
-# scene_id = "5cdEh9F2hJL"
-scene_id = "4ok3usBNeis"
+scene_id = "BAbdmeyTvMZ"
 episode_id = 5
 
-cfg = get_config(config_path, configs_dir=_BASELINES_CFG_DIR)
+# habitat_config_path = "benchmark/nav/objectnav/multiagent_objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+# habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_2022_rgbd_with_semantic.yaml"  # V1
+habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml"  # V2
+cfg = get_config(habitat_config_path)
 with read_write(cfg):
     cfg.habitat.dataset.content_scenes = [scene_id]
+    cfg.habitat.dataset.split = "val"
 
 env = habitat.Env(config=cfg)
 obs = env.reset()
@@ -28,6 +28,13 @@ action_mapping = {
     "d": "turn_right",
     "q": "stop"
 }
+action_to_int = {
+    "stop" : 0,
+    "move_forward" : 1,
+    "turn_left" : 2,
+    "turn_right" : 3,
+    "look_up" : 4,
+    "look_down" : 5}
 plt.ion()
 
 fig = plt.figure(figsize=(10, 12))
@@ -41,6 +48,8 @@ except Exception as e:
     print("Could not reposition window:", e)
 
 def show_obs(obs):
+    # if multiagent
+    # obs = obs[0] 
     rgb = obs["rgb"]
     depth = obs["depth"]
 
@@ -65,6 +74,8 @@ show_obs(obs)
 
 while True:
     key = input("Enter action [w/a/d/q]: ").lower().strip()
+    if len(key) > 1:
+        key = key[0]
     if key not in action_mapping:
         print("Invalid key. Use w/a/d/q.")
         continue
@@ -72,6 +83,7 @@ while True:
     if action == "stop":
         print("Stopping.")
         break
+    action = action_to_int[action]
     obs = env.step(action)
     state = env.sim.agents[0].get_state()
     print(f"Agent state is: {state.position}")

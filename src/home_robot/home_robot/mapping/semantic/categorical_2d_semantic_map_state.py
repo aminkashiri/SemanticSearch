@@ -40,8 +40,7 @@ class Categorical2DSemanticMapState:
         global_downscaling: int,
         record_instance_ids: bool = False,
         instance_memory: Optional[InstanceMemory] = None,
-        max_instances: int = 0,
-        close_frontier_radius: int = 1,
+        agent_id: int = 0,
     ):
         """
         Arguments:
@@ -82,7 +81,7 @@ class Categorical2DSemanticMapState:
         
         self.num_channels = num_channels
         self.vis_dir = None
-        self.close_frontier_radius = close_frontier_radius
+        self.agent_id = agent_id
 
     def init_map_and_pose(self):
         """Initialize global and local map and sensor pose variables."""
@@ -151,7 +150,7 @@ class Categorical2DSemanticMapState:
     def get_semantic_map_1D(self, local=True) -> np.ndarray:
         semantic_map = self.get_semantic_map(local)
         no_cat_mask = semantic_map.sum(0) == 0
-        semantic_map = semantic_map.argmax(0)
+        semantic_map = semantic_map.argmax(0) + 1
         return semantic_map, no_cat_mask
 
     def get_instances_map(self, local=True) -> np.ndarray:
@@ -254,12 +253,12 @@ class Categorical2DSemanticMapState:
         unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0).numpy()
         frontier_map = free_space & (unknown_neighbors > 0)
         frontier_map2 = remove_small_frontiers(frontier_map, min_size=10)
-        frontier_map3 = self.remove_close_frontiers(frontier_map2)
-        frontier_map4 = frontier_map3 & (1-self.get_unreachable_frontiers_map(local))
+        # frontier_map3 = self.remove_close_frontiers(frontier_map2)
+        frontier_map4 = frontier_map2 & (1-self.get_unreachable_frontiers_map(local))
         self.print_maps(
             frontier_map=frontier_map,
             frontier_map2=frontier_map2,
-            frontier_map3=frontier_map3,
+            # frontier_map3=frontier_map3,
             frontier_map4=frontier_map4,
             obstacle_map=obstacle_map,
             known_map=known_map,
@@ -269,32 +268,32 @@ class Categorical2DSemanticMapState:
         )
         return frontier_map4
 
-    def remove_close_frontiers(self, frontier_map: np.ndarray) -> np.ndarray:
-        """
-        Remove frontiers closer than 'radius' to 'location' from the frontier map.
+    # def remove_close_frontiers(self, frontier_map: np.ndarray) -> np.ndarray:
+    #     """
+    #     Remove frontiers closer than 'radius' to 'location' from the frontier map.
 
-        Args:
-            frontier_map (torch.Tensor): shape [ H, W] binary map of frontiers
-            radius (float): distance threshold (in pixels)
+    #     Args:
+    #         frontier_map (torch.Tensor): shape [ H, W] binary map of frontiers
+    #         radius (float): distance threshold (in pixels)
 
-        Returns:
-            torch.Tensor: updated frontier_map with close frontiers removed
-        """
-        logger.debug("Removing close frontiers from the frontier map.")
-        H, W = frontier_map.shape
-        y_coords = np.arange(H).reshape(-1, 1).repeat(W, axis=1)
-        x_coords = np.arange(W).reshape(1, -1).repeat(H, axis=0)
+    #     Returns:
+    #         torch.Tensor: updated frontier_map with close frontiers removed
+    #     """
+    #     logger.debug("Removing close frontiers from the frontier map.")
+    #     H, W = frontier_map.shape
+    #     y_coords = np.arange(H).reshape(-1, 1).repeat(W, axis=1)
+    #     x_coords = np.arange(W).reshape(1, -1).repeat(H, axis=0)
 
-        dist = np.sqrt((x_coords - self.local_loc[1]) ** 2 + (y_coords - self.local_loc[0]) ** 2)
+    #     dist = np.sqrt((x_coords - self.local_loc[1]) ** 2 + (y_coords - self.local_loc[0]) ** 2)
 
-        close_mask = dist <= self.close_frontier_radius
-        new_frontier_map = frontier_map.copy()
-        new_frontier_map[close_mask] = 0
-        if not np.any(new_frontier_map == 1):
-            logger.warning("No frontiers left after removing close frontiers, returning original frontier map.")
-            return frontier_map
+    #     close_mask = dist <= self.close_frontier_radius
+    #     new_frontier_map = frontier_map.copy()
+    #     new_frontier_map[close_mask] = 0
+    #     if not np.any(new_frontier_map == 1):
+    #         logger.warning("No frontiers left after removing close frontiers, returning original frontier map.")
+    #         return frontier_map
 
-        return new_frontier_map
+    #     return new_frontier_map
 
     def print_maps(
         self, frontier_map, obstacle_map, known_map, local, timestep=None, frontier_map2=None, frontier_map3=None, frontier_map4=None
@@ -325,7 +324,7 @@ class Categorical2DSemanticMapState:
         vis_map[:,3*W:4*W,:][frontier_map4 == 1] = [255, 0, 0]
 
         # cv2.imwrite(
-        #     os.path.join(self.vis_dir, f"{timestep}_2.frontiers{'' if local else '_global'}.png"),
+        #     os.path.join(self.vis_dir, f"agent{self.agent_id}_{timestep}_2.frontiers{'' if local else '_global'}.png"),
         #     np.flipud(vis_map)
         # )
     def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:

@@ -6,6 +6,9 @@ import cv2
 import numpy as np
 import torch
 
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
 
 class InstanceView:
     """
@@ -201,7 +204,9 @@ class InstanceMemory:
         instance_frame[no_instance_mask] = (
             0  # set no instance areas to 0. Typically we won't have any no-instance areas, but just in case.
         )
-        semantic_frame = semantic_frame_onehot.argmax(dim=0).int()
+        max_vals, semantic_frame = semantic_frame_onehot.max(dim=0)
+        semantic_frame[max_vals == 0] = -1 
+        semantic_frame = semantic_frame.int() + 1
 
         # append image to list of images
         if self.images is None:
@@ -232,6 +237,7 @@ class InstanceMemory:
             # print(instance_id, category_id)
 
             # skip if category_id is 0 (not is list of categories)
+            #! 2
             if category_id == 0:
                 continue
 
@@ -301,6 +307,7 @@ class InstanceMemory:
                 pose=pose.detach().cpu(),
                 object_coverage=object_coverage,
             )
+            # logger.debug(f"Processing temp instance id {temp_instance_id} of category {category_id}")
 
             # append instance view to list of instance views
             self.unprocessed_views[temp_instance_id.item()] = instance_view

@@ -172,7 +172,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         map_pred_threshold: float,
         min_depth: float = 0.5,
         max_depth: float = 3.5,
-        must_explore_close: bool = False,
         min_obs_height_cm: int = 25,
         target_blacklisting_radius: int = None,
         record_instance_ids: bool = False,
@@ -210,7 +209,6 @@ class Categorical2DSemanticMapModule(nn.Module):
              consider it as explored
             map_pred_threshold: number of depth points to be in bin to
              consider it as obstacle
-            must_explore_close: reduce the distance we need to get to things to make them work
             min_obs_height_cm: minimum height of obstacles (in centimetres)
             record_instance_ids: whether to record instance ids in the 2d semantic map
             exploration_type: how to define explored area
@@ -229,7 +227,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         self.camera_matrix = du.get_camera_matrix(self.screen_w, self.screen_h, hfov)
         self.num_sem_categories = num_sem_categories
-        self.must_explore_close = must_explore_close
 
         self.map_size_parameters = mu.MapSizeParameters(
             map_resolution, map_size_cm, global_downscaling
@@ -405,7 +402,6 @@ class Categorical2DSemanticMapModule(nn.Module):
                 category_id_to_temp_id_list[instance.category_id].append(
                     temp_id
                 )
-            print("Category to temp id list: ", category_id_to_temp_id_list)
 
             # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
             for category_id in category_id_to_temp_id_list.keys():
@@ -430,7 +426,9 @@ class Categorical2DSemanticMapModule(nn.Module):
                     idx_to_temp_id, device=category_instance_map.device
                 )[category_instance_map]
                 # update the per category instance map
-                aggregated_temp_instance_map[category_id] = category_instance_map
+                #! 1
+                aggregated_temp_instance_map[category_id-1] = category_instance_map
+                # logger.debug(f"Aggregated category {category_id} with temp instance ids {temp_ids}")
 
         assert not curr_map[
             MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels :,
@@ -917,11 +915,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # Set a disk around the agent to explored
         # This is around the current agent - we just sort of assume we know where we are
-        if self.exploration_type != "raycast":
-            radius = self.explored_radius
-        else:
-            radius = 0
-        self._set_disk_to_one(radius, current_map, MC.EXPLORED_MAP, curr_loc)
+        self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
 
         # Record the region the agent has been close to using a disc centered at the agent
         radius = self.been_close_to_radius // self.resolution
@@ -982,13 +976,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.axis("off")
             plt.show()
 
-        if self.must_explore_close:
-            current_map[MC.EXPLORED_MAP] = (
-                current_map[MC.EXPLORED_MAP] * current_map[MC.BEEN_CLOSE_MAP]
-            )
-            current_map[:, MC.OBSTACLE_MAP] = (
-                current_map[MC.OBSTACLE_MAP] * current_map[MC.BEEN_CLOSE_MAP]
-            )
         return current_map, current_pose
 
     def _update_global_map_instances_for_one_channel(
@@ -1119,6 +1106,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                 max_instance_id += 1
                 global_instance_id = max_instance_id
             # update the id in instance memory
+            # logger.debug(f"Mapping temp id {temp_id} to global id {global_instance_id}")
             self.instance_memory.update_temp_id(
                 temp_id, global_instance_id
             )
@@ -1140,6 +1128,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             Used to return global map, but if we are updating it in place, we don't need to return anything.
         """
         # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
+        # logger.debug("Updating global map instances.")
         for i in range(self.num_sem_categories):
             if (
                 torch.sum(local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories])
@@ -1157,16 +1146,15 @@ class Categorical2DSemanticMapModule(nn.Module):
                     .item()
                 )
                 # if the local map has any object instances, update the global map with instance ids
-                instances = self._update_global_map_instances_for_one_channel(
+                # logger.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
+                instance_channel = self._update_global_map_instances_for_one_channel(
                     global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
                     local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
                     (lmb[0], lmb[1]),
                     (lmb[2], lmb[3]),
                     max_instance_id,
                 )
-                global_map[i + MC.NON_SEM_CHANNELS + self.num_sem_categories] = (
-                    instances
-                )
+                global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i] = instance_channel
 
     def _update_global_map_and_pose(
         self,
@@ -1206,8 +1194,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         all_channels = torch.arange(global_map.shape[0], device=global_map.device)
         #! We should not merge instance map channels too, until we find a way to do it properly
         merge_mask = (
-            ~torch.isin(all_channels, protected_channels) & all_channels
-            < MC.NON_SEM_CHANNELS + self.num_sem_categories
+            ~torch.isin(all_channels, protected_channels) & (all_channels
+            < (MC.NON_SEM_CHANNELS + self.num_sem_categories))
         )
 
         final_global_map = global_map

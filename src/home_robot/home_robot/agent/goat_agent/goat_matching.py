@@ -71,12 +71,16 @@ class GoatMatching(Matching):
         for temp_id, inst_view in instance_memory.unprocessed_views.items():
             instance_id = instance_memory.temp_id_to_global_id.get(temp_id, -1)
             if instance_id == -1:
+                # logger.debug(f"No map cell assigned yet for this instance yet skipping.")
+                # How can this happen? Objects get global id only if they are projected into the map. We might see an object, but it might not have any projection because:
+                # 1. It is too far
+                # 2. It is small that no point from it falls into any cell with enough confidence.
                 continue
-            logger.debug(
-                f"Processing instance {instance_id} with category {inst_view.category_id}."
-            )
             if categories is not None and inst_view.category_id not in categories:
                 continue
+            logger.debug(
+                f"Processing instance {instance_id} with category {inst_view.category_id} (tmp id: {temp_id})."
+            )
             # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
             bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
 
@@ -415,9 +419,6 @@ class GoatMatching(Matching):
         score_thresh: float = 0.0,
         agg_fn: str = "max",
     ) -> Tuple[torch.Tensor, torch.Tensor, bool, Optional[int]]:
-        """
-        Select and localize an instance given computed matching scores. Note that instance map is the local map with local instance ids.
-        """
         inst_goal_found = False
         inst_goal_id = None
 
@@ -432,17 +433,17 @@ class GoatMatching(Matching):
                 inst_goal_found, inst_goal_id = self.get_best_match(
                     agg_scores, mem_match_instance_ids, score_thresh
                 )
-        if inst_goal_found is True:
-            logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
-        else:
-            logger.debug(f"No matches found in the memory")
+            if inst_goal_found is True:
+                logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
+            else:
+                logger.debug(f"No matches found in the memory")
 
         if inst_goal_found is False and len(obs_match_confidences) > 0:
             logger.debug(
                 f"Matching with observation: {len(obs_match_confidences)} instances"
             )
             logger.debug(
-                f"Global instance ids: {obs_match_instance_ids}, local instance ids: {obs_match_instance_ids}"
+                f"Global instance ids: {obs_match_instance_ids}"
             )
             agg_scores = self.aggregate_scores_per_instance(
                 obs_match_confidences, agg_fn
