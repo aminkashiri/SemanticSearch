@@ -97,7 +97,6 @@ class GoatAgent(Agent):
             cat_pred_threshold=config.AGENT.SEMANTIC_MAP.cat_pred_threshold,
             exp_pred_threshold=config.AGENT.SEMANTIC_MAP.exp_pred_threshold,
             map_pred_threshold=config.AGENT.SEMANTIC_MAP.map_pred_threshold,
-            must_explore_close=config.AGENT.SEMANTIC_MAP.must_explore_close,
             min_obs_height_cm=config.AGENT.SEMANTIC_MAP.min_obs_height_cm,
             record_instance_ids=getattr(
                 config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
@@ -136,7 +135,8 @@ class GoatAgent(Agent):
             ),
             max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
             instance_memory=self.instance_memory,
-            close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
+            # close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
+            agent_id=agent_id
         )
         self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
 
@@ -168,7 +168,6 @@ class GoatAgent(Agent):
             frontier_metric=config.AGENT.frontier_metric,
             agent_id=self.agent_id,
         )
-        self.one_hot_encoding = torch.eye(self.num_sem_categories, device=self.device)
 
         self.sub_task_timesteps = None
         self.total_timesteps = None
@@ -315,7 +314,7 @@ class GoatAgent(Agent):
 
         # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless.
         # * Maybe I should change the config. But nevertheles, this works even with 380.
-        semantic = self.one_hot_encoding[torch.from_numpy(obs.semantic).to(self.device)]
+        semantic = torch.eye(self.num_sem_categories + 1, device=self.device)[torch.from_numpy(obs.semantic).to(self.device)][:,:,1:]  # one-hot encode and remove background class
 
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
@@ -435,7 +434,7 @@ class GoatAgent(Agent):
         if not action is None:
             return action, vis_input
 
-        self.log.info("No reachable goal.")
+        self.log.info("No reachable goal/frontier.")
 
         if self.navigate_to_best:
             self.log.info("Already tried the best match. Stopping")
@@ -485,11 +484,12 @@ class GoatAgent(Agent):
         Searches for goal in current observation, and also in memory if it is the first timestep of the task.
         Set values for self.inst_goal_found and self.inst_goal_id.
         """
-        if self.inst_goal_found:
+        #! myTODO: Put %10 here, so that we again check with obs every 10 steps, so we might get better matches. Can be more intelligent
+        if self.inst_goal_found and self.get_subtask_timestep() % 10 != 0:
             self.log.info(f"Already found instance goal, not searching anymore.")
         else:
-            # Match a goal against every instance in memory the moment we get it
-            # or when the map just got fully explored
+            # Match a goal against every instance in memory the moment the subtask starts.
+            # We also search in memory when env is fully explored, but that is handled somewhere else.
             mem_match_confidences, mem_match_instance_ids = (
                 self._match_against_memory()
                 if self.get_subtask_timestep() == 0
