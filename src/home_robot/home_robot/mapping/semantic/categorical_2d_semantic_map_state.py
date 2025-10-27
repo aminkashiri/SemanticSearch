@@ -218,6 +218,12 @@ class Categorical2DSemanticMapState:
         location = (location * 100.0 / self.resolution).int().tolist()
         return location[1], location[0]
     
+    def get_loc(self, local=True):
+        if local:
+            return self.local_loc
+        else:
+            return self.global_loc
+    
     def get_frontier_map(self, local=True, timestep=None):
         """
         Detect frontiers: free cells adjacent to unknown areas.

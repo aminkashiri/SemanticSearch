@@ -352,6 +352,8 @@ class DiscretePlanner:
         else:
             collision_map = self.collision_map == 1
         dilated_obstacles = np.logical_or(dilated_obstacles, collision_map)
+        robot_loc = self.semantic_map.get_loc(is_local)
+        dilated_obstacles[robot_loc] = 0
 
         traversible = 1 - dilated_obstacles
         return traversible
@@ -791,17 +793,13 @@ class DiscretePlanner:
                     [r, c] = pu.threshold_poses([r, c], self.collision_map.shape)
                     self.collision_map[r, c] = 1
                     collision_map_change = True
-
-        robot_loc = int(y2 * 100 / self.map_resolution), int(
-            x2 * 100 / self.map_resolution
-        )
+        
+        robot_loc = self.semantic_map.global_pose_to_global_location(self.curr_global_pose)
         self.collision_map[robot_loc[0], robot_loc[1]] = 0
 
         if collision_map_change:
             obstacle_map = self.semantic_map.get_obstacle_map(False)
-            init_location = int(y1 * 100 / self.map_resolution), int(
-                x1 * 100 / self.map_resolution
-            )
+            init_location = self.semantic_map.global_pose_to_global_location(self.last_global_pose)
             visualize_map(
                 obstacle_map.shape,
                 self.vis_dir,
@@ -912,11 +910,7 @@ class DiscretePlanner:
                 self.log.info("No frontiers remaining.")
                 return False, False, None, None, None, {}
 
-            robot_loc = (
-                self.semantic_map.local_loc
-                if is_local
-                else self.semantic_map.global_loc
-            )
+            robot_loc = self.semantic_map.get_loc(is_local)
             if self.prev_frontier.shape != frontier_map.shape or np.all(
                 (self.prev_frontier & frontier_map) == 0
             ):
@@ -1026,6 +1020,9 @@ class DiscretePlanner:
 
             # Choose the center. Problem: Sometimes occupide.
             # return distances[center[0], center[1]]
+        assert (
+            traversible[robot_loc[0], robot_loc[1]] == 1
+        ), "Robot location is not traversible"
 
         structure = np.ones((3, 3))  # 8-connectivity
         labeled_map, num_features = label(frontier_map, structure=structure)
@@ -1039,9 +1036,6 @@ class DiscretePlanner:
 
         self.log.debug(f"Getting best frontier")
         traversible_ma = np.ma.masked_values(traversible * 1, 0)
-        assert (
-            traversible[robot_loc[0], robot_loc[1]] == 1
-        ), "Robot location is not traversible"
         traversible_ma[robot_loc[0], robot_loc[1]] = 0
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
@@ -1065,7 +1059,7 @@ class DiscretePlanner:
 
             if metric == "distance":
                 agent_distances.append(distance)
-                if neighbors is None:
+                if len(neighbors) == 0:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
@@ -1169,7 +1163,7 @@ class DiscretePlanner:
         ), "No frontiers found, but frontier_map is not empty."
 
         my_priority = 1
-        if not neighbors is None:
+        if len(neighbors) != 0:
             for neighbor in neighbors:
                 neighbor_loc = (
                     self.semantic_map.global_location_to_local_location(
@@ -1395,9 +1389,7 @@ class DiscretePlanner:
             )
         )
         obstacle_map = self.semantic_map.get_obstacle_map(is_local)
-        robot_loc = (
-            self.semantic_map.local_loc if is_local else self.semantic_map.global_loc
-        )
+        robot_loc = self.semantic_map.get_loc(is_local)
         traversible = self.get_traversible(obstacle_map, is_local)
         return (
             goal_instance_map,

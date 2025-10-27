@@ -290,7 +290,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         init_global_pose: Tensor,
         init_lmb: Tensor,
         init_origins: Tensor,
-        neighbors=None,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, IntTensor, Tensor]:
         """Update maps and poses with a sequence of observations and generate map
         features at each time step.
@@ -344,7 +343,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
         # updates in place
         self._update_global_map_and_pose(
-            local_map, global_map, local_pose, global_pose, lmb, origins, neighbors
+            local_map, global_map, local_pose, global_pose, lmb, origins
         )
         local_map, local_pose, lmb, origins = mu.get_local_parameters_from_global_pose(
             global_map,
@@ -399,9 +398,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             unprocessed_instances = self.instance_memory.unprocessed_views
             # loop over unprocessed instances
             for temp_id, instance in unprocessed_instances.items():
-                category_id_to_temp_id_list[instance.category_id].append(
-                    temp_id
-                )
+                category_id_to_temp_id_list[instance.category_id].append(temp_id)
 
             # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
             for category_id in category_id_to_temp_id_list.keys():
@@ -427,7 +424,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                 )[category_instance_map]
                 # update the per category instance map
                 #! 1
-                aggregated_temp_instance_map[category_id-1] = category_instance_map
+                aggregated_temp_instance_map[category_id - 1] = category_instance_map
                 # logger.debug(f"Aggregated category {category_id} with temp instance ids {temp_ids}")
 
         assert not curr_map[
@@ -915,7 +912,9 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # Set a disk around the agent to explored
         # This is around the current agent - we just sort of assume we know where we are
-        self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
+        self._set_disk_to_one(
+            self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc
+        )
 
         # Record the region the agent has been close to using a disc centered at the agent
         radius = self.been_close_to_radius // self.resolution
@@ -1055,9 +1054,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         # Update the global map with the associated instances from the local map
-        global_instances_in_local = np.vectorize(self.instance_memory.temp_id_to_global_id.get)(
-            local_map.cpu().numpy()
-        )
+        global_instances_in_local = np.vectorize(
+            self.instance_memory.temp_id_to_global_id.get
+        )(local_map.cpu().numpy())
         global_instances[x1:x2, y1:y2] = torch.maximum(
             global_instances[x1:x2, y1:y2],
             torch.tensor(
@@ -1107,9 +1106,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                 global_instance_id = max_instance_id
             # update the id in instance memory
             # logger.debug(f"Mapping temp id {temp_id} to global id {global_instance_id}")
-            self.instance_memory.update_temp_id(
-                temp_id, global_instance_id
-            )
+            self.instance_memory.update_temp_id(temp_id, global_instance_id)
 
     def _update_global_map_instances(
         self, global_map: Tensor, local_map: Tensor, lmb: Tensor
@@ -1154,7 +1151,9 @@ class Categorical2DSemanticMapModule(nn.Module):
                     (lmb[2], lmb[3]),
                     max_instance_id,
                 )
-                global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i] = instance_channel
+                global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i] = (
+                    instance_channel
+                )
 
     def _update_global_map_and_pose(
         self,
@@ -1164,7 +1163,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         global_pose: Tensor,
         lmb: Tensor,
         origins: Tensor,
-        neighbors=None,
     ):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
@@ -1181,6 +1179,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         else:
             global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
 
+        local_map[:] = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+        global_pose[:] = local_pose + origins
+
+    def merge_neighbor_maps(
+        self,
+        neighbors,
+        global_map: Tensor,
+    ):
         # These channels should not be changed with other agents info
         protected_channels = torch.tensor(
             [
@@ -1193,26 +1199,21 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
         all_channels = torch.arange(global_map.shape[0], device=global_map.device)
         #! We should not merge instance map channels too, until we find a way to do it properly
-        merge_mask = (
-            ~torch.isin(all_channels, protected_channels) & (all_channels
-            < (MC.NON_SEM_CHANNELS + self.num_sem_categories))
+        merge_mask = ~torch.isin(all_channels, protected_channels) & (
+            all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
         )
 
         final_global_map = global_map
-        if neighbors:
-            for neighbor in neighbors:
-                final_global_map[merge_mask] = torch.maximum(
-                    final_global_map[merge_mask],
-                    neighbor.semantic_map.global_map[merge_mask],
-                )
+        for neighbor in neighbors:
+            final_global_map[merge_mask] = torch.maximum(
+                final_global_map[merge_mask],
+                neighbor.semantic_map.global_map[merge_mask],
+            )
         assert torch.equal(
             final_global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
         )
-
-        global_map[:] = final_global_map
-        local_map[:] = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
-        global_pose[:] = local_pose + origins
+        return final_global_map
 
     def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
         """Get global and local map features.
