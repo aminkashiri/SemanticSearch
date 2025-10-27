@@ -133,10 +133,9 @@ class GoatAgent(Agent):
             record_instance_ids=getattr(
                 config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
             ),
-            max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
             instance_memory=self.instance_memory,
             # close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
-            agent_id=agent_id
+            agent_id=agent_id,
         )
         self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
 
@@ -183,6 +182,7 @@ class GoatAgent(Agent):
             "languagenav": self.matching.match_language_to_image,
             "objectnav": None,
         }
+        self.communication_radius = config.AGENT.COMMUNICATION.radius
 
     def get_subtask_timestep(self) -> int:
         return self.sub_task_timesteps[self.current_task_idx]
@@ -219,7 +219,7 @@ class GoatAgent(Agent):
         self.current_task_idx += 1
         self.navigate_to_best = False
 
-    def update_state(self, obs, neighbors=None):
+    def update_state(self, obs):
         self.current_task = obs.task_observations["tasks"][self.current_task_idx]
         self.total_timesteps = self.total_timesteps + 1
         self.sub_task_timesteps[self.current_task_idx] += 1
@@ -233,7 +233,7 @@ class GoatAgent(Agent):
 
         obs_preprocessed, pose_delta = self._preprocess_obs(obs)
 
-        self._update_maps(obs_preprocessed, pose_delta, neighbors)
+        self._update_maps(obs_preprocessed, pose_delta)
 
         self._search_for_goal()
         if torch.norm(pose_delta[:2]).item() < 0.05:
@@ -241,8 +241,21 @@ class GoatAgent(Agent):
         else:
             self.stuck_counter = 0
 
-    def act(self, neighbors=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
+    def communicate(self, neighbors):
+        if len(neighbors) == 0:
+            return
+        self.semantic_map.global_map = (
+            self.semantic_map_module.merge_neighbor_maps(
+                neighbors, self.semantic_map.global_map
+            )
+        )
+        lmb = self.semantic_map.lmb
+        self.semantic_map.local_map[:] = self.semantic_map.global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+
+    def act(self, other_agents=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """Act end-to-end."""
+        neighbors = self._get_neighbors(other_agents)
+        self.communicate(neighbors)
         stuck = False
         if (
             self.get_subtask_timestep() >= self.max_steps[self.current_task_idx]
@@ -258,7 +271,22 @@ class GoatAgent(Agent):
 
         return action, info, stuck
 
-    def _update_maps(self, obs: torch.Tensor, pose_delta: torch.Tensor, neighbors):
+    def _get_neighbors(self, other_agents):
+        neighbors = []
+        if other_agents is None:
+            return neighbors
+        for agent in other_agents:
+            dist = (
+                agent.semantic_map.global_pose[:2] - self.semantic_map.global_pose[:2]
+            ).norm()
+            if dist < self.communication_radius:
+                neighbors.append(agent)
+                self.log.debug(
+                    f"Communicating with agent: {agent.agent_id} with distance {dist}"
+                )
+        return neighbors
+
+    def _update_maps(self, obs: torch.Tensor, pose_delta: torch.Tensor):
         # * before module call obs.shape is [380+3+1+num_instances]
         # Update map with observations and generate map features
         (
@@ -277,7 +305,6 @@ class GoatAgent(Agent):
             self.semantic_map.global_pose,
             self.semantic_map.lmb,
             self.semantic_map.origins,
-            neighbors=neighbors,
         )
 
     def _get_vis_info(self, vis_inputs):
@@ -314,7 +341,11 @@ class GoatAgent(Agent):
 
         # * Semantics becomes (W,H,NumClasses) which NumClasses is read from the config files, and is 380. Note that because I am using less classes (52 in all_ovon_categires) most of these layers are zero and actually useless.
         # * Maybe I should change the config. But nevertheles, this works even with 380.
-        semantic = torch.eye(self.num_sem_categories + 1, device=self.device)[torch.from_numpy(obs.semantic).to(self.device)][:,:,1:]  # one-hot encode and remove background class
+        semantic = torch.eye(self.num_sem_categories + 1, device=self.device)[
+            torch.from_numpy(obs.semantic).to(self.device)
+        ][
+            :, :, 1:
+        ]  # one-hot encode and remove background class
 
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
@@ -331,9 +362,13 @@ class GoatAgent(Agent):
                 np.vectorize(instance_id_to_idx.get)(instances)
             ).to(self.device)
             # One-hot encode
-            instance_frame_onehot = torch.eye(len(instance_ids), device=self.device)[instances]
+            instance_frame_onehot = torch.eye(len(instance_ids), device=self.device)[
+                instances
+            ]
 
-            obs_preprocessed = torch.cat([obs_preprocessed, instance_frame_onehot], dim=-1)
+            obs_preprocessed = torch.cat(
+                [obs_preprocessed, instance_frame_onehot], dim=-1
+            )
         obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])

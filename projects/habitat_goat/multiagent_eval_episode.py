@@ -68,7 +68,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:1]
+    config.habitat.dataset.content_scenes = all_scenes[:]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -140,9 +140,11 @@ if __name__ == "__main__":
             infos = []
             stucks = []
             for agent, obs in zip(agents, observations):
-                agent.update_state(obs, neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
+                agent.update_state(obs)
+
             for agent in agents:
-                action, info, stuck = agent.act(neighbors=list(filter(lambda x: x.agent_id != agent.agent_id, agents)))
+                other_agents = list(filter(lambda x: x.agent_id != agent.agent_id, agents))
+                action, info, stuck = agent.act(other_agents)
                 
                 actions.append(action)
                 infos.append(info)
