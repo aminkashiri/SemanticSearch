@@ -1,6 +1,6 @@
-NO_GPU: 1                 # 1: run on CPU, 0: run on GPUs
+NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: habitat_objnav_2023
+EXP_NAME: MA_Burgard_objnav2023_decentralized
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
 DATASET: habitat_objnav_2023
@@ -21,6 +21,9 @@ AGENT:
   exploration_type: raycast
   radius: 0.05            # robot radius (in meters)
 
+  COMMUNICATION:
+    radius: 5           # m
+
   SEMANTIC_MAP:
     semantic_categories: dataset # map semantic channel categories ("coco_indoor", "longtail_indoor", "mukul_indoor")
     # num_sem_categories: 380           # number of map semantic channel categories (16, 257, 35)
@@ -32,10 +35,9 @@ AGENT:
     cat_pred_threshold: 5.0  # number of depth points to be in bin to classify it as a certain semantic category
     exp_pred_threshold: 1.0  # number of depth points to be in bin to consider it as explored
     map_pred_threshold: 1.0  # number of depth points to be in bin to consider it as obstacle
-    explored_radius: 150     # radius (in centimeters) of visually explored region
+    explored_radius: 10     # radius (in centimeters) of visually explored region
     been_close_to_radius: 200  # radius (in centimeters) of been close to region
     target_blacklisting_radius: 100 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
-    must_explore_close: False
     min_obs_height_cm: 10    # minimum height (in centimeters) of obstacle to be considered as obstacle
     goal_filtering: True      # If True, gets the largest connected component of the goal map
     record_instance_ids: True # whether to predict and store instance ids in the map

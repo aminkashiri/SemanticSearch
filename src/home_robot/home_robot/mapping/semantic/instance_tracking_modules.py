@@ -91,9 +91,9 @@ class InstanceMemory:
     timesteps: list of timesteps
     """
 
-    images: torch.Tensor = None
+    images: List[torch.Tensor] = list()
     instances: Dict[int, Instance] = dict()
-    point_cloud: torch.Tensor = None
+    point_cloud: List[torch.Tensor] = None
     unprocessed_views: Dict[int, InstanceView] = dict()
     temp_id_to_global_id: Dict[int, int] = dict()
     timesteps: int = 0
@@ -127,8 +127,8 @@ class InstanceMemory:
         self.reset()
 
     def reset(self):
-        self.images = None
-        self.point_cloud = None
+        self.images = []
+        self.point_cloud = []
         self.instances = dict()
         self.unprocessed_views = dict()
         self.temp_id_to_global_id = dict()
@@ -154,7 +154,7 @@ class InstanceMemory:
         else:
             # add instance view to global instance
             global_instance.instance_views.append(instance_view)
-        self.temp_id_to_global_id[temp_id] = global_instance_id
+        self.temp_id_to_global_id[int(temp_id)] = global_instance_id
         if self.debug_visualize:
             category_name = (
                 f"cat_{instance_view.category_id}"
@@ -182,7 +182,6 @@ class InstanceMemory:
                 ),
                 masked_image,
             )
-
     def process_instances(
         self,
         semantic_frame_onehot: torch.Tensor,
@@ -191,86 +190,79 @@ class InstanceMemory:
         pose: torch.Tensor,
         image: torch.Tensor,
     ):
-        """
-        For every instance seen in current observation, creates an InstanceView that stores its category id, pose, etc, and saves it in a
-        temp dict named unprocessed_views, with keys as the instance ids.
-        instance_channels.shape[0] is the number of instances seen, not num_sem_categories
-        """
         self.unprocessed_views = {}
         self.temp_id_to_global_id = {0: 0}
-
+        
         instance_frame = instance_frame_onehot.argmax(dim=0).int() + 1
         no_instance_mask = instance_frame_onehot.sum(0) == 0
-        instance_frame[no_instance_mask] = (
-            0  # set no instance areas to 0. Typically we won't have any no-instance areas, but just in case.
-        )
+        instance_frame[no_instance_mask] = 0
         max_vals, semantic_frame = semantic_frame_onehot.max(dim=0)
         semantic_frame[max_vals == 0] = -1 
         semantic_frame = semantic_frame.int() + 1
+        
+        self.images.append(image.unsqueeze(0).detach().cpu())
+        self.point_cloud.append(point_cloud.unsqueeze(0).detach().cpu())
+        
+        pose_cpu = pose.cpu()
+        
+        # temp_instance_ids = torch.unique(instance_frame)
+        temp_instance_ids = torch.nonzero(
+            instance_frame_onehot.flatten(1).sum(1), as_tuple=False
+        ).squeeze(1) + 1
 
-        # append image to list of images
-        if self.images is None:
-            self.images = image.unsqueeze(0).detach().cpu()
-        else:
-            self.images = torch.cat(
-                [self.images, image.unsqueeze(0).detach().cpu()], dim=0
-            )
-        if self.point_cloud is None:
-            self.point_cloud = point_cloud.unsqueeze(0).detach().cpu()
-        else:
-            self.point_cloud = torch.cat(
-                [self.point_cloud, point_cloud.unsqueeze(0).detach().cpu()],
-                dim=0,
-            )
-
-        temp_instance_ids = torch.unique(instance_frame)
+        instance_frame_downsampled = torch.nn.functional.interpolate(
+            instance_frame.unsqueeze(0).unsqueeze(0).float(),
+            scale_factor=1 / self.du_scale,
+            mode="nearest",
+        ).squeeze(0).squeeze(0).int()
+        
         for temp_instance_id in temp_instance_ids:
-            # temp instance ids are from 1 to num_instances
             assert temp_instance_id != 0
-
-            # get instance mask
+            
             instance_mask = instance_frame == temp_instance_id
-
-            # get semantic category
+            
             category_id = semantic_frame[instance_mask].unique()
             category_id = category_id[0].item()
-            # print(instance_id, category_id)
-
-            # skip if category_id is 0 (not is list of categories)
-            #! 2
+            
             if category_id == 0:
                 continue
+            
+            # bbox = (
+            #     torch.stack(
+            #         [
+            #             instance_mask.nonzero().min(dim=0)[0],
+            #             instance_mask.nonzero().max(dim=0)[0] + 1,
+            #         ]
+            #     )
+            #     .cpu()
+            #     .numpy()
+            # )
+            rows = instance_mask.any(dim=1).nonzero().flatten()
+            cols = instance_mask.any(dim=0).nonzero().flatten()
 
-            # get bounding box
-            bbox = (
-                torch.stack(
-                    [
-                        instance_mask.nonzero().min(dim=0)[0],
-                        instance_mask.nonzero().max(dim=0)[0] + 1,
-                    ]
-                )
-                .cpu()
-                .numpy()
-            )
+            bbox = np.array([
+                [rows.min().item(), cols.min().item()],
+                [rows.max().item() + 1, cols.max().item() + 1]
+            ])
 
-            # downsample mask by du_scale using "NEAREST"
-            instance_mask_downsampled = (
-                torch.nn.functional.interpolate(
-                    instance_mask.unsqueeze(0).unsqueeze(0).float(),
-                    scale_factor=1 / self.du_scale,
-                    mode="nearest",
-                )
-                .squeeze(0)
-                .squeeze(0)
-                .bool()
-            )
-
+            
+            instance_mask_downsampled = instance_frame_downsampled == temp_instance_id
+            # instance_mask_downsampled = (
+            #     torch.nn.functional.interpolate(
+            #         instance_mask.unsqueeze(0).unsqueeze(0).float(),
+            #         scale_factor=1 / self.du_scale,
+            #         mode="nearest",
+            #     )
+            #     .squeeze(0)
+            #     .squeeze(0)
+            #     .bool()
+            # )
+            
             if self.mask_cropped_instances:
                 masked_image = image * instance_mask
             else:
                 masked_image = image
-
-            # get cropped image
+            
             p = self.padding_cropped_instances
             h, w = masked_image.shape[1:]
             cropped_image = (
@@ -284,34 +276,29 @@ class InstanceMemory:
                 .numpy()
                 .astype(np.uint8)
             )
-
-            instance_mask = instance_mask.cpu().numpy().astype(bool)
-
-            # get embedding
+            
+            instance_mask_cpu = instance_mask.cpu().numpy().astype(bool)
+            
             embedding = None
-
-            # get point cloud
+            
             point_cloud_instance = point_cloud[instance_mask_downsampled.cpu().numpy()]
-
-            object_coverage = np.sum(instance_mask) / instance_mask.size
-
-            # get instance view
+            
+            object_coverage = np.sum(instance_mask_cpu) / instance_mask_cpu.size
+            
             instance_view = InstanceView(
                 bbox=bbox,
                 timestep=self.timesteps,
                 cropped_image=cropped_image,
                 embedding=embedding,
-                mask=instance_mask,
+                mask=instance_mask_cpu,
                 point_cloud=point_cloud_instance.cpu().numpy(),
                 category_id=category_id,
-                pose=pose.detach().cpu(),
+                pose=pose_cpu,
                 object_coverage=object_coverage,
             )
-            # logger.debug(f"Processing temp instance id {temp_instance_id} of category {category_id}")
-
-            # append instance view to list of instance views
+            
             self.unprocessed_views[temp_instance_id.item()] = instance_view
-
+        
             #! myTODO: Add a variable to control if we should save these or not.
             # save cropped image with timestep in filename
             # os.makedirs(f"{self.save_dir}/all", exist_ok=True)
