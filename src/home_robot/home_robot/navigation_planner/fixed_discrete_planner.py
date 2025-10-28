@@ -75,7 +75,7 @@ class DiscretePlanner:
         min_obs_dilation_selem_radius: int = 1,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
-        goal_tolerance: float = 0.01,  # for sim
+        goal_tolerance: float = 5,  # for sim
         discrete_actions: bool = True,
         continuous_angle_tolerance: float = 30.0,
         panorama_start_steps: int = 0,
@@ -117,6 +117,7 @@ class DiscretePlanner:
         self.step_size = step_size
         self.start_obs_dilation_selem_radius = obs_dilation_selem_radius
         self.min_obs_dilation_selem_radius = min_obs_dilation_selem_radius
+        #! myTODO: I think the unit of goal tolerance is in pixels, so I should do some conversions here. Right now this is hardcoded.
         self.goal_tolerance = goal_tolerance
         self.continuous_angle_tolerance = continuous_angle_tolerance
 
@@ -145,7 +146,7 @@ class DiscretePlanner:
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
         self.prefix = "" if self.agent_id is None else f"agent_{self.agent_id}_"
-        self.moved_forward_after_orienting = False
+        self.moved_forward = False
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -165,6 +166,7 @@ class DiscretePlanner:
         )
         self.episode_panorama_start_steps = self.panorama_start_steps
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
+        self.moved_forward = False
 
     def set_vis_dir(self, scene_id: str, episode_id: str):
         self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
@@ -282,6 +284,10 @@ class DiscretePlanner:
         """
         Gets discrete/continuous action given short-term goal. Agent orients to closest goal if found_goal=True and stop=True
         """
+        if self.moved_forward:
+            self.log.debug("Already toward the goal, stopping.")
+            return DiscreteNavigationAction.STOP
+
         viewpoint_orientation = None
         if best_viewpoint is not None:
             viewpoint_orientation = best_viewpoint.pose[2]
@@ -328,13 +334,9 @@ class DiscretePlanner:
                 elif relative_angle_to_closest_goal < -2 * self.turn_angle / 3.0:
                     action = DiscreteNavigationAction.TURN_LEFT
                 else:
-                    if self.moved_forward_after_orienting:
-                        self.log.debug("Already toward the goal, stopping.")
-                        action = DiscreteNavigationAction.STOP
-                    else:
-                        self.log.debug("Already toward the goal, taking a last step toward the goal.")
-                        action = DiscreteNavigationAction.MOVE_FORWARD
-                        self.moved_forward_after_orienting = True
+                    self.log.debug("Already toward the goal, taking a last step toward the goal.")
+                    action = DiscreteNavigationAction.MOVE_FORWARD
+                    self.moved_forward = True
 
 
 
@@ -526,18 +528,13 @@ class DiscretePlanner:
             labeled_map, num_clusters = label(free_goal_cells, structure=np.ones((3, 3)))
         
 
-
-        planner = FMMPlanner(
-            traversible,
-            step_size=self.step_size,
-            vis_dir=self.vis_dir,
-            print_images=self.print_images,
-            goal_tolerance=self.goal_tolerance,
-            # vis_postfix="_closest_to_viewpoint",
-        )
         viewpoint_map = np.zeros_like(goal_instance_map)
         viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
-        distances_from_viewpoint = planner.set_multi_goal(viewpoint_map, self.timestep)
+
+        traversible_ma = np.ma.masked_values(traversible * 1, 0)
+        traversible_ma[viewpoint_location[0], viewpoint_location[1]] = 0
+        distances_from_viewpoint = skfmm.distance(traversible_ma)
+        distances_from_viewpoint = np.ma.filled(distances_from_viewpoint, np.max(distances_from_viewpoint) + 1)
         distances_from_viewpoint[free_goal_cells != 1] = 100000
 
         # Get closest cluster to viewpoint
@@ -681,16 +678,16 @@ class DiscretePlanner:
             )
 
         # * Previously they had another logic of dilating goal similar to obstacles too (cv2.dilate(sel)). I don't see much difference, but I can think more later
-        dilated_goal_map = planner.dilate_goal(
-            navigable_goal_map,
-            self.min_goal_distance_cm / self.map_resolution,
-            timestep=self.timestep,
-            prefix=self.prefix,
-        )
-        dilated_goal_map = np.logical_and(dilated_goal_map, traversible)
+        # dilated_goal_map = planner.dilate_goal(
+        #     navigable_goal_map,
+        #     self.min_goal_distance_cm / self.map_resolution,
+        #     timestep=self.timestep,
+        #     prefix=self.prefix,
+        # )
+        # dilated_goal_map = np.logical_and(dilated_goal_map, traversible)
 
         self.dd = planner.set_multi_goal(
-            dilated_goal_map,
+            navigable_goal_map,
             self.timestep,
             self.dd,
             self.map_downsample_factor,
@@ -724,15 +721,15 @@ class DiscretePlanner:
                 ),  # stg green
             ]
             visualize_map(
-                dilated_goal_map.shape,
+                navigable_goal_map.shape,
                 self.vis_dir,
                 f"{self.prefix}{self.timestep}_12.stg{postfix}.png",
                 points=points,
                 traversible=traversible,
-                goal_map=dilated_goal_map,
+                goal_map=navigable_goal_map,
             )
 
-        return (reachable, stop, short_term_goal, closest_goal_pt, dilated_goal_map)
+        return (reachable, stop, short_term_goal, closest_goal_pt, navigable_goal_map)
 
     #! It actually gets closest geometrical goal, not closest traversible goal
     def get_closest_goal(self, goal_map, start):
@@ -1040,6 +1037,7 @@ class DiscretePlanner:
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
 
+        neighbor_distance_cache = {}
         agent_distances, other_distances = [], []
         for k, frontier in enumerate(frontiers):
             distance = distance_to_frontier(frontier, distances, robot_loc)
@@ -1063,8 +1061,6 @@ class DiscretePlanner:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
-                    #! TODO1: 40k 25, score at step 13,15?
-                    #! TODO2: If neighbor out of range
                     neighbor_distances = []
                     for neighbor in neighbors:
                         neighbor_loc = (
@@ -1076,15 +1072,23 @@ class DiscretePlanner:
                         )
                         traversible_ma = np.ma.masked_values(traversible * 1, 0)
                         if self.semantic_map.is_location_in_local_map(neighbor_loc):
-                            traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
-                            ndistances = skfmm.distance(traversible_ma)
-                            ndistances = np.ma.filled(
-                                ndistances, np.max(ndistances) + 1
-                            )
+                            key = tuple(neighbor_loc)
+                            if key not in neighbor_distance_cache:
+                                traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
+                                ndistances = skfmm.distance(traversible_ma)
+                                ndistances = np.ma.filled(
+                                    ndistances, np.max(ndistances) + 1
+                                )
+                                neighbor_distance_cache[key] = ndistances
+                                neighbor_distance = distance_to_frontier(
+                                    frontier, ndistances, neighbor_loc
+                                )
+                            else:
+                                ndistances = neighbor_distance_cache[key]
+                                neighbor_distance = distance_to_frontier(
+                                    frontier, ndistances, neighbor_loc
+                                )
 
-                            neighbor_distance = distance_to_frontier(
-                                frontier, ndistances, neighbor_loc
-                            )
                             # self.log.debug(
                             #     f"     - neighbor dis: {neighbor_distance}, neighbor loc: {neighbor_loc}"
                             # )

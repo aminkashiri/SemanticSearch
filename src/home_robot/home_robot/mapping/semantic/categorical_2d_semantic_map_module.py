@@ -29,66 +29,71 @@ debug_maps = False
 
 logger = get_logger()
 
-
 def compute_known_cells_map(
-    obstacle_map, robot_pos, max_range, gaze_width, num_beams=360
+    obstacle_map_tensor, robot_pos, max_range, gaze_width, num_beams=360
 ):
-    """
-    Perform 2D raycasting to compute known vs unknown cells.
-
-    Args:
-        obstacle_map (np.ndarray): 2D array (0=free, 1=obstacle)
-        robot_pos (Tuple[int, int]): (x, y) in grid coordinates
-        max_range (int): max number of cells to raycast in each direction
-        num_beams (int): number of rays to cast (default: 360)
-
-    Returns:
-        known_map (np.ndarray): 2D binary array (1=known, 0=unknown)
-    """
-    H, W = obstacle_map.shape
-    from scipy.ndimage import binary_dilation
-
-    obstacle_map = np.where(obstacle_map >= 1, 1, 0)
-    structure = np.ones((3, 3), dtype=np.uint8)
-    obstacle_map = binary_dilation(obstacle_map, structure=structure).astype(np.uint8)
-    known_map = np.zeros_like(obstacle_map, dtype=np.uint8)  # 0 = unknown, 1 = known
-
+    device = obstacle_map_tensor.device
+    H, W = obstacle_map_tensor.shape
+    
+    # Dilate obstacles
+    obstacle_map = (obstacle_map_tensor >= 1).float()
+    kernel = torch.ones(1, 1, 3, 3, device=device)
+    obstacle_map = torch.nn.functional.conv2d(
+        obstacle_map.unsqueeze(0).unsqueeze(0),
+        kernel,
+        padding=1
+    ).squeeze() > 0
+    
     cx, cy = robot_pos
-    center_angle = 0  # Constant facing downard
-    half_fov_rad = np.radians(gaze_width / 2)
-    angles = np.linspace(
-        center_angle - half_fov_rad, center_angle + half_fov_rad, num_beams
+    center_angle = 0.0
+    half_fov_rad = np.radians(gaze_width / 2.0)
+    
+    angles = torch.linspace(
+        center_angle - half_fov_rad,
+        center_angle + half_fov_rad,
+        num_beams,
+        device=device
     )
-
-    for angle in angles:
-        dx = np.cos(angle)
-        dy = np.sin(angle)
-
-        ex = cx + int(round(dx * max_range))
-        ey = cy + int(round(dy * max_range))
-
-        for x, y in bresenham(cx, cy, ex, ey):
-            if 0 <= x < W and 0 <= y < H:
-                known_map[x, y] = 1  # mark as known
-                if obstacle_map[x, y] == 1:  # stop at obstacle
-                    break
-            else:
-                break  # ray exited map bounds
-
+    
+    dx = torch.cos(angles)
+    dy = torch.sin(angles)
+    
+    max_steps = int(max_range * 1.5)
+    t = torch.linspace(0, max_range, max_steps, device=device)
+    
+    x_coords = cx + dx.unsqueeze(1) * t.unsqueeze(0)
+    y_coords = cy + dy.unsqueeze(1) * t.unsqueeze(0)
+    
+    x_int = torch.round(x_coords).long()
+    y_int = torch.round(y_coords).long()
+    
+    valid_mask = (x_int >= 0) & (x_int < W) & (y_int >= 0) & (y_int < H)
+    
+    # just to avoid index issues
+    x_clamped = torch.clamp(x_int, 0, W - 1)
+    y_clamped = torch.clamp(y_int, 0, H - 1)
+    
+    obstacle_at_point = obstacle_map[x_clamped, y_clamped] | ~valid_mask
+    
+    cumsum_obstacles = torch.cumsum(obstacle_at_point.float(), dim=1)
+    visible_cells = valid_mask & (cumsum_obstacles <= 1)
+    
+    visible_x = x_int[visible_cells]
+    visible_y = y_int[visible_cells]
+    
+    known_map = torch.zeros((H, W), dtype=torch.float32, device=device)
+    known_map[visible_x, visible_y] = 1
+    
     return known_map
-
 
 def get_fp_exp_pred(self, fp_map_pred):
     if self.exploration_type == "raycast":
         fp_exp_pred = compute_known_cells_map(
-            fp_map_pred.cpu().numpy(),
+            fp_map_pred,
             (0, fp_map_pred.shape[1] // 2),
             self.gaze_distance * 100 / self.resolution,
             self.gaze_width,
             num_beams=360,
-        )
-        fp_exp_pred = torch.from_numpy(fp_exp_pred).to(
-            dtype=fp_map_pred.dtype, device=fp_map_pred.device
         )
         return fp_exp_pred
     elif self.exploration_type == "default":
@@ -155,6 +160,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
     def __init__(
         self,
+        device,
         frame_height: int,
         frame_width: int,
         camera_height: int,
@@ -217,6 +223,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
         super().__init__()
 
+        self.device = device
         self.screen_h = frame_height
         self.screen_w = frame_width
         self.hfov = hfov
@@ -278,6 +285,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.agent_cell_radius = agent_cell_radius
         self.vis_dir = None
         self.timestep = 0
+
+        self.avg_pooling_layer = nn.AvgPool2d(self.du_scale)
+        self._disk_masks = {}
 
     @torch.no_grad()
     def forward(
@@ -659,8 +669,9 @@ class Categorical2DSemanticMapModule(nn.Module):
                 orig=np.zeros(3),
             )
 
+        tilt_deg = torch.rad2deg(tilt).item() if tilt.numel() > 0 else 0.0
         point_cloud_base_coords = du.transform_camera_view_t(
-            point_cloud_t, agent_height, torch.rad2deg(tilt).cpu().numpy(), device
+            point_cloud_t, agent_height, tilt_deg, device
         )
 
         # Show the point cloud in base coordinates for debugging
@@ -725,13 +736,11 @@ class Categorical2DSemanticMapModule(nn.Module):
                     semantic_channels,
                     instance_channels,
                     point_cloud_t.squeeze(0),
-                    torch.concat([current_pose + origins, lmb], axis=0)
-                    .cpu()
-                    .float(),  # store the global pose
+                    torch.concat([current_pose + origins, lmb], axis=0),
                     image=obs[:3],
                 )
 
-        feat[1:, :] = nn.AvgPool2d(self.du_scale)(obs[4:, :, :]).view(
+        feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
             obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
 
@@ -826,7 +835,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.imshow(rotated[0, 0].cpu())
 
         # Clamp to [0, 1] after transform agent view to map coordinates
-        translated = torch.clamp(translated, min=0.0, max=1.0).float()
+        translated = torch.clamp(translated, min=0.0, max=1.0)
         translated = translated.squeeze(0)
 
         # update instance channels
@@ -1054,9 +1063,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         # Update the global map with the associated instances from the local map
-        global_instances_in_local = np.vectorize(
-            self.instance_memory.temp_id_to_global_id.get
-        )(local_map.cpu().numpy())
+
+        # only to speed up
+        max_temp_id = int(max(self.instance_memory.temp_id_to_global_id.keys()))
+        temp_id_lookup = np.full(max_temp_id + 1, -1, dtype=np.int16)  # -1 for unmapped
+        for temp_id, global_id in self.instance_memory.temp_id_to_global_id.items():
+            temp_id_lookup[temp_id] = global_id
+        global_instances_in_local = temp_id_lookup[local_map.cpu().numpy().astype(int)]
+
         global_instances[x1:x2, y1:y2] = torch.maximum(
             global_instances[x1:x2, y1:y2],
             torch.tensor(
@@ -1268,9 +1282,17 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         return map_features.detach()
 
-    def _set_disk_to_one(self, radius, current_map, layer, curr_loc):
+    def _get_disk_mask(self, radius):
+        """Cache disk masks for reuse"""
+        if radius not in self._disk_masks:
+            y, x = np.ogrid[-radius:radius+1, -radius:radius+1]
+            mask = x**2 + y**2 <= radius**2
+            self._disk_masks[radius] = torch.from_numpy(mask).to(self.device)
+        return self._disk_masks[radius]
+
+    def _set_disk_to_one(self, radius, current_map, channel, curr_loc):
         y, x = curr_loc
-        disk = torch.from_numpy(skimage.morphology.disk(radius))
+        disk_mask = self._get_disk_mask(radius)
 
         H, W = current_map.shape[1:]
         y_min = max(y - radius, 0)
@@ -1283,8 +1305,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         disk_x_min = x_min - (x - radius)
         disk_x_max = disk_x_min + (x_max - x_min)
 
-        current_map[layer, y_min:y_max, x_min:x_max][
-            disk[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
+        current_map[channel, y_min:y_max, x_min:x_max][
+            disk_mask[disk_y_min:disk_y_max, disk_x_min:disk_x_max] == 1
         ] = 1
 
     def _get_update_visited_map(self, current_loc, prev_loc, visited_map):

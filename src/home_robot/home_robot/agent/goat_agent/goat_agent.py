@@ -71,6 +71,11 @@ class GoatAgent(Agent):
             print_images=config.PRINT_IMAGES,
             instance_memory=self.instance_memory,
         )
+        if config.NO_GPU:
+            self.device = torch.device("cpu")
+        else:
+            self.device_id = device_id
+            self.device = torch.device(f"cuda:{self.device_id}")
 
         self.semantic_category_mapping = semantic_category_mapping
         self.num_sem_categories = semantic_category_mapping.num_sem_categories
@@ -80,6 +85,7 @@ class GoatAgent(Agent):
         )
         camera_sensor = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
         self.semantic_map_module = Categorical2DSemanticMapModule(
+            device=self.device,
             frame_height=camera_sensor.height,
             frame_width=camera_sensor.width,
             camera_height=camera_sensor.position[1],
@@ -117,11 +123,6 @@ class GoatAgent(Agent):
         self.inst_goal_id = None
         self.inst_goal_found = False
 
-        if config.NO_GPU:
-            self.device = torch.device("cpu")
-        else:
-            self.device_id = device_id
-            self.device = torch.device(f"cuda:{self.device_id}")
 
         self.visualize = config.VISUALIZE or config.PRINT_IMAGES
         self.semantic_map = Categorical2DSemanticMapState(
@@ -354,13 +355,10 @@ class GoatAgent(Agent):
             instances = obs.task_observations["instance_frame"]
             # first create a mapping to 1, 2, 3, ..., num_instances
             instance_ids = np.unique(instances)
-            instance_id_to_idx = {
-                instance_id: idx for idx, instance_id in enumerate(instance_ids)
-            }
-            # Convert from instance_ids to 1, ..., num_instances
-            instances = torch.from_numpy(
-                np.vectorize(instance_id_to_idx.get)(instances)
-            ).to(self.device)
+            instance_ids, instances_idx = np.unique(instances, return_inverse=True)
+            instances_idx = instances_idx.reshape(instances.shape)
+            instances = torch.from_numpy(instances_idx).to(self.device)
+
             # One-hot encode
             instance_frame_onehot = torch.eye(len(instance_ids), device=self.device)[
                 instances

@@ -83,15 +83,12 @@ class FMMPlanner:
         # self.goal_map = None
         self.vis_postfix = vis_postfix
 
-    def set_goal(self, goal, auto_improve: bool = False):
+    def set_goal(self, goal):
         """Set planner goal. Goal should be of size 2, containing x and y positions."""
         traversible_ma = ma.masked_values(self.traversible * 1, 0)
         goal_x, goal_y = int(goal[0] / (self.scale * 1.0)), int(
             goal[1] / (self.scale * 1.0)
         )
-
-        if self.traversible[goal_x, goal_y] == 0.0 and auto_improve:
-            goal_x, goal_y = self._find_nearest_goal([goal_x, goal_y])
 
         traversible_ma[goal_x, goal_y] = 0
         dd = skfmm.distance(traversible_ma, dx=1)
