@@ -277,7 +277,7 @@ class FMMPlanner:
         vis_list.append(np.flipud(mask[..., None].copy() * 255))
         vis_list.append(subset.copy())
 
-        stop = subset[self.du, self.du] < self.goal_tolerance
+        stop = subset[self.du, self.du] < self.goal_tolerance and obstacle_mask[self.du, self.du] != True
         logger.debug(
             f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}"
         )
@@ -296,6 +296,9 @@ class FMMPlanner:
 
         # #1 First attemp: Choose a safe reachable stg
         stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+        logger.debug(
+            f"subset[stgx, stgy] = {subset[stg_x, stg_y]}"
+        )
         # if stg_x == self.du and stg_y == self.du:
         #     #2 Second attemp: Choose a reachable stg
         #     reachable_subset = self.filter_unreachable_goals(
