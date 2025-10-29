@@ -69,8 +69,6 @@ class HabitatGoatEnv(HabitatEnv):
         self.visualizer = Visualizer(config, self.semantic_category_mapping)
         self.imagenav_visualizer = NavVisualizer(config, self.semantic_category_mapping)
 
-        if not self.ground_truth_semantics:
-            self.init_perception_module()
 
     def fetch_vocabulary(self):
         if self.config.habitat.dataset.type == "Goat-v1":
@@ -86,21 +84,10 @@ class HabitatGoatEnv(HabitatEnv):
 
         return vocabulary
 
-        # # TODO: get open set vocabulary
-        # vocabulary = []
-        # for goal in goals:
-        #     vocabulary.append(goal["target"])
-        #     if "landmarks" in goal.keys():
-        #         vocabulary += goal["landmarks"]
-        # return set(vocabulary)
-
     def reset(self):
         habitat_obs = self.habitat_env.reset()
         self.current_episode = self.habitat_env.current_episode
         self.active_task_idx = 0
-
-        if not self.ground_truth_semantics:
-            self.init_perception_module()
 
         self._last_obs = self._preprocess_obs(habitat_obs)
         self.visualizer.reset()
@@ -126,40 +113,6 @@ class HabitatGoatEnv(HabitatEnv):
         self.imagenav_visualizer.set_vis_dir(
             f"{self.scene_id}_{self.episode_id}_{self.current_task_idx}"
         )
-
-    def init_perception_module(self, vocabulary=None):
-        from home_robot.perception.detection.detic.detic_perception import (
-            DeticPerception,
-        )
-
-        # all_ovon_categories_path = "/srv/flash1/rramrakhya3/fall_2023/goat/data/hm3d_meta/ovon_categories_final_split.json"
-        # with open(all_ovon_categories_path, "r") as f:
-        #     all_ovon_categories = json.load(f)
-
-        # # all_ovon_categories = [y for x in all_ovon_categories.values() for y in x if type(y) == str]
-        # all_ovon_categories = sorted(list(set(all_ovon_categories["val_seen"])))
-
-        # all_ovon_categories = ["_".join(x.split(" ")) for x in all_ovon_categories]
-
-        self.segmentation = DeticPerception(
-            vocabulary="custom",
-            custom_vocabulary="," + ",".join(self.semantic_category_mapping.vocabulary),
-            sem_gpu_id=(-1 if self.config.NO_GPU else self.habitat_env.sim.gpu_device),
-        )
-
-        # self.segmentation = MaskRCNNPerception(
-        #     sem_pred_prob_thr=0.9,
-        #     sem_gpu_id=(-1 if self.config.NO_GPU else self.habitat_env.sim.gpu_device),
-        # )
-
-        # from home_robot.perception.detection.grounded_sam.ram_perception import RAMPerception
-
-        # self.segmentation = RAMPerception(
-        #     custom_vocabulary=".",
-        #     sem_gpu_id=(-1 if self.config.NO_GPU else self.habitat_env.sim.gpu_device),
-        #     verbose=False,
-        #     # **module_kwargs
-        # )
 
     def _preprocess_obs(
         self, habitat_obs: habitat.core.simulator.Observations
@@ -235,12 +188,6 @@ class HabitatGoatEnv(HabitatEnv):
             #     semantic_array=obs.semantic+10,
             #     palette=self.semantic_category_mapping.map_color_palette,
             # )
-        else:
-            obs = self.segmentation.predict(obs)
-
-        obs.task_observations["semantic_frame"] = np.concatenate(
-            [obs.rgb, obs.semantic[:, :, np.newaxis]], axis=2
-        ).astype(np.uint8)
         return obs
 
     def _preprocess_depth(self, depth: np.array) -> np.array:
