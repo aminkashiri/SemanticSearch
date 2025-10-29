@@ -184,6 +184,16 @@ class GoatAgent(Agent):
             "objectnav": None,
         }
         self.communication_radius = config.AGENT.COMMUNICATION.radius
+        self.ground_truth_semantics = config.GROUND_TRUTH_SEMANTICS
+        if not self.ground_truth_semantics:
+            from home_robot.perception.detection.detic.detic_perception import (
+                DeticPerception,
+            )
+            self.segmentation = DeticPerception(
+                vocabulary="custom",
+                custom_vocabulary="," + ",".join(self.semantic_category_mapping.vocabulary),
+                sem_gpu_id=(-1 if config.NO_GPU else 0),
+            )
 
     def get_subtask_timestep(self) -> int:
         return self.sub_task_timesteps[self.current_task_idx]
@@ -219,7 +229,7 @@ class GoatAgent(Agent):
 
         self.current_task_idx += 1
         self.navigate_to_best = False
-
+    
     def update_state(self, obs):
         self.current_task = obs.task_observations["tasks"][self.current_task_idx]
         self.total_timesteps = self.total_timesteps + 1
@@ -335,6 +345,11 @@ class GoatAgent(Agent):
         """Take a home-robot observation, preprocess it to put it into the correct format for the
         semantic map."""
 
+        if not self.ground_truth_semantics:
+            obs = self.segmentation.predict(obs)
+            obs.task_observations["instance_frame"] = obs.task_observations["instance_map"] + 1
+
+
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = (
             torch.from_numpy(obs.depth).unsqueeze(-1).to(self.device) * 100.0
@@ -367,6 +382,14 @@ class GoatAgent(Agent):
             obs_preprocessed = torch.cat(
                 [obs_preprocessed, instance_frame_onehot], dim=-1
             )
+            # import os
+            # import cv2
+            # from home_robot.utils.visualization import visualize_semantic_with_labels
+            # visualize_semantic_with_labels(
+            #     semantic_array=instances.cpu().numpy(),
+            #     palette=self.semantic_category_mapping.map_color_palette,
+            #     save_path=os.path.join(self.planner.vis_dir, f"{self.get_subtask_timestep()}_TEMP.instance_input.png"),
+            # )
         obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
