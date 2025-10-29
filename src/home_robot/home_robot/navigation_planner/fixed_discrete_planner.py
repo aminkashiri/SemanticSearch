@@ -311,9 +311,6 @@ class DiscretePlanner:
             # Try to orient towards the goal object - or at least any point sampled from the goal
             # object.
             self.log.debug("----------------------------")
-            self.log.debug(
-                ">>> orienting towards the goal: {relative_angle_to_closest_goal}"
-            )
             if viewpoint_orientation is None:
                 # Compute angle to the final goal
                 goal_x, goal_y = closest_goal_pt
@@ -328,6 +325,9 @@ class DiscretePlanner:
                 relative_angle_to_closest_goal = pu.normalize_angle(
                     angle_agent - viewpoint_orientation
                 )
+            self.log.debug(
+                f">>> orienting towards the goal: {relative_angle_to_closest_goal}"
+            )
             if self.discrete_actions:
                 if relative_angle_to_closest_goal > 2 * self.turn_angle / 3.0:
                     action = DiscreteNavigationAction.TURN_RIGHT
@@ -708,7 +708,6 @@ class DiscretePlanner:
         stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
             state, timestep=self.timestep, prefix=self.prefix
         )
-        stg_x, stg_y = stg_x, stg_y
 
         short_term_goal = int(stg_x), int(stg_y)
 
