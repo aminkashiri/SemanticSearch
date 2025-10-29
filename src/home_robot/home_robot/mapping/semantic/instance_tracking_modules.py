@@ -200,7 +200,7 @@ class InstanceMemory:
         semantic_frame[max_vals == 0] = -1 
         semantic_frame = semantic_frame.int() + 1
         
-        self.images.append(image.unsqueeze(0).detach().cpu())
+        self.images.append(image.detach().cpu())
         self.point_cloud.append(point_cloud.unsqueeze(0).detach().cpu())
         
         pose_cpu = pose.cpu()
