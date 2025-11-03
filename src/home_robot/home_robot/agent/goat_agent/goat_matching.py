@@ -70,6 +70,9 @@ class GoatMatching(Matching):
         # first collect crops of instances found in the current frame
         for temp_id, inst_view in instance_memory.unprocessed_views.items():
             instance_id = instance_memory.temp_id_to_global_id.get(temp_id, -1)
+            logger.debug(
+                f"Processing instance {instance_id} with category {inst_view.category_id} (tmp id: {temp_id})."
+            )
             if instance_id == -1:
                 # logger.debug(f"No map cell assigned yet for this instance yet skipping.")
                 # How can this happen? Objects get global id only if they are projected into the map. We might see an object, but it might not have any projection because:
@@ -78,9 +81,6 @@ class GoatMatching(Matching):
                 continue
             if categories is not None and inst_view.category_id not in categories:
                 continue
-            logger.debug(
-                f"Processing instance {instance_id} with category {inst_view.category_id} (tmp id: {temp_id})."
-            )
             # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
             bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
 
@@ -145,7 +145,7 @@ class GoatMatching(Matching):
             instance_pose = instance_views[best_view].pose
             global_xy = global_pose[:2].cpu()
             instance_xy = instance_pose[:2]
-            score = torch.norm(global_xy - instance_xy).item()
+            score = 1 / (torch.norm(global_xy - instance_xy).item()+1)
 
             #3 Score based on distance and coverage:
             #! myTODO: Very important because we should not go to poses were only a couple of pixels are from the object.
@@ -283,7 +283,7 @@ class GoatMatching(Matching):
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
         logger.debug("Computing matching score with each view...")
         # for i in range(len(rgb_image_batched)):
-        for i in tqdm(range(len(rgb_image_batched))):
+        for i in range(len(rgb_image_batched)):
             if goal_image_keypoints is None:
                 goal_image_keypoints = {}
             if rgb_image_keypoints is None:
@@ -382,7 +382,7 @@ class GoatMatching(Matching):
             inst_idx = sorted_inst_ids[idx]
             idx += 1
             logger.debug(
-                f"Trying to localize instance {inst_idx + 1} with score {scores[inst_idx]}"
+                f"Trying to localize instance {instance_ids[inst_idx]} with score {scores[inst_idx]}"
             )
             best_instance_id = instance_ids[inst_idx]
             if best_instance_id == -1:
@@ -419,6 +419,7 @@ class GoatMatching(Matching):
         score_thresh: float = 0.0,
         agg_fn: str = "max",
     ) -> Tuple[torch.Tensor, torch.Tensor, bool, Optional[int]]:
+        #! myTODO: Should I overwrite Mem with obs, or otherwise?
         inst_goal_found = False
         inst_goal_id = None
 

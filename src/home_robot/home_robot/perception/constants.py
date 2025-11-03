@@ -102,6 +102,7 @@ class HabitatObjNav2022Categories(SemanticCategoryMapping):
             i += 1
             self._instance_id_to_category_id.append(category_id)
 
+        # Each goal, is an instance goal, and has different id. So we are mapping all of the ids
         for goal in env.current_episode.goals:
             instance_id = int(goal.object_name.split("_")[-1])
             if self._instance_id_to_category_id[instance_id] == 0:
@@ -150,13 +151,13 @@ class GoatCategories(SemanticCategoryMapping):
         return (goal_id, self.goal_id_to_goal_name[goal_id])
 
     def reset_instance_id_to_category_id(self, env: Env):
-        self._instance_id_to_category_id = []
-        for obj in env.sim.semantic_annotations().objects:
-            raw_category = obj.category.name().lower().strip()
-            category_id = self.goal_name_to_goal_id.get(hm3d_raw_to_hm3d.get(raw_category), 0)
-            self._instance_id_to_category_id.append(category_id)
-
-        self._instance_id_to_category_id = np.array(self._instance_id_to_category_id)
+        self._instance_id_to_category_id = np.zeros(len(env.sim.semantic_annotations().objects), dtype=np.int)
+        for task_goal in env.current_episode.goals:
+            for inst_goal in task_goal:
+                instance_id = int(inst_goal['object_id'].split("_")[-1])
+                object_category = "_".join(inst_goal['object_category'].split(" "))
+                # print(f"Manually adding: {inst_goal['object_id']} -> {object_category}, {instance_id}->{self.goal_name_to_goal_id[object_category]}")
+                self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[object_category]
 
     @property
     def all_hm3d_categories(self):

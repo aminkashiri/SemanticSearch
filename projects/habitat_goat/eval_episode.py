@@ -83,7 +83,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:2]
+    config.habitat.dataset.content_scenes = all_scenes[:15]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -224,7 +224,7 @@ if __name__ == "__main__":
                 ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")
                 logger.info(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx} {ep_metrics}"
+                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
                 )
                 logger.info("-------------------------")
 
@@ -240,7 +240,7 @@ if __name__ == "__main__":
                     pbar.reset()
 
         logger.info(
-            f"------------------------ Episode {env.scene_id} {env.episode} over ------------------------"
+            f"------------------------ Episode {env.scene_id} {env.episode.episode_id} over ------------------------"
         )
         pbar.close()
         save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)

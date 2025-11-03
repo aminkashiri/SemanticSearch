@@ -167,6 +167,9 @@ class DiscretePlanner:
         self.episode_panorama_start_steps = self.panorama_start_steps
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.moved_forward = False
+    
+    def reset_sub_episode(self):
+        self.moved_forward = False
 
     def set_vis_dir(self, scene_id: str, episode_id: str):
         self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
@@ -194,12 +197,9 @@ class DiscretePlanner:
             goal_map: (M, M) binary array denoting goal location
             sensor_pose: (7,) array denoting global pose (x, y, o)
              and local map boundaries planning window (gx1, gx2, gy1, gy2)
-            found_goal: whether we found the object goal category
 
         Returns:
             action: low-level action
-            closest_goal_map: (M, M) binary array denoting closest goal
-             location in the goal map in geodesic distance
         """
         reachable = False
         stop = False
@@ -209,13 +209,6 @@ class DiscretePlanner:
 
         if inst_goal_found:
             self.episode_panorama_start_steps = 0
-
-        #! TEMP
-        # if self.agent_id == 1:
-        #     if total_timesteps < 5:
-        #         return DiscreteNavigationAction.MOVE_FORWARD, vis_input # If failed to plan, visualize locally.
-        #     elif total_timesteps < self.episode_panorama_start_steps+5:
-        #         return DiscreteNavigationAction.TURN_RIGHT, vis_input # If failed to plan, visualize locally.
 
         if total_timesteps < self.episode_panorama_start_steps:
             return (
@@ -240,7 +233,6 @@ class DiscretePlanner:
                 reachable,
                 stop,
                 short_term_goal,
-                closest_goal_pt,
                 is_local,
                 vis_input,
             ) = self.plan_to_instance_goal(inst_goal_id, try_best, postfix)
@@ -253,7 +245,6 @@ class DiscretePlanner:
                     reachable,
                     stop,
                     short_term_goal,
-                    closest_goal_pt,
                     is_local,
                     vis_input,
                 ) = self.plan_to_frontier_goal(
@@ -266,7 +257,6 @@ class DiscretePlanner:
             action = self.get_action(
                 stop,
                 short_term_goal,
-                closest_goal_pt,
                 (
                     self.semantic_map.local_loc
                     if is_local
@@ -279,10 +269,10 @@ class DiscretePlanner:
         return action, vis_input
 
     def get_action(
-        self, stop, short_term_goal, closest_goal_pt, location, best_viewpoint=None
+        self, stop, short_term_goal, location, best_viewpoint=None
     ):
         """
-        Gets discrete/continuous action given short-term goal. Agent orients to closest goal if found_goal=True and stop=True
+        Gets discrete/continuous action given short-term goal. Agent orients to short term goal if stop=True
         """
         if self.moved_forward:
             self.log.debug("Already toward the goal, stopping.")
@@ -293,7 +283,6 @@ class DiscretePlanner:
             viewpoint_orientation = best_viewpoint.pose[2]
         angle_agent = pu.normalize_angle(self.curr_global_pose[2])
 
-        # stop == True, orient towards goal first, then actually stop.
         if stop == False:
             stg_x, stg_y = short_term_goal
             relative_stg_x, relative_stg_y = stg_x - location[0], stg_y - location[1]
@@ -308,12 +297,10 @@ class DiscretePlanner:
                 else:
                     action = DiscreteNavigationAction.MOVE_FORWARD
         else:
-            # Try to orient towards the goal object - or at least any point sampled from the goal
-            # object.
-            self.log.debug("----------------------------")
+            # Try to orient towards the goal object
             if viewpoint_orientation is None:
                 # Compute angle to the final goal
-                goal_x, goal_y = closest_goal_pt
+                goal_x, goal_y = short_term_goal
                 angle_goal = math.degrees(
                     math.atan2(goal_x - location[0], goal_y - location[1])
                 )
@@ -645,8 +632,6 @@ class DiscretePlanner:
 
         Returns:
             short_term_goal: short-term goal position (x, y) in map
-            closest_goal_map: (M, M) binary array denoting closest goal
-             location in the goal map in geodesic distance
             replan: binary flag to indicate we couldn't find a plan to reach
              the goal
             stop: binary flag to indicate we've reached the goal
@@ -667,7 +652,7 @@ class DiscretePlanner:
         #! myTODO
         if not np.any(navigable_goal_map):
             self.log.info(
-                f"Couldn't find any navigable goal points in the map. Should only happned for frontier."
+                f"Couldn't find any navigable goal points in the map. Should only happen for frontier."
             )
             return (
                 False,
@@ -695,13 +680,6 @@ class DiscretePlanner:
             # number="10",
         )
 
-        # goal_distance_map, closest_goal_pt = self.get_closest_goal(navigable_goal_map, local_loc)
-        #! myTODO: Make sure if I should use navigable goal map or dilated goal map or original goal map
-        closest_goal_pt = self.get_closest_goal(navigable_goal_map, location)
-
-        #! myTODO: Looks like this is no needed
-        # self.timestep += 1
-
         state = [location[0], location[1]]
 
         # This is where we create the planner to get the trajectory to this state
@@ -728,7 +706,7 @@ class DiscretePlanner:
                 goal_map=navigable_goal_map,
             )
 
-        return (reachable, stop, short_term_goal, closest_goal_pt, navigable_goal_map)
+        return reachable, stop, short_term_goal, navigable_goal_map
 
     #! It actually gets closest geometrical goal, not closest traversible goal
     def get_closest_goal(self, goal_map, start):
@@ -904,7 +882,7 @@ class DiscretePlanner:
             )
             if frontier_map is None:
                 self.log.info("No frontiers remaining.")
-                return False, False, None, None, None, {}
+                return False, False, None, None, {}
 
             robot_loc = self.semantic_map.get_loc(is_local)
             if self.prev_frontier.shape != frontier_map.shape or np.all(
@@ -953,7 +931,6 @@ class DiscretePlanner:
                 reachable,
                 stop,
                 short_term_goal,
-                closest_goal_pt,
                 dilated_frontier_map,
             ) = self._get_short_term_goal(
                 traversible,
@@ -985,12 +962,11 @@ class DiscretePlanner:
         vis_input = {}
         if reachable:
             vis_input = {
-                "closest_goal_pt": closest_goal_pt,
                 "short_term_goal": short_term_goal,
                 "is_local": is_local,
             }
         vis_input["dilated_obstacle_map"] = 1 - traversible
-        return reachable, stop, short_term_goal, closest_goal_pt, is_local, vis_input
+        return reachable, stop, short_term_goal, is_local, vis_input
 
     # def get_frontier_scores_distance():
 
@@ -1229,7 +1205,6 @@ class DiscretePlanner:
         reachable = False
         force_global = False
         short_term_goal = None
-        closest_goal_pt = None
         while True:
             goal_map = self.get_goal_map(
                 traversible,
@@ -1248,7 +1223,7 @@ class DiscretePlanner:
                 f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
             )
 
-            (reachable, stop, short_term_goal, closest_goal_pt, dilated_goal_map) = (
+            (reachable, stop, short_term_goal, navigable_goal_map) = (
                 self._get_short_term_goal(
                     traversible,
                     goal_map,
@@ -1274,7 +1249,7 @@ class DiscretePlanner:
                     try_idx += 1
                     #! myTODO: Important: This might not be lots of heurisitc. Maybe its better to use something like BLACKLISTED_TARGET_MAP, however, that has its own issues.
                     self.semantic_map.merge_map(
-                        dilated_goal_map, MC.OBSTACLE_MAP, is_local
+                        navigable_goal_map, MC.OBSTACLE_MAP, is_local
                     )
                     self.reset_obs_dilation_selem_radius()
             (
@@ -1294,11 +1269,13 @@ class DiscretePlanner:
                 self.log.debug(f"We need to stop.")
             else:
                 self.log.debug(f"Short term goal: {short_term_goal}")
+        if stop:
+            x_goal, y_goal = np.where(goal_instance_map)
+            short_term_goal = int(np.mean(x_goal)), int(np.mean(y_goal))
 
         vis_input = {}
         if reachable:
             vis_input = {
-                "closest_goal_pt": closest_goal_pt,
                 "short_term_goal": short_term_goal,
                 "is_local": is_local,
                 "inst_goal_found": True,
@@ -1310,7 +1287,6 @@ class DiscretePlanner:
             reachable,
             stop,
             short_term_goal,
-            closest_goal_pt,
             is_local,
             vis_input,
         )

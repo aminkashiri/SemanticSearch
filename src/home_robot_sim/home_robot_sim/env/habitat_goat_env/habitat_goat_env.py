@@ -54,6 +54,7 @@ class HabitatGoatEnv(HabitatEnv):
             dataset_type = config.habitat.dataset.type
             if dataset_type == "Goat-v1":
                 self.semantic_category_mapping = GoatCategories(self.fetch_vocabulary())
+                logger.debug(f"{self.semantic_category_mapping.goal_id_to_goal_name}")
             elif dataset_type == "ObjectNav-v1":
                 self.semantic_category_mapping = HabitatObjNav2022Categories()
             else:
@@ -74,11 +75,11 @@ class HabitatGoatEnv(HabitatEnv):
         if self.config.habitat.dataset.type == "Goat-v1":
             vocabulary = sorted(
                 {
-                    "_".join(goal.split(" "))
-                    for goal in self.habitat_env._dataset.all_categories
+                    "_".join(cat.split(" "))
+                    for cat in self.habitat_env._dataset.all_categories
                 }
             )
-            logger.info("Vocabulary: {vocabulary}")
+            logger.info(f"Vocabulary: {vocabulary}")
         else:
             raise NotImplementedError
 

@@ -229,6 +229,7 @@ class GoatAgent(Agent):
 
         self.current_task_idx += 1
         self.navigate_to_best = False
+        self.planner.reset_sub_episode()
     
     def update_state(self, obs):
         self.current_task = obs.task_observations["tasks"][self.current_task_idx]
@@ -368,7 +369,6 @@ class GoatAgent(Agent):
         if self.record_instance_ids:
             # * Why using instance_frame which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes.
             instances = obs.task_observations["instance_frame"]
-            # first create a mapping to 1, 2, 3, ..., num_instances
             instance_ids = np.unique(instances)
             instance_ids, instances_idx = np.unique(instances, return_inverse=True)
             instances_idx = instances_idx.reshape(instances.shape)
@@ -382,14 +382,6 @@ class GoatAgent(Agent):
             obs_preprocessed = torch.cat(
                 [obs_preprocessed, instance_frame_onehot], dim=-1
             )
-            # import os
-            # import cv2
-            # from home_robot.utils.visualization import visualize_semantic_with_labels
-            # visualize_semantic_with_labels(
-            #     semantic_array=instances.cpu().numpy(),
-            #     palette=self.semantic_category_mapping.map_color_palette,
-            #     save_path=os.path.join(self.planner.vis_dir, f"{self.get_subtask_timestep()}_TEMP.instance_input.png"),
-            # )
         obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
@@ -548,7 +540,7 @@ class GoatAgent(Agent):
             # We also search in memory when env is fully explored, but that is handled somewhere else.
             mem_match_confidences, mem_match_instance_ids = (
                 self._match_against_memory()
-                if self.get_subtask_timestep() == 0
+                if self.get_subtask_timestep() == 1
                 else ([], [])
             )
             obs_match_confidences, obs_match_instance_ids = (
@@ -559,8 +551,8 @@ class GoatAgent(Agent):
             )
             if len(mem_match_confidences) > 0 or len(obs_match_confidences) > 0:
                 (
-                    self.inst_goal_found,
-                    self.inst_goal_id,
+                    inst_goal_found,
+                    inst_goal_id,
                 ) = self.matching.get_best_inst_goal(
                     obs_match_confidences,
                     obs_match_instance_ids,
@@ -568,6 +560,10 @@ class GoatAgent(Agent):
                     mem_match_instance_ids=mem_match_instance_ids,
                     score_thresh=self._score_thresh(),
                 )
+                if not inst_goal_id is None:
+                    self.inst_goal_found = inst_goal_found
+                    self.inst_goal_id = inst_goal_id
+                    # Else, we should not replace, maybe we have previously seen a goal and moving toward it. 
 
     def _reset_vis_dir(self, scene_id, episode_id, current_task_idx):
         self.planner.set_vis_dir(scene_id, f"{episode_id}_{current_task_idx}")
