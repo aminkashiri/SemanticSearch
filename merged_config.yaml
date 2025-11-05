@@ -1,0 +1,295 @@
+habitat:
+  seed: 100
+  env_task: GymHabitatEnv
+  env_task_gym_dependencies: []
+  env_task_gym_id: ''
+  environment:
+    max_episode_steps: 500
+    max_episode_seconds: 10000000
+    iterator_options:
+      cycle: true
+      shuffle: true
+      group_by_scene: true
+      num_episode_sample: -1
+      max_scene_repeat_episodes: -1
+      max_scene_repeat_steps: 10000
+      step_repetition_range: 0.2
+  simulator:
+    type: Sim-v0
+    action_space_config: v1
+    action_space_config_arguments: {}
+    forward_step_size: 0.25
+    create_renderer: false
+    requires_textures: true
+    auto_sleep: false
+    sleep_dist: 3.0
+    step_physics: true
+    concur_render: false
+    needs_markers: true
+    update_robot: true
+    scene: data/scene_datasets/habitat-test-scenes/van-gogh-room.glb
+    scene_dataset: default
+    additional_object_paths: []
+    seed: ${habitat.seed}
+    turn_angle: 30
+    tilt_angle: 30
+    default_agent_id: 0
+    debug_render: false
+    debug_render_robot: false
+    kinematic_mode: false
+    debug_render_goal: true
+    robot_joint_start_noise: 0.0
+    ctrl_freq: 120.0
+    ac_freq_ratio: 4
+    load_objs: false
+    hold_thresh: 0.15
+    grasp_impulse: 10000.0
+    agents:
+      agent0:
+        height: 0.88
+        radius: 0.18
+        sim_sensors:
+          rgb_sensor:
+            type: HabitatSimRGBSensor
+            height: 480
+            width: 640
+            position:
+            - 0.0
+            - 0.88
+            - 0.0
+            orientation:
+            - 0.0
+            - 0.0
+            - 0.0
+            hfov: 79
+            sensor_subtype: PINHOLE
+            noise_model: None
+            noise_model_kwargs: {}
+          depth_sensor:
+            type: HabitatSimDepthSensor
+            height: 480
+            width: 640
+            position:
+            - 0.0
+            - 0.88
+            - 0.0
+            orientation:
+            - 0.0
+            - 0.0
+            - 0.0
+            hfov: 79
+            sensor_subtype: PINHOLE
+            noise_model: None
+            noise_model_kwargs: {}
+            min_depth: 0.0
+            max_depth: 5.0
+            normalize_depth: true
+          semantic_sensor:
+            type: HabitatSimSemanticSensor
+            height: 480
+            width: 640
+            position:
+            - 0.0
+            - 0.88
+            - 0.0
+            orientation:
+            - 0.0
+            - 0.0
+            - 0.0
+            hfov: 79
+            sensor_subtype: PINHOLE
+            noise_model: None
+            noise_model_kwargs: {}
+        is_set_start_state: false
+        start_position:
+        - 0.0
+        - 0.0
+        - 0.0
+        start_rotation:
+        - 0.0
+        - 0.0
+        - 0.0
+        - 1.0
+        joint_start_noise: 0.1
+        robot_urdf: data/robots/hab_fetch/robots/hab_fetch.urdf
+        robot_type: FetchRobot
+        ik_arm_urdf: data/robots/hab_fetch/robots/fetch_onlyarm.urdf
+    agents_order:
+    - agent0
+    habitat_sim_v0:
+      gpu_device_id: 0
+      gpu_gpu: false
+      allow_sliding: false
+      frustum_culling: true
+      enable_physics: false
+      physics_config_file: ./data/default.physics_config.json
+      leave_context_with_background_renderer: false
+      enable_gfx_replay_save: false
+    ep_info: null
+    instance_ids_start: 50
+  task:
+    reward_measure: distance_to_goal_reward
+    success_measure: spl
+    success_reward: 2.5
+    slack_reward: -0.01
+    end_on_success: true
+    type: ObjectNav-v1
+    lab_sensors:
+      objectgoal_sensor:
+        type: ObjectGoalSensor
+        goal_spec: TASK_CATEGORY_ID
+        goal_spec_max_val: 50
+      compass_sensor:
+        type: CompassSensor
+      gps_sensor:
+        type: GPSSensor
+        dimensionality: 2
+    measurements:
+      distance_to_goal:
+        type: DistanceToGoal
+        distance_to: VIEW_POINTS
+        goals_attr: goals
+        distance_from: BASE
+      success:
+        type: Success
+        success_distance: 0.1
+      spl:
+        type: SPL
+      soft_spl:
+        type: SoftSPL
+      distance_to_goal_reward:
+        type: DistanceToGoalReward
+    goal_sensor_uuid: objectgoal
+    count_obj_collisions: true
+    settle_steps: 5
+    constraint_violation_ends_episode: true
+    constraint_violation_drops_object: false
+    force_regenerate: false
+    should_save_to_cache: false
+    must_look_at_targ: true
+    object_in_hand_sample_prob: 0.167
+    min_start_distance: 3.0
+    render_target: true
+    physics_stability_steps: 1
+    num_spawn_attempts: 200
+    spawn_max_dists_to_obj: 1.0
+    base_angle_noise: 0.523599
+    ee_sample_factor: 0.2
+    ee_exclude_region: 0.0
+    base_noise: 0.05
+    spawn_region_scale: 0.2
+    joint_max_impulse: -1.0
+    desired_resting_position:
+    - 0.5
+    - 0.0
+    - 1.0
+    use_marker_t: true
+    cache_robot_init: false
+    success_state: 0.0
+    easy_init: false
+    biased_init: false
+    should_enforce_target_within_reach: false
+    task_spec_base_path: habitat/task/rearrange/pddl/
+    task_spec: ''
+    pddl_domain_def: replica_cad
+    obj_succ_thresh: 0.3
+    enable_safe_drop: false
+    art_succ_thresh: 0.15
+    robot_at_thresh: 2.0
+    filter_nav_to_tasks: []
+    actions:
+      stop:
+        type: StopAction
+      move_forward:
+        type: MoveForwardAction
+      turn_left:
+        type: TurnLeftAction
+      turn_right:
+        type: TurnRightAction
+      look_up:
+        type: LookUpAction
+      look_down:
+        type: LookDownAction
+    goal_type: object_on_recep
+    pick_init: false
+    place_init: false
+    camera_tilt: -0.7125
+  dataset:
+    type: ObjectNav-v1
+    split: val
+    scenes_dir: data/scene_datasets/
+    content_scenes:
+    - '*'
+    scene_indices_range: null
+    data_path: data/datasets/objectnav/hm3d/v2/{split}/{split}.json.gz
+  gym:
+    auto_name: ''
+    obs_keys: null
+    action_keys: null
+    achieved_goal_keys: []
+    desired_goal_keys: []
+NO_GPU: 0
+DUMP_LOCATION: datadump
+EXP_NAME: MA_Burgard_objnav2023_decentralized
+NUM_AGENTS: 2
+DATASET: habitat_objnav_2023
+VISUALIZE: 0
+PRINT_IMAGES: 1
+GROUND_TRUTH_SEMANTICS: 1
+seed: 1
+SHOW_RL_OBS: false
+ENVIRONMENT:
+  max_num_sub_task_episodes: 10
+AGENT:
+  max_steps: 500
+  panorama_start: 1
+  exploration_strategy: frontier
+  frontier_metric: distance
+  exploration_type: raycast
+  radius: 0.05
+  COMMUNICATION:
+    radius: 5
+  SEMANTIC_MAP:
+    semantic_categories: dataset
+    map_size_cm: 4800
+    map_resolution: 5
+    vision_range: 100
+    global_downscaling: 2
+    du_scale: 4
+    cat_pred_threshold: 5.0
+    exp_pred_threshold: 1.0
+    map_pred_threshold: 1.0
+    explored_radius: 10
+    been_close_to_radius: 200
+    target_blacklisting_radius: 100
+    min_obs_height_cm: 10
+    goal_filtering: true
+    record_instance_ids: true
+  PLANNER:
+    collision_threshold: 0.1
+    min_obs_dilation_selem_radius: 1
+    obs_dilation_selem_radius: 3
+    map_downsample_factor: 1
+    map_update_frequency: 1
+    step_size: 5
+    discrete_actions: true
+    min_goal_distance_cm: 25
+  SUPERGLUE:
+    max_keypoints: 1024
+    keypoint_threshold: 0.005
+    nms_radius: 4
+    superglue_model: indoor
+    sinkhorn_iterations: 20
+    match_threshold: 0.2
+    score_function: confidence_sum
+    score_thresh_image: 24.5
+    score_thresh_lang: 0.24
+    match_projection_threshold: 0.2
+    goto_past_pose: true
+  DETIC:
+    config_file: Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml
+    vocabulary: custom
+    custom_vocabulary: chair,sofa,bed,toilet,potted_plant,tv_monitor
+    confidence_threshold: 0.2
+    weights: Detic/models/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth
+    augment_mask_with_box: true

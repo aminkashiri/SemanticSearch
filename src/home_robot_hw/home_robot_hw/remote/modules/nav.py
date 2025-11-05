@@ -2,7 +2,7 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-from typing import Iterable
+from typing import Iterable, Tuple
 
 import rospy
 from geometry_msgs.msg import Twist
@@ -16,57 +16,57 @@ from home_robot_hw.ros.utils import matrix_to_pose_msg
 from .abstract import AbstractControlModule, enforce_enabled
 
 
-class StretchNavigationClient(AbstractControlModule):
-    block_spin_rate = 10
+class ScoutNavigationClient(AbstractControlModule):
+    """
+    A simplified navigation client for the Scout mobile robot.
+    This class handles basic navigation commands by publishing to the /cmd_vel topic.
+    It does not rely on a sophisticated "goto" controller like the Stretch, as the Scout's
+    kinematics are much simpler.
+    """
 
-    def __init__(self, ros_client, robot_model: Robot):
+    def __init__(self, ros_client, robot_model: Robot = None):
         super().__init__()
 
         self._ros_client = ros_client
-        self._robot_model = robot_model
+        # Scout does not have a complex kinematic model, so robot_model is not used here.
+        # self._robot_model = robot_model
         self._wait_for_pose()
 
     # Enable / disable
-
     def _enable_hook(self) -> bool:
-        """Called when interface is enabled."""
-        result = self._ros_client.nav_mode_service(TriggerRequest())
-        rospy.loginfo(result.message)
-        return result.success
+        """Called when interface is enabled. For Scout, this is a no-op."""
+        return True
 
     def _disable_hook(self) -> bool:
-        """Called when interface is disabled."""
-        result = self._ros_client.goto_off_service(TriggerRequest())
-        rospy.sleep(T_LOC_STABILIZE)  # wait for robot movement to stop
-        return result.success
+        """Called when interface is disabled. For Scout, this is a no-op."""
+        return True
 
     # Interface methods
-
     def get_base_pose(self):
         """get the latest base pose from sensors"""
-        return sophus2xyt(self._ros_client.se3_base_filtered)
+        return self._ros_client.get_base_pose()
 
     def at_goal(self) -> bool:
-        """Returns true if the agent is currently at its goal location"""
-        if (
-            self._ros_client._goal_reset_t is not None
-            and (rospy.Time.now() - self._ros_client._goal_reset_t).to_sec()
-            > self._ros_client.msg_delay_t
-        ):
-            return self._ros_client.at_goal
-        else:
-            return False
+        """
+        For a simplified navigation client, this would be handled by the agent.
+        The client does not have a "goal reached" flag.
+        """
+        # This functionality should be handled by the agent.
+        return False
 
     @enforce_enabled
     def set_velocity(self, v, w):
         """
         Directly sets the linear and angular velocity of robot base.
+        This is kept for completeness, but the main agent control loop 
+        uses navigate_to.
         """
         msg = Twist()
         msg.linear.x = v
         msg.angular.z = w
 
-        self._ros_client.goto_off_service(TriggerRequest())
+        # For Scout, we directly publish to the velocity topic.
+        print(f"Setting velocity: linear={v:.2f} m/s, angular={w:.2f} rad/s")
         self._ros_client.velocity_pub.publish(msg)
 
     @enforce_enabled
@@ -79,7 +79,11 @@ class StretchNavigationClient(AbstractControlModule):
         blocking: bool = True,
     ):
         """
-        Cannot be used in manipulation mode.
+        FIX: For this simplified velocity-control model, we treat the input XYT 
+        as the immediate (v, w) velocity command to execute.
+
+        UPDATED: The command now "latches" (stays active) for 0.5 seconds with twice the value
+        before a zero-velocity command is sent to stop the robot.
         """
         # Parse inputs
         assert len(xyt) == 3, "Input goal location must be of length 3."
@@ -87,67 +91,45 @@ class StretchNavigationClient(AbstractControlModule):
         if avoid_obstacles:
             raise NotImplementedError("Obstacle avoidance unavailable.")
 
-        # Set yaw tracking
-        self._ros_client.set_yaw_service(SetBoolRequest(data=(not position_only)))
+        # Extract linear velocity (v) from x and angular velocity (w) from theta
+        v = xyt[0]*2  # Linear velocity (x)
+        w = xyt[2]*2  # Angular velocity (theta)
+        
+        if abs(v) <0.1 and abs(w) <0.1:
+            print("[HELLLLLOOOOOO!!!] Zero velocity command received; no movement executed.")
+            return  # No movement needed
+        
+        # 1. Create the desired Twist message
+        move_msg = Twist()
+        move_msg.linear.x = v
+        move_msg.angular.z = w
+        
 
-        # Compute absolute goal
-        if relative:
-            xyt_base = sophus2xyt(self._ros_client.se3_base_filtered)
-            xyt_goal = xyt_base_to_global(xyt, xyt_base)
-        else:
-            xyt_goal = xyt
+        # 2. Publish the velocity command to start motion
+        print(f"Setting velocity for 0.5s: linear={v:.2f} m/s, angular={w:.2f} rad/s")
+        self._ros_client.velocity_pub.publish(move_msg)
 
-        # Clear self.at_goal
-        self._ros_client.at_goal = False
-        self._ros_client.goal_reset_t = None
+        # --- Wait for 0.5 seconds to "latch" the movement ---
+        # Since 'rospy' is imported, we use its sleep function.
+        rospy.sleep(0.5) 
+        # ---------------------------------------------------
 
-        # Set goal
-        goal_matrix = xyt2sophus(xyt_goal).matrix()
-        self._ros_client.goal_visualizer(goal_matrix)
-        msg = matrix_to_pose_msg(goal_matrix)
-
-        self._ros_client.goto_on_service(TriggerRequest())
-        self._ros_client.goal_pub.publish(msg)
-
-        self._register_wait(self._wait_for_goal_reached)
-        if blocking:
-            self.wait()
+        # 3. Publish a zero-velocity command to stop the robot
+        stop_msg = Twist() # All fields are 0.0 by default
+        print("Stopping velocity command.")
+        self._ros_client.velocity_pub.publish(stop_msg)
 
     @enforce_enabled
     def home(self):
+        """Sends a command to navigate to the origin [0, 0, 0]."""
+        # Sending [0, 0, 0] is a STOP command in this velocity control context
         self.navigate_to([0.0, 0.0, 0.0], blocking=True)
 
     # Helper methods
-
     def _wait_for_pose(self):
-        """wait until we have an accurate pose estimate"""
+        """Wait until we have an accurate pose estimate."""
         rate = rospy.Rate(10)
         while not rospy.is_shutdown():
             if self._ros_client.se3_base_filtered is not None:
                 break
             rate.sleep()
-
-    def _wait_for_goal_reached(self):
-        """Wait until goal is reached"""
-        rospy.sleep(self._ros_client.msg_delay_t)
-        rate = rospy.Rate(self.block_spin_rate)
-        t0 = rospy.Time.now()
-        while not rospy.is_shutdown():
-            t1 = rospy.Time.now()
-            print(
-                "...waited for controller",
-                (t1 - t0).to_sec(),
-                "is at goal =",
-                self.at_goal(),
-            )
-            # Verify that we are at goal and perception is synchronized with pose
-            if self.at_goal() and self._ros_client.recent_depth_image(
-                self._ros_client.msg_delay_t
-            ):
-                break
-            else:
-                rate.sleep()
-        # TODO: this should be unnecessary
-        # TODO: add this back in if we are having trouble building maps
-        # Make sure that depth and position are synchronized
-        # rospy.sleep(self.msg_delay_t * 5)

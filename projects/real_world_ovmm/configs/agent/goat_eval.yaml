@@ -1,0 +1,96 @@
+NO_GPU: 0                 # Run on GPU for perception
+NUM_ENVIRONMENTS: 1       # Single robot instance
+DUMP_LOCATION: datadump/real_world_goat
+EXP_NAME: scout_goat_eval
+VISUALIZE: 0              # Essential for debugging
+PRINT_IMAGES: 1           # Save visualization images
+GROUND_TRUTH_SEMANTICS: 0 # No ground truth in real world
+seed: 0
+SHOW_RL_OBS: False
+DATASET: goat             # GOAT multi-task dataset
+VERBOSE: True             # Enable verbose logging in all functions
+
+ENVIRONMENT:
+  forward: 0.25           # 25cm forward movement
+  turn_angle: 30.0        # 30 degree turns
+  frame_height: 480       # Camera resolution
+  frame_width: 640
+  camera_height: 0.3556   # Scout camera mounting height
+  hfov: 60.0              # Horizontal field of view
+  min_depth: 0.2          # Minimum reliable depth (20cm)
+  max_depth: 5.0          # Maximum reliable depth (5m)
+  max_num_sub_task_episodes: 10  # Maximum sequential tasks per episode
+  category_map_file: projects/real_world_goat/configs/goat_category_map.json
+
+AGENT:
+  max_steps: 500          # Maximum steps per sub-task
+  panorama_start: 1       # 360 degree turn at episode start
+  exploration_strategy: frontier
+  frontier_metric: distance
+  exploration_type: raycast
+  radius: 0.18            # Robot radius in meters
+  
+  COMMUNICATION:
+    radius: 5             # Communication radius for multi-agent (unused in single robot)
+
+  SEMANTIC_MAP:
+    semantic_categories: goat  # GOAT vocabulary
+    num_sem_categories: 20  # Will be overridden by actual vocabulary size
+    map_size_cm: 4800        # 48m x 48m map
+    map_resolution: 5        # 5cm per cell (balance between detail and computation)
+    vision_range: 100        # 5m vision range (100 cells * 5cm)
+    global_downscaling: 2    # Global map downscaling factor
+    du_scale: 4              # Depth projection downscaling
+    cat_pred_threshold: 5.0  # Points needed to classify semantic category
+    exp_pred_threshold: 1.0  # Points needed to mark as explored
+    map_pred_threshold: 1.0  # Points needed to mark as obstacle
+    explored_radius: 10      # Radius of explored region (cm)
+    been_close_to_radius: 75   # Goal achievement radius: 0.75m
+    target_blacklisting_radius: 100  # Blacklist radius if target invalid (1m)
+    min_obs_height_cm: 10    # Minimum obstacle height
+    goal_filtering: True     # Filter goal map to largest connected component
+    record_instance_ids: True  # Track individual object instances
+    max_instances: 500       # Maximum number of instances to track
+
+  PLANNER:
+    collision_threshold: 0.10       # Collision detection threshold
+    min_obs_dilation_selem_radius: 1
+    obs_dilation_selem_radius: 3    # Obstacle dilation for safety
+    map_downsample_factor: 1
+    map_update_frequency: 1         # Update map every step
+    step_size: 5                    # Short-term goal distance (5 cells = 25cm)
+    discrete_actions: True
+    min_goal_distance_cm: 25        # Minimum distance to goal
+
+  SUPERGLUE:
+    max_keypoints: 1024
+    keypoint_threshold: 0.005
+    nms_radius: 4
+    superglue_model: indoor
+    sinkhorn_iterations: 20
+    match_threshold: 0.2
+    score_function: confidence_sum
+    score_thresh_image: 24.5      # Confidence threshold for ImageNav
+    score_thresh_lang: 0.24        # Confidence threshold for LanguageNav
+    match_projection_threshold: 0.2
+    goto_past_pose: True
+
+  DETIC:
+    config_file: Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml
+    vocabulary: custom
+    # GOAT common categories - will be dynamically updated based on task
+    custom_vocabulary: chair,sofa,bed,toilet,potted_plant,tv_monitor,table,door,window,bookshelf,picture,cabinet,cushion,lamp,box,bag,basket,bottle,bowl,clock
+    confidence_threshold: 0.2
+    weights: Detic/models/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth
+    augment_mask_with_box: True
+
+# Real-world evaluation settings
+EVAL_SETTINGS:
+  control_frequency: 0.25   # 0.5 Hz control loop
+  wait_for_action: True     # Block until action completes
+  reset_nav: False          # Don't reset to origin between episodes
+  episode_timeout_minutes: 15  # Maximum time per episode
+  task_timeout_steps: 500   # Maximum steps per task
+  save_trajectory: True     # Save robot trajectory
+  save_semantic_maps: True  # Save semantic map visualizations
+  log_verbose: True         # Detailed logging
