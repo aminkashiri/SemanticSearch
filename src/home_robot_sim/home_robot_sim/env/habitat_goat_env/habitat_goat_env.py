@@ -101,7 +101,7 @@ class HabitatGoatEnv(HabitatEnv):
         self.episode_id = self.episode.episode_id
 
         self.current_task_idx = (
-            self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
+            self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
         )
         self.semantic_category_mapping.reset_instance_id_to_category_id(
             self.habitat_env
@@ -212,14 +212,7 @@ class HabitatGoatEnv(HabitatEnv):
         return goals
 
     def _preprocess_action(self, action: home_robot.core.interfaces.Action) -> int:
-
-        if type(action) == int:
-            return action
-
-        discrete_action = cast(
-            home_robot.core.interfaces.DiscreteNavigationAction, action
-        )
-        return HabitatSimActions[discrete_action.name.lower()]
+        return HabitatSimActions[action.name.lower()]
 
     def _process_info(self, info: Dict[str, Any], agent_id=None) -> Any:
         obs = self.get_observation()
@@ -230,7 +223,7 @@ class HabitatGoatEnv(HabitatEnv):
         info["semantic_frame"] = obs.semantic
         info["agent_id"] = agent_id
         if (
-            self.task_type == "Goat-v1" and
+            "Goat-v1" in self.task_type and
             current_task["type"] == "image"
         ):
             info["last_goal_image"] = current_task["image"]
@@ -257,7 +250,7 @@ class HabitatGoatEnv(HabitatEnv):
     ):
         super().apply_action(action, info, prev_obs)
         self.current_task_idx = (
-            self.habitat_env.task.current_task_idx if self.task_type == "Goat-v1" else 0
+            self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
         )
 
 
@@ -298,20 +291,11 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
             observations.append(obs)
         return observations
 
-    def _preprocess_action(self, actions: home_robot.core.interfaces.Action) -> int:
-
-        if type(actions[0]) == int:
-            return actions
-
-        discrete_actions = []
-        for action in actions:
-            discrete_actions.append(
-                cast(home_robot.core.interfaces.DiscreteNavigationAction, action)
-            )
-        return {
-            i: HabitatSimActions[discrete_action.name.lower()]
-            for i, discrete_action in enumerate(discrete_actions)
-        }
+    def _preprocess_action(self, actions: List[home_robot.core.interfaces.Action]) -> int:
+        return [
+            {"action": HabitatSimActions[action.name.lower()], "action_args": {"agent_id": i}}
+            for i, action in enumerate(actions)
+        ]
 
     def _process_info(self, infos: List[Dict[str, Any]]) -> Any:
         for i, info in enumerate(infos):

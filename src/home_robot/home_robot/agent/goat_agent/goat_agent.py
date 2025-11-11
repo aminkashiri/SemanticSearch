@@ -396,7 +396,6 @@ class GoatAgent(Agent):
         return obs_preprocessed, pose_delta
 
     def _match_against_current_frame(self):
-        image_goal = None
         language_goal = None
 
         if self.current_task["type"] == "imagenav":
@@ -406,7 +405,6 @@ class GoatAgent(Agent):
                     self.matching.get_goal_image_keypoints(img_goal)
                 )
                 # self.goal_mask, _ = self.instance_seg.get_goal_mask(img_goal)
-            image_goal = self.goal_image
 
         elif self.current_task["type"] == "languagenav":
             language_goal = self.current_task["description"]
@@ -415,7 +413,7 @@ class GoatAgent(Agent):
             self.matching.get_matches_against_current_frame(
                 self.matching_fn[self.current_task["type"]],
                 self.total_timesteps,
-                image_goal=image_goal,
+                image_goal=self.goal_image,
                 goal_image_keypoints=self.goal_image_keypoints,
                 language_goal=language_goal,
                 categories=[self.current_task["semantic_id"]],
