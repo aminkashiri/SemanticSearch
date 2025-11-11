@@ -30,18 +30,24 @@ from eval_episode import read_args, save_results
 def read_configs(args):
     project_config = OmegaConf.load(args.project_config_path)
     if project_config.DATASET == "habitat_objnav_2023":
-        habitat_config_path = "benchmark/nav/objectnav/multiagent_objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+        habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+    elif project_config.DATASET == "goat":
+        habitat_config_path = "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml"
     else:
         raise NotImplementedError("Support for other datasets is not tested.")
 
     
-
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
 
-
     config.PRINT_IMAGES = 1
-    config.habitat.dataset.split = "val"
+    if project_config.DATASET == "goat":
+        config.habitat.dataset.split = "val_seen"
+    else:
+        config.habitat.dataset.split = "val"
+
+    config.habitat.simulator.type = "MultiAgent" + config.habitat.simulator.type
+    config.habitat.task.type = "MultiAgent" + config.habitat.task.type
     config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.0
 
 
@@ -68,7 +74,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:5]
+    config.habitat.dataset.content_scenes = all_scenes[:]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -132,7 +138,8 @@ if __name__ == "__main__":
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
             )
-            logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state()}")
+            logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state().position}")
+            logger.debug(f"Agent state: {env.habitat_env.sim.agents[1].get_state().position}")
             env.timestep = agent.get_subtask_timestep() + 1
             observations = env.get_observation()
 
@@ -164,14 +171,14 @@ if __name__ == "__main__":
                 ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")
                 logger.info(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx} {ep_metrics}"
+                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
                 )
                 logger.info("-------------------------")
 
                 all_subtask_metrics.append(ep_metrics)
                 if not env.episode_over:
                     for agent in agents:
-                        agent.reset_vis_dir(
+                        agent._reset_vis_dir(
                             env.scene_id, env.episode_id, env.current_task_idx
                         )
                     env.visualizer.set_vis_dir(

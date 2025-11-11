@@ -1000,9 +1000,10 @@ class DiscretePlanner:
         labeled_map, num_features = label(frontier_map, structure=structure)
         frontiers = [np.argwhere(labeled_map == i) for i in range(1, num_features + 1)]
 
-        sem_weights = CO_LOCATION_WEIGHTS[goal_category]
-        sem_layers = self.semantic_map.get_semantic_map(is_local)
-        r = 40
+        if metric == "semantics":
+            sem_weights = CO_LOCATION_WEIGHTS[goal_category]
+            sem_layers = self.semantic_map.get_semantic_map(is_local)
+            semantic_close_radius = 40
 
         frontier_scores, frontier_centers, top_k_semantic_classes = [], [], []
 
@@ -1086,8 +1087,8 @@ class DiscretePlanner:
             elif metric == "semantics":
                 local_map = sem_layers[
                     1 : 52 + 1,
-                    center[0] - r : center[0] + r,
-                    center[1] - r : center[1] + r,
+                    center[0] - semantic_close_radius : center[0] + semantic_close_radius,
+                    center[1] - semantic_close_radius : center[1] + semantic_close_radius,
                 ]
                 neighbor_classes = (
                     np.where(local_map.any(axis=(1, 2)))[0] + 1
