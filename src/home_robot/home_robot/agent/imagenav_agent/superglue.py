@@ -167,7 +167,7 @@ class Matching(nn.Module):
         self,
         matcher_inputs: Dict[str, Any],
         matcher_outputs: Dict[str, Any],
-        step: int,
+        step: str,
     ) -> None:
         """Visualize the input/output of running SuperPoint and SuperGlue inference"""
         if not self.print_images:
@@ -211,7 +211,7 @@ class Matching(nn.Module):
             mkpts1,
             color,
             text,
-            os.path.join(self.vis_dir, f"superglue_{step+1}.png"),
+            os.path.join(self.vis_dir, f"superglue_{step}.png"),
             small_text=small_text,
         )
 

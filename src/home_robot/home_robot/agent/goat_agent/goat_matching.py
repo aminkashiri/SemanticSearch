@@ -29,47 +29,46 @@ class GoatMatching(Matching):
     def __init__(
         self,
         device: int,
-        score_func: str,
         config: Dict[str, Any],
         default_vis_dir: str,
         print_images: bool,
         instance_memory: InstanceMemory,
+        logger,
     ) -> None:
         super().__init__(device, config, default_vis_dir, print_images)
 
-        assert score_func in ["confidence_sum", "match_count"]
-        self.score_func = score_func
+        self.score_func = config.score_function
+        assert self.score_func in ["confidence_sum", "match_count"]
 
         # generate clip embeddings by loading clip model
         self.device = device
         self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device)
-        self.goto_past_pose = config.goto_past_pose
         self.instance_memory = instance_memory
+        self.step = 0
+        self.score_thresh = {
+            "languagenav": config.score_thresh_lang,
+            "imagenav": config.score_thresh_image,
+            "objectnav": 0.0
+        }
+        self.log = logger 
 
     def get_matches_against_current_frame(
         self,
-        matching_fn,
-        step,
-        image_goal=None,
-        language_goal=None,
+        task,
         use_full_image=False,
-        categories=None,
         global_pose=None,
-        **kwargs,
     ):
         """
         Compute matching scores from an image or language goal with each instance
         detected in the current frame.
         """
-        logger.debug(f"Getting matches agains memory. Goal category: {categories}")
-        instance_memory = self.instance_memory
         # TODO We should restrict detections in the current frame by category
         detections = []
         instance_ids = []
-        logger.debug(f"In get_matches_against_current_frame, categories: {categories}")
+        logger.debug(f"In get_matches_against_current_frame, categories: {task.goal_semantic_id}")
         # first collect crops of instances found in the current frame
-        for temp_id, inst_view in instance_memory.unprocessed_views.items():
-            instance_id = instance_memory.temp_id_to_global_id.get(temp_id, -1)
+        for temp_id, inst_view in self.instance_memory.unprocessed_views.items():
+            instance_id = self.instance_memory.temp_id_to_global_id.get(temp_id, -1)
             logger.debug(
                 f"Processing instance {instance_id} with category {inst_view.category_id} (tmp id: {temp_id})."
             )
@@ -79,60 +78,36 @@ class GoatMatching(Matching):
                 # 1. It is too far
                 # 2. It is small that no point from it falls into any cell with enough confidence.
                 continue
-            if categories is not None and inst_view.category_id not in categories:
-                continue
-            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
-            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+            views = self._get_valid_views([inst_view], task.goal_semantic_id, use_full_image)
+            if len(views) > 0:
+                logger.debug(
+                    f">>>>>> Added to detections."
+                )
+                detections.append(views[0])
+                instance_ids.append(instance_id)
 
-            logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
-            logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
-
-            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
-                continue
-            logger.debug(
-                f">>>>>> Added to detections."
-            )
-            if use_full_image:
-                img = instance_memory.images[-1].cpu().numpy()
-            else:
-                img = inst_view.cropped_image
-            detections.append(img)
-            instance_ids.append(instance_id)
-
-        confidences = []
         if len(detections) > 0:
-            if image_goal is None and language_goal is None:
-                # * Category goal
+            if task.type == "objectnav":
                 confidences = self.match_to_category(
-                    instance_ids, global_pose, instance_memory
+                    instance_ids, global_pose
                 )
             else:
                 confidences = self.match_images_to_goal(
                     detections,
-                    matching_fn,
-                    step,
-                    use_full_image=use_full_image,
-                    image_goal=image_goal,
-                    language_goal=language_goal,
-                    **kwargs,
+                    task,
                 )
-        try:
-            return np.array(confidences).reshape(-1, 1), np.array(instance_ids)
-        except Exception as e:
-            print(e)
-            import pdb
-
-            pdb.set_trace()
+            return np.array(confidences).reshape(-1, 1), instance_ids
+        return [], []
 
     def match_to_category(
-        self, instance_ids, global_pose, instance_memory
+        self, instance_ids, global_pose
     ):
         #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
         all_confidences = []
         for instance_id in instance_ids:
             assert instance_id != -1
 
-            instance_views = instance_memory.instances[
+            instance_views = self.instance_memory.instances[
                 instance_id
             ].instance_views
             # pick a view with maximum object coverage
@@ -157,93 +132,56 @@ class GoatMatching(Matching):
     def match_images_to_goal(
         self,
         all_views,
-        matching_fn,
-        step,
-        use_full_image=False,
-        image_goal=None,
-        language_goal=None,
-        **kwargs,
+        task,
     ):
-        all_confidences = []
-        if image_goal is not None:
-            all_confidences = matching_fn(
+        if task.type == "imagenav":
+            all_confidences = self.match_image_to_image(
                 all_views,
-                goal_image=image_goal,
-                goal_image_keypoints=kwargs["goal_image_keypoints"],
-                use_full_image=use_full_image,
-                step=1000 * step,
+                task.goal_image_processed,
+                task.goal_image_keypoints,
             )
-        elif language_goal is not None:
-            all_confidences = matching_fn(
+        elif task.type == "languagenav":
+            all_confidences = self.match_language_to_image(
                 all_views,
-                language_goal,
+                task.goal_description,
             )
         else:
             raise ValueError("Shouldn't happen")
-            # all_confidences = [1] * len(all_views)
         return all_confidences
+    
 
     def get_matches_against_memory(
         self,
-        matching_fn,
-        step,
-        image_goal=None,
-        language_goal=None,
+        task,
         use_full_image=False,
-        categories=None,
-        global_pose=None,
-        **kwargs,
+        global_pose=None
     ):
         """
         Compute matching scores from an image or language goal with each instance
         in the instance memory.
         """
-        instance_memory = self.instance_memory
         all_views = []
         instance_view_counts = []
-        steps_per_view = []
         instance_ids = []
-        for inst_key, inst in instance_memory.instances.items():
-            if categories is not None and inst.category_id not in categories:
+        for global_id, inst in self.instance_memory.instances.items():
+            if inst.category_id != task.goal_semantic_id:
                 continue
-            inst_views = inst.instance_views
-            views_added = 0
-            for view_idx, inst_view in enumerate(inst_views):
-                if categories is not None and inst_view.category_id not in categories:
-                    continue
-                # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
-                bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
-                if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
-                    continue
-                if use_full_image:
-                    img = instance_memory.images[inst_view.timestep].cpu().numpy()
-                    img = np.transpose(img, (1, 2, 0))
-                else:
-                    img = inst_view.cropped_image
-
-                all_views.append(img)
-                views_added += 1
-                steps_per_view.append(1000 * step + 10 * inst_key + view_idx)
-            if views_added > 0:
-                instance_view_counts.append(views_added)
-                instance_ids.append(inst_key)
+            views = self._get_valid_views(inst.instance_views, task.goal_semantic_id, use_full_image)
+            if len(views) > 0:
+                all_views.extend(views)
+                instance_view_counts.append(len(views))
+                instance_ids.append(global_id)
 
         if len(all_views) > 0:
-            if image_goal is None and language_goal is None:
-                # * Category goal
+            if task.type == "objectnav":
                 all_confidences = self.match_to_category(
-                    instance_ids, global_pose, instance_memory
+                    instance_ids, global_pose
                 )
                 all_confidences = np.array(all_confidences).reshape(-1, 1)
             else:
                 all_confidences = self.match_images_to_goal(
                     all_views,
-                    matching_fn,
-                    step,
-                    use_full_image=use_full_image,
-                    image_goal=image_goal,
-                    language_goal=language_goal,
-                    **kwargs,
+                    task,
                 )
                 # unflatten based on number of views per instance
                 # all_confidences = np.concatenate(all_confidences, 0)
@@ -256,12 +194,9 @@ class GoatMatching(Matching):
     @torch.no_grad()
     def match_image_to_image(
         self,
-        rgb_image: Union[np.ndarray, List[np.ndarray]],
-        goal_image: Union[np.ndarray, torch.Tensor],
-        rgb_image_keypoints: Optional[Dict[str, Any]] = None,
-        goal_image_keypoints: Optional[Dict[str, Any]] = None,
-        use_full_image: bool = False,
-        step: Optional[int] = None,
+        rgb_images: List[np.ndarray],
+        goal_image: torch.Tensor,
+        goal_image_keypoints: Dict[str, Any],
     ):
         """Computes and describes keypoints using SuperPoint and matches
         keypoints between an RGB image and a goal image using SuperGlue.
@@ -272,59 +207,27 @@ class GoatMatching(Matching):
             tensor of keypoint matches
             tensor of match confidences
         """
-        if isinstance(rgb_image, np.ndarray) and len(rgb_image.shape) == 3:
-            rgb_image_batched = [rgb_image]
-        else:
-            rgb_image_batched = rgb_image
-            assert rgb_image_keypoints is None
+        assert isinstance(goal_image, torch.Tensor) # Already prreprocessed
+        assert isinstance(rgb_images, list)
+        assert isinstance(rgb_images[0], np.ndarray)
 
         all_confidences = []
 
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
         logger.debug("Computing matching score with each view...")
-        # for i in range(len(rgb_image_batched)):
-        for i in range(len(rgb_image_batched)):
-            if goal_image_keypoints is None:
-                goal_image_keypoints = {}
-            if rgb_image_keypoints is None:
-                rgb_image_keypoints = {}
-
-            if isinstance(goal_image, np.ndarray):
-                goal_image_processed = self._preprocess_image(goal_image)
-            else:
-                goal_image_processed = goal_image
-            if isinstance(rgb_image_batched[i], np.ndarray):
-                if rgb_image_batched[i].shape[0] == 3:
-                    rgb_image_batched[i] = rgb_image_batched[i].transpose(1, 2, 0)
-                rgb_image_processed = self._preprocess_image(
-                    rgb_image_batched[i].astype(np.uint8)
-                )
-            else:
-                rgb_image_processed = rgb_image_batched[i]
+        for i in range(len(rgb_images)):
+            rgb_image_processed = self._preprocess_image(rgb_images[i])
 
             matcher_inputs = {
-                "image0": goal_image_processed,
+                "image0": goal_image,
                 "image1": rgb_image_processed,
                 **goal_image_keypoints,
-                **rgb_image_keypoints,
             }
             pred = self.matcher(matcher_inputs)
 
             matches = pred["matches0"].cpu().numpy()
             confidence = pred["matching_scores0"].cpu().numpy()
-            self._visualize(matcher_inputs, pred, step + i)
-
-            if "keypoints0" in matcher_inputs:
-                goal_keypoints = matcher_inputs["keypoints0"]
-            else:
-                goal_keypoints = pred["keypoints0"]
-
-            if "keypoints1" in matcher_inputs:
-                rgb_keypoints = matcher_inputs["keypoints1"].cpu().numpy()
-            else:
-                rgb_keypoints = [pred["keypoints1"][0].cpu().numpy()]
-            if isinstance(rgb_image, np.ndarray) and len(rgb_image.shape) == 3:
-                return goal_keypoints, rgb_keypoints, matches, confidence
+            self._visualize(matcher_inputs, pred, f"{self.step}_{i}")
 
             confidence = confidence[matches != -1].sum().item()
             all_confidences.append(confidence)
@@ -410,15 +313,37 @@ class GoatMatching(Matching):
             logger.debug(f"Instance {inst_idx+1} score: {agg_scores[-1]}")
         return agg_scores
 
-    def get_best_inst_goal(
+    def search_for_goal(
         self,
-        obs_match_confidences: torch.Tensor = [],
-        obs_match_instance_ids: List = [],
-        mem_match_confidences: List = [],
-        mem_match_instance_ids: List = [],
-        score_thresh: float = 0.0,
+        task,
+        match_memory,
+        global_pose,
         agg_fn: str = "max",
+        score_thresh=None,
     ) -> Tuple[torch.Tensor, torch.Tensor, bool, Optional[int]]:
+        if score_thresh is None:
+            score_thresh = self.score_thresh[task.type]
+
+        mem_match_confidences, mem_match_instance_ids = [], []
+        if match_memory:
+            self.log.info("--------Matching against memory!--------")
+            (
+                mem_match_confidences,
+                mem_match_instance_ids,
+            ) = self.get_matches_against_memory(
+                task,
+                use_full_image=True,
+                global_pose=global_pose,
+            )
+
+        obs_match_confidences, obs_match_instance_ids = (
+            self.get_matches_against_current_frame(
+                task,
+                use_full_image=False,
+                global_pose=global_pose,
+            )
+        )
+
         #! myTODO: Should I overwrite Mem with obs, or otherwise?
         inst_goal_found = False
         inst_goal_id = None
@@ -461,3 +386,24 @@ class GoatMatching(Matching):
                 logger.debug(f"No matches found with observation")
 
         return inst_goal_found, inst_goal_id
+
+
+    def _get_valid_views(self, inst_views, category, use_full_image):
+        views = []
+        for inst_view in inst_views:
+            if inst_view.category_id != category:
+                continue
+            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
+            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+            logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
+            logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
+            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
+                continue
+            if use_full_image:
+                img = self.instance_memory.images[inst_view.timestep].cpu().numpy()
+                img = np.transpose(img, (1, 2, 0))
+            else:
+                img = inst_view.cropped_image
+
+            views.append(img)
+        return views
