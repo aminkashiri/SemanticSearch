@@ -128,6 +128,7 @@ class DiscretePlanner:
         self.curr_global_pose = None
         self.last_action = None
         self.timestep = 0
+        self.total_timesteps = 0
         self.curr_obs_dilation_selem_radius = None
         self.obs_dilation_selem = None
         self.min_goal_distance_cm = min_goal_distance_cm
@@ -159,7 +160,8 @@ class DiscretePlanner:
             0.0,
         ]
         self.last_action = None
-        self.timestep = 1
+        self.timestep = 0
+        self.total_timesteps = 0
         self.curr_obs_dilation_selem_radius = self.start_obs_dilation_selem_radius
         self.obs_dilation_selem = skimage.morphology.disk(
             self.curr_obs_dilation_selem_radius
@@ -181,10 +183,7 @@ class DiscretePlanner:
 
     def plan(
         self,
-        inst_goal_found: bool,
         inst_goal_id: int,
-        timestep: int,
-        total_timesteps: int,
         goal_semantic_id: int,
         fallback_to_frontier=True,
         postfix="",
@@ -205,12 +204,12 @@ class DiscretePlanner:
         stop = False
         try_best = fallback_to_frontier == False
         vis_input = {}
-        self.timestep = timestep
+        inst_goal_found = not inst_goal_id is None
 
         if inst_goal_found:
             self.episode_panorama_start_steps = 0
 
-        if total_timesteps < self.episode_panorama_start_steps:
+        if self.total_timesteps < self.episode_panorama_start_steps:
             return (
                 DiscreteNavigationAction.TURN_RIGHT,
                 vis_input,
