@@ -46,7 +46,6 @@ def read_configs(args):
     else:
         config.habitat.dataset.split = "val"
 
-    config.habitat.simulator.type = "MultiAgent" + config.habitat.simulator.type
     config.habitat.task.type = "MultiAgent" + config.habitat.task.type
     config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.0
 
@@ -114,6 +113,9 @@ if __name__ == "__main__":
                 results = json.load(fp)
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
+
+        if env.episode_id != "0":
+            continue
         env.reset_visualization()
         for agent in agents:
             agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
@@ -134,6 +136,7 @@ if __name__ == "__main__":
                 pbar.set_description(
                     f"{env.scene_id}_{env.episode_id}_{env.current_task_idx}"
                 )
+
             ep_step += 1
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
@@ -149,26 +152,28 @@ if __name__ == "__main__":
             for agent, obs in zip(agents, observations):
                 agent.update_state(obs)
 
+            stop_called = False
             for agent in agents:
                 other_agents = list(filter(lambda x: x.agent_id != agent.agent_id, agents))
                 action, info, stuck = agent.act(other_agents)
+
+                stop_called = action["action"] == DiscreteNavigationAction.STOP or stop_called
                 
                 actions.append(action)
                 infos.append(info)
                 stucks.append(stuck)
             
             if all(stucks):
-                actions = [DiscreteNavigationAction.STOP]*2
+                actions = [agent._process_action(DiscreteNavigationAction.STOP) for agent in agents]
 
             logger.info(f"Actions taken: {actions}")
             env.apply_action(actions, info=infos)
             pbar.update(1)
 
-            if DiscreteNavigationAction.STOP in actions:
+            if stop_called:
                 for agent in agents:
                     agent.reset_sub_episode()
-                ep_metrics = env.get_episode_metrics()
-                ep_metrics.pop("goat_top_down_map", None)
+                ep_metrics = env.get_subepisode_metrics()
                 logger.info("-------------------------")
                 logger.info(
                     f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
@@ -186,6 +191,20 @@ if __name__ == "__main__":
                         f"{env.episode_id}_{env.current_task_idx}",
                     )
                     pbar.reset()
+
+        
+
+        # import cProfile
+        # import pstats
+
+        # profiler = cProfile.Profile()
+        # profiler.enable()
+
+        # profiler.disable()
+        # stats = pstats.Stats(profiler)
+        # # stats.sort_stats('tottime')
+        # stats.sort_stats('cumulative')
+        # stats.print_stats(100)
 
         logger.info(
             f"------------------------ Episode {env.scene_id} {env.episode.episode_id} over ------------------------"

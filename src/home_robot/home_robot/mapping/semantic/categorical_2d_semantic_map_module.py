@@ -1198,7 +1198,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
     def merge_neighbor_maps(
         self,
-        neighbors,
+        neighbor_global_map: Tensor,
         global_map: Tensor,
     ):
         # These channels should not be changed with other agents info
@@ -1217,17 +1217,15 @@ class Categorical2DSemanticMapModule(nn.Module):
             all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
         )
 
-        final_global_map = global_map
-        for neighbor in neighbors:
-            final_global_map[merge_mask] = torch.maximum(
-                final_global_map[merge_mask],
-                neighbor.semantic_map.global_map[merge_mask],
-            )
+        temp_copy = global_map.clone()
+        global_map[merge_mask] = torch.maximum(
+            global_map[merge_mask],
+            neighbor_global_map[merge_mask],
+        )
         assert torch.equal(
-            final_global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
+            temp_copy[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
         )
-        return final_global_map
 
     def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
         """Get global and local map features.
