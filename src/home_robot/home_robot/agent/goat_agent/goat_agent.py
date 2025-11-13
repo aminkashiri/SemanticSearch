@@ -221,6 +221,7 @@ class GoatAgent(Agent):
 
         self.stuck_counter = 0
         self._reset_vis_dir(scene_id, episode_id, current_task_idx)
+        self.last_communication_time = {}
 
     def reset_sub_episode(self) -> None:
         """Reset for a new sub-episode since pre-processing is temporally dependent."""
@@ -276,18 +277,37 @@ class GoatAgent(Agent):
             tasks.append(task)
         return tasks
 
-    def communicate(self, neighbors):
-        if len(neighbors) == 0:
-            return
-        self.semantic_map.global_map = (
-            self.semantic_map_module.merge_neighbor_maps(
-                neighbors, self.semantic_map.global_map
-            )
-        )
-        lmb = self.semantic_map.lmb
-        self.semantic_map.local_map[:] = self.semantic_map.global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+    def communicate_with_single_neighbor(self, neighbor):
+        data = self.get_communication_data()
+        neighbor_data = neighbor.receive_communication(self.agent_id, data)
+        self.merge_communication_data(neighbor_data)
+        self.last_communication_time[neighbor.agent_id] = self.total_timesteps
 
-    def act(self, other_agents=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
+    def communicate(self, neighbors):
+        for neighbor in neighbors:
+            last = self.last_communication_time.get(neighbor.agent_id, -1)
+            if self.total_timesteps - last > 0:
+                self.communicate_with_single_neighbor(neighbor)
+
+        lmb = self.semantic_map.lmb
+        self.semantic_map.local_map[:] = self.semantic_map.global_map[
+            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
+        ]
+
+    def receive_communication(self, sender_id, data):
+        self.last_communication_time[sender_id] = self.total_timesteps
+        self.merge_communication_data(data)
+        return self.get_communication_data()
+
+    def get_communication_data(self):
+        return {"map": self.semantic_map.global_map}
+
+    def merge_communication_data(self, data):
+        self.semantic_map_module.merge_neighbor_maps(
+            data["map"], self.semantic_map.global_map
+        )
+   
+    def act(self, other_agents=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any], bool]:
         """Act end-to-end."""
         neighbors = self._get_neighbors(other_agents)
         self.communicate(neighbors)
@@ -301,6 +321,7 @@ class GoatAgent(Agent):
             stuck = True
 
         action, vis_inputs = self._get_best_action(neighbors)
+        action = self._process_action(action)
 
         info = self._get_vis_info(vis_inputs)
 
@@ -450,7 +471,7 @@ class GoatAgent(Agent):
         self.log.info("Forcing a match against memory")
 
         prev_inst_goal_id = self.inst_goal_id
-        self.inst_goal_id, = self.matching.search_for_goal(
+        self.inst_goal_id = self.matching.search_for_goal(
             task, True, self.semantic_map.global_pose,
             score_thresh=0,
         )
@@ -502,3 +523,6 @@ class GoatAgent(Agent):
         self.matching.set_vis_dir(f"{scene_id}_{episode_id}_{current_task_idx}")
         self.semantic_map.vis_dir = self.planner.vis_dir
         self.semantic_map_module.vis_dir = self.planner.vis_dir
+
+    def _process_action(self, action):
+        return {"action": action, "action_args": {"agent_id": 0 if self.agent_id is None else self.agent_id, "task_idx": self.current_task_idx}}

@@ -118,27 +118,36 @@ class HabitatGoatEnv(HabitatEnv):
     def _preprocess_obs(
         self, habitat_obs: habitat.core.simulator.Observations
     ) -> home_robot.core.interfaces.Observations:
-        depth = self._preprocess_depth(habitat_obs["depth"])
         if habitat_obs.get("multigoal") is None:
+            # I can also get habitat_obs["objectgoal"] here, but it is not compatible, because multigoal returns text category
             goals = self._preprocess_goals(
-                [{"category": self.current_episode.object_category}] # we can also read from obs[objectgoal]
+                [{"category": self.current_episode.object_category}]
             )
         else:
             goals = self._preprocess_goals(habitat_obs["multigoal"])
-        obs = home_robot.core.interfaces.Observations(
-            rgb=habitat_obs["rgb"],
-            depth=depth,
-            compass=habitat_obs["compass"],
-            gps=self._preprocess_xy(habitat_obs["gps"]),
-            task_observations={
-                "tasks": goals,
-                "top_down_map": self.get_episode_metrics().get("goat_top_down_map"),
-            },
-            camera_pose=None,
-            third_person_image=None,
-        )
-        obs = self._preprocess_semantic(obs, habitat_obs["semantic"])
-        return obs
+
+        observations = []
+        for agent_id in range(self.config.NUM_AGENTS):
+            agent_obs = habitat_obs[agent_id]
+            depth = self._preprocess_depth(agent_obs[f"depth"])
+            obs = home_robot.core.interfaces.Observations(
+                rgb=agent_obs[f"rgb"],
+                depth=depth,
+                compass=habitat_obs["compass"][agent_id],
+                gps=self._preprocess_xy(habitat_obs["gps"][agent_id]),
+                task_observations={
+                    "tasks": goals,
+                    "top_down_map": self.get_episode_metrics().get("goat_top_down_map"),
+                },
+                camera_pose=None,
+                third_person_image=None,
+            )
+            obs = self._preprocess_semantic(obs, agent_obs[f"semantic"])
+            observations.append(obs)
+        
+        if len(observations) == 1:
+            return observations[0]
+        return observations
 
     #! This is inside habitat goat env:
     def visualize_semantic_with_labels(
@@ -211,8 +220,9 @@ class HabitatGoatEnv(HabitatEnv):
 
         return goals
 
-    def _preprocess_action(self, action: home_robot.core.interfaces.Action) -> int:
-        return HabitatSimActions[action.name.lower()]
+    def _preprocess_action(self, action) -> int:
+        action["action"] =  HabitatSimActions[action["action"].name.lower()]
+        return action
 
     def _process_info(self, info: Dict[str, Any], agent_id=None) -> Any:
         obs = self.get_observation()
@@ -252,6 +262,16 @@ class HabitatGoatEnv(HabitatEnv):
         self.current_task_idx = (
             self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
         )
+    
+    def get_subepisode_metrics(self):
+        ep_metrics = super().get_episode_metrics()
+        ep_metrics.pop("goat_top_down_map", None)
+        if self.config.habitat.dataset.type == "Goat-v1":
+            ep_metrics["goat_sub-task_success"] = ep_metrics["goat_sub-task_success"][self.current_task_idx - 1]
+            ep_metrics["goat_distance_to_sub-goal"] = ep_metrics["goat_distance_to_sub-goal"][0]
+        else:
+            ep_metrics["distance_to_goal"] = ep_metrics["distance_to_goal"][0]
+        return ep_metrics
 
 
 class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
@@ -260,42 +280,10 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
     def __init__(self, habitat_env: habitat.core.env.Env, config):
         super().__init__(habitat_env, config)
 
-    def _preprocess_obs(
-        self, habitat_obs: habitat.core.simulator.Observations
-    ) -> home_robot.core.interfaces.Observations:
-        if habitat_obs.get("multigoal") is None:
-            # I can also get habitat_obs["objectgoal"] here, but it is not compatible, because multigoal returns text category
-            goals = self._preprocess_goals(
-                [{"category": self.current_episode.object_category}]
-            )
-        else:
-            goals = self._preprocess_goals(habitat_obs["multigoal"])
-
-        observations = []
-        for agent_id in range(self.config.NUM_AGENTS):
-            agent_obs = habitat_obs[agent_id]
-            depth = self._preprocess_depth(agent_obs[f"depth"])
-            obs = home_robot.core.interfaces.Observations(
-                rgb=agent_obs[f"rgb"],
-                depth=depth,
-                compass=habitat_obs["compass"][agent_id],
-                gps=self._preprocess_xy(habitat_obs["gps"][agent_id]),
-                task_observations={
-                    "tasks": goals,
-                    "top_down_map": self.get_episode_metrics().get("goat_top_down_map"),
-                },
-                camera_pose=None,
-                third_person_image=None,
-            )
-            obs = self._preprocess_semantic(obs, agent_obs[f"semantic"])
-            observations.append(obs)
-        return observations
-
     def _preprocess_action(self, actions: List[home_robot.core.interfaces.Action]) -> int:
-        return [
-            {"action": HabitatSimActions[action.name.lower()], "action_args": {"agent_id": i}}
-            for i, action in enumerate(actions)
-        ]
+        for action in actions:
+            action["action"] =  HabitatSimActions[action["action"].name.lower()]
+        return actions
 
     def _process_info(self, infos: List[Dict[str, Any]]) -> Any:
         for i, info in enumerate(infos):

@@ -272,8 +272,11 @@ class GoatMatching(Matching):
         similarity = (language_goal @ view_embeddings.T).squeeze(0)
         return similarity.detach().cpu().numpy().flatten()
 
-    def get_best_match(self, scores, instance_ids, score_thresh):
+    def get_best_match(self, confidences, instance_ids, score_thresh, agg_fn):
         """instance_ids are global"""
+        scores = self.aggregate_scores_per_instance(
+            confidences, agg_fn
+        )
         sorted_inst_ids = np.argsort(scores)[::-1]
         idx = 0
         logger.debug(
@@ -293,10 +296,10 @@ class GoatMatching(Matching):
                 logger.debug("No id provided for this instance. Skipping.")
                 continue
             # * We does not check it goal map is non-empty here. Somewehre else, I should make sure we can navigate to this goal.
-            return True, best_instance_id
+            return best_instance_id
 
         logger.debug("Goal does not match any instance.")
-        return False, None
+        return None
 
     def aggregate_scores_per_instance(self, confidences, agg_fn):
         agg_scores = []
@@ -320,7 +323,10 @@ class GoatMatching(Matching):
         global_pose,
         agg_fn: str = "max",
         score_thresh=None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, bool, Optional[int]]:
+    ) -> int:
+        """
+        Searches for goal in current observation, and also in memory if specified. 
+        """
         if score_thresh is None:
             score_thresh = self.score_thresh[task.type]
 
@@ -336,6 +342,23 @@ class GoatMatching(Matching):
                 global_pose=global_pose,
             )
 
+        #! myTODO: Should I overwrite Mem with obs, or otherwise?
+        if len(mem_match_confidences) > 0:
+            logger.debug(
+                f"Matching with memory: {len(mem_match_confidences)} instances"
+            )
+            inst_goal_id = self.get_best_match(
+                mem_match_confidences, mem_match_instance_ids, score_thresh, agg_fn
+            )
+            if not inst_goal_id is None:
+                logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
+                return inst_goal_id
+            else:
+                logger.debug(f"No matches found in the memory")
+
+
+
+
         obs_match_confidences, obs_match_instance_ids = (
             self.get_matches_against_current_frame(
                 task,
@@ -344,48 +367,25 @@ class GoatMatching(Matching):
             )
         )
 
-        #! myTODO: Should I overwrite Mem with obs, or otherwise?
-        inst_goal_found = False
-        inst_goal_id = None
-
-        if len(mem_match_confidences) > 0:
-            logger.debug(
-                f"Matching with memory: {len(mem_match_confidences)} instances"
-            )
-            agg_scores = self.aggregate_scores_per_instance(
-                mem_match_confidences, agg_fn
-            )
-            if len(agg_scores) > 0:
-                inst_goal_found, inst_goal_id = self.get_best_match(
-                    agg_scores, mem_match_instance_ids, score_thresh
-                )
-            if inst_goal_found is True:
-                logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
-            else:
-                logger.debug(f"No matches found in the memory")
-
-        if inst_goal_found is False and len(obs_match_confidences) > 0:
+        if len(obs_match_confidences) > 0:
             logger.debug(
                 f"Matching with observation: {len(obs_match_confidences)} instances"
             )
             logger.debug(
                 f"Global instance ids: {obs_match_instance_ids}"
             )
-            agg_scores = self.aggregate_scores_per_instance(
-                obs_match_confidences, agg_fn
+            inst_goal_id = self.get_best_match(
+                obs_match_confidences, obs_match_instance_ids, score_thresh, agg_fn
             )
-
-            inst_goal_found, inst_goal_id = self.get_best_match(
-                agg_scores, obs_match_instance_ids, score_thresh
-            )
-            if inst_goal_found is True:
+            if not inst_goal_id is None:
                 logger.debug(
                     f"Goal instance {inst_goal_id} found in this step by matching with observation."
                 )
+                return inst_goal_id
             else:
                 logger.debug(f"No matches found with observation")
 
-        return inst_goal_found, inst_goal_id
+        return None
 
 
     def _get_valid_views(self, inst_views, category, use_full_image):

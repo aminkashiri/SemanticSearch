@@ -60,6 +60,7 @@ def read_configs(args):
 
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
+    config.NUM_AGENTS = 1
     config.PRINT_IMAGES = 1
     config.habitat.simulator.agents.agent0 = config.habitat.simulator.agents.pop(
         "main_agent"
@@ -83,7 +84,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:15]
+    config.habitat.dataset.content_scenes = all_scenes[:]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -211,17 +212,17 @@ if __name__ == "__main__":
 
             agent.update_state(obs)
             action, info, stuck = agent.act()
+            stop_called = action["action"] == DiscreteNavigationAction.STOP
             if stuck: 
-                action = DiscreteNavigationAction.STOP
+                action = agent._process_action(DiscreteNavigationAction.STOP)
 
             logger.info(f"Action taken: {action}")
             env.apply_action(action, info)
             pbar.update(1)
 
-            if action == DiscreteNavigationAction.STOP:
+            if stop_called:
                 ep_metrics = env.get_episode_metrics()
                 agent.reset_sub_episode()
-                ep_metrics.pop("goat_top_down_map", None)
                 logger.info("-------------------------")
                 logger.info(
                     f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
