@@ -1,9 +1,10 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: MA_Burgard_objnav2023_decentralized
+EXP_NAME: goat
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
+SEQ: 0
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
-DATASET: habitat_objnav_2023
+DATASET: goat
 VISUALIZE: 0              # 1: render observation and predicted semantic map, 0: no visualization
 PRINT_IMAGES: 1           # 1: save visualization as images, 0: no image saving
 GROUND_TRUTH_SEMANTICS: 1 # 1: use ground-truth semantics (for debugging / ablations)
@@ -11,7 +12,7 @@ seed: 1
 SHOW_RL_OBS: False         # whether to show the observations passed to RL policices, for debugging
 
 ENVIRONMENT:
-  max_num_sub_task_episodes: 10
+  max_subtasks_per_episode: 10
 
 AGENT:
   max_steps: 500          # maximum number of steps before stopping an episode
@@ -22,7 +23,7 @@ AGENT:
   radius: 0.05            # robot radius (in meters)
 
   COMMUNICATION:
-    radius: 5           # m
+    radius: 3           # m
 
   SEMANTIC_MAP:
     semantic_categories: dataset # map semantic channel categories ("coco_indoor", "longtail_indoor", "mukul_indoor")
@@ -40,7 +41,6 @@ AGENT:
     target_blacklisting_radius: 100 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
     min_obs_height_cm: 10    # minimum height (in centimeters) of obstacle to be considered as obstacle
     goal_filtering: True      # If True, gets the largest connected component of the goal map
-    record_instance_ids: True # whether to predict and store instance ids in the map
 
   PLANNER:
     collision_threshold: 0.10       # forward move distance under which we consider there's a collision (in meters)

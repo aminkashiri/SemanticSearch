@@ -17,13 +17,6 @@ from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
 matplotlib.use("Agg")
-MIN_PIXELS = 1000
-MIN_EDGE = 15
-
-from home_robot.utils.logger import get_logger
-
-logger = get_logger()
-
 
 class GoatMatching(Matching):
     def __init__(
@@ -52,72 +45,21 @@ class GoatMatching(Matching):
         }
         self.log = logger 
 
-    def get_matches_against_current_frame(
-        self,
-        task,
-        use_full_image=False,
-        global_pose=None,
-    ):
-        """
-        Compute matching scores from an image or language goal with each instance
-        detected in the current frame.
-        """
-        # TODO We should restrict detections in the current frame by category
-        detections = []
-        instance_ids = []
-        logger.debug(f"In get_matches_against_current_frame, categories: {task.goal_semantic_id}")
-        # first collect crops of instances found in the current frame
-        for temp_id, inst_view in self.instance_memory.unprocessed_views.items():
-            instance_id = self.instance_memory.temp_id_to_global_id.get(temp_id, -1)
-            logger.debug(
-                f"Processing instance {instance_id} with category {inst_view.category_id} (tmp id: {temp_id})."
-            )
-            if instance_id == -1:
-                # logger.debug(f"No map cell assigned yet for this instance yet skipping.")
-                # How can this happen? Objects get global id only if they are projected into the map. We might see an object, but it might not have any projection because:
-                # 1. It is too far
-                # 2. It is small that no point from it falls into any cell with enough confidence.
-                continue
-            views = self._get_valid_views([inst_view], task.goal_semantic_id, use_full_image)
-            if len(views) > 0:
-                logger.debug(
-                    f">>>>>> Added to detections."
-                )
-                detections.append(views[0])
-                instance_ids.append(instance_id)
-
-        if len(detections) > 0:
-            if task.type == "objectnav":
-                confidences = self.match_to_category(
-                    instance_ids, global_pose
-                )
-            else:
-                confidences = self.match_images_to_goal(
-                    detections,
-                    task,
-                )
-            return np.array(confidences).reshape(-1, 1), instance_ids
-        return [], []
 
     def match_to_category(
-        self, instance_ids, global_pose
+        self, instances, global_pose
     ):
         #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
         all_confidences = []
-        for instance_id in instance_ids:
-            assert instance_id != -1
-
-            instance_views = self.instance_memory.instances[
-                instance_id
-            ].instance_views
+        for inst in instances:
             # pick a view with maximum object coverage
-            best_view = np.argmax([view.object_coverage for view in instance_views])
+            best_view = np.argmax([view.object_coverage for view in inst.instance_views])
 
             #1 Score based on coverage:
             # score = instance_views[best_view].object_coverage
 
             #2 Score based on distance:
-            instance_pose = instance_views[best_view].pose
+            instance_pose = inst.instance_views[best_view].pose
             global_xy = global_pose[:2].cpu()
             instance_xy = instance_pose[:2]
             score = 1 / (torch.norm(global_xy - instance_xy).item()+1)
@@ -126,70 +68,59 @@ class GoatMatching(Matching):
             #! myTODO: Very important because we should not go to poses were only a couple of pixels are from the object.
             #! However, many times when we get close, we get better views which also have lower distances. 
 
-            all_confidences.append(score)
+            all_confidences.append([score])
         return all_confidences
 
-    def match_images_to_goal(
+    def match_instances_to_goal(
         self,
-        all_views,
+        instances,
+        last_view,
         task,
+        global_pose,
     ):
-        if task.type == "imagenav":
-            all_confidences = self.match_image_to_image(
-                all_views,
-                task.goal_image_processed,
-                task.goal_image_keypoints,
-            )
-        elif task.type == "languagenav":
-            all_confidences = self.match_language_to_image(
-                all_views,
-                task.goal_description,
-            )
-        else:
-            raise ValueError("Shouldn't happen")
-        return all_confidences
-    
-
-    def get_matches_against_memory(
-        self,
-        task,
-        use_full_image=False,
-        global_pose=None
-    ):
-        """
-        Compute matching scores from an image or language goal with each instance
-        in the instance memory.
-        """
-        all_views = []
-        instance_view_counts = []
-        instance_ids = []
-        for global_id, inst in self.instance_memory.instances.items():
+        candidate_instances = []
+        for inst in instances:
             if inst.category_id != task.goal_semantic_id:
                 continue
-            views = self._get_valid_views(inst.instance_views, task.goal_semantic_id, use_full_image)
-            if len(views) > 0:
-                all_views.extend(views)
-                instance_view_counts.append(len(views))
-                instance_ids.append(global_id)
+            candidate_instances.append(inst)
 
+        valid_data = [
+            (inst, views)
+            for inst in candidate_instances
+            if (views := inst._get_valid_views(self.instance_memory.images, last_view))
+        ]
+
+        candidate_instances, all_views = zip(*valid_data) if valid_data else ([], [])
+        instance_view_counts = [len(v) for v in all_views]
+        all_views = [x for views in all_views for x in views]
+
+        confidences = []
         if len(all_views) > 0:
-            if task.type == "objectnav":
-                all_confidences = self.match_to_category(
-                    instance_ids, global_pose
-                )
-                all_confidences = np.array(all_confidences).reshape(-1, 1)
-            else:
-                all_confidences = self.match_images_to_goal(
+            if task.type == "imagenav":
+                confidences = self.match_image_to_image(
                     all_views,
-                    task,
+                    task.goal_image_processed,
+                    task.goal_image_keypoints,
                 )
-                # unflatten based on number of views per instance
-                # all_confidences = np.concatenate(all_confidences, 0)
-                all_confidences = np.split(
-                    all_confidences, np.cumsum(instance_view_counts)[:-1]
+            elif task.type == "languagenav":
+                confidences = self.match_language_to_image(
+                    all_views,
+                    task.goal_description,
                 )
-            return all_confidences, instance_ids
-        return [], []
+            elif task.type == "objectnav":
+                confidences = self.match_to_category(
+                    candidate_instances, global_pose
+                )
+                instance_view_counts = [1]*len(candidate_instances)
+
+            confidences = np.array(np.split(
+                confidences, np.cumsum(instance_view_counts)[:-1]
+            ))
+            candidate_instances = [inst.id for inst in candidate_instances]
+        else:
+            candidate_instances = []
+        return confidences, candidate_instances
+    
 
     @torch.no_grad()
     def match_image_to_image(
@@ -214,7 +145,7 @@ class GoatMatching(Matching):
         all_confidences = []
 
         # TODO Can we batch this for loop to speed it up? It is a bottleneck
-        logger.debug("Computing matching score with each view...")
+        self.log.debug("Computing matching score with each view...")
         for i in range(len(rgb_images)):
             rgb_image_processed = self._preprocess_image(rgb_images[i])
 
@@ -279,33 +210,35 @@ class GoatMatching(Matching):
         )
         sorted_inst_ids = np.argsort(scores)[::-1]
         idx = 0
-        logger.debug(
+        self.log.debug(
             f"Getting best match. Scores: {scores}, instance_ids: {instance_ids}, score threshold: {score_thresh}."
         )
+        self.log.debug(f"TEMP sorted_inst_ids {sorted_inst_ids}, {sorted_inst_ids[idx]}")
         while (
             idx < len(sorted_inst_ids) and scores[sorted_inst_ids[idx]] >= score_thresh
         ):
+            self.log.debug(f"TEMP idx {idx}, sorted inst ids: {sorted_inst_ids}")
             inst_idx = sorted_inst_ids[idx]
             idx += 1
-            logger.debug(
+            self.log.debug(
                 f"Trying to localize instance {instance_ids[inst_idx]} with score {scores[inst_idx]}"
             )
             best_instance_id = instance_ids[inst_idx]
             if best_instance_id == -1:
                 # * The reason that this might happen is sometimes someobjects are overriding that instance when projecting into 2D (object with highest point is chosen in a specifc cell).
-                logger.debug("No id provided for this instance. Skipping.")
+                self.log.debug("No id provided for this instance. Skipping.")
                 continue
             # * We does not check it goal map is non-empty here. Somewehre else, I should make sure we can navigate to this goal.
             return best_instance_id
 
-        logger.debug("Goal does not match any instance.")
+        self.log.debug("Goal does not match any instance.")
         return None
 
     def aggregate_scores_per_instance(self, confidences, agg_fn):
         agg_scores = []
         for inst_idx, inst_confidences in enumerate(confidences):
             if agg_fn == "max":
-                agg_scores.append(max(inst_confidences))
+                agg_scores.append(np.max(inst_confidences))
             elif agg_fn == "mean":
                 agg_scores.append(np.mean(inst_confidences))
             elif agg_fn == "median":
@@ -313,7 +246,7 @@ class GoatMatching(Matching):
             else:
                 raise NotImplementedError
             # logger.debug(f"Instance {inst_idx+1} score: {max(inst_view_scores)}")
-            logger.debug(f"Instance {inst_idx+1} score: {agg_scores[-1]}")
+            self.log.debug(f"Instance {inst_idx+1} score: {agg_scores[-1]}")
         return agg_scores
 
     def search_for_goal(
@@ -336,74 +269,55 @@ class GoatMatching(Matching):
             (
                 mem_match_confidences,
                 mem_match_instance_ids,
-            ) = self.get_matches_against_memory(
+            ) = self.match_instances_to_goal(
+                self.instance_memory.instances.values(),
+                False,
                 task,
-                use_full_image=True,
-                global_pose=global_pose,
+                global_pose
             )
 
         #! myTODO: Should I overwrite Mem with obs, or otherwise?
         if len(mem_match_confidences) > 0:
-            logger.debug(
+            self.log.debug(
                 f"Matching with memory: {len(mem_match_confidences)} instances"
             )
             inst_goal_id = self.get_best_match(
                 mem_match_confidences, mem_match_instance_ids, score_thresh, agg_fn
             )
             if not inst_goal_id is None:
-                logger.info(f"Goal instance {inst_goal_id} found by matching with memory.")
+                self.log.info(f"Goal instance {inst_goal_id} found by matching with memory.")
                 return inst_goal_id
             else:
-                logger.debug(f"No matches found in the memory")
-
+                self.log.debug(f"No matches found in the memory")
 
 
 
         obs_match_confidences, obs_match_instance_ids = (
-            self.get_matches_against_current_frame(
+            self.match_instances_to_goal(
+                [self.instance_memory.instances[k] for k in self.instance_memory.temp_id_to_global_id.values() if k!=0],
+                True,
                 task,
-                use_full_image=False,
-                global_pose=global_pose,
+                global_pose
             )
         )
 
         if len(obs_match_confidences) > 0:
-            logger.debug(
+            self.log.debug(
                 f"Matching with observation: {len(obs_match_confidences)} instances"
             )
-            logger.debug(
+            self.log.debug(
                 f"Global instance ids: {obs_match_instance_ids}"
             )
             inst_goal_id = self.get_best_match(
                 obs_match_confidences, obs_match_instance_ids, score_thresh, agg_fn
             )
             if not inst_goal_id is None:
-                logger.debug(
+                self.log.debug(
                     f"Goal instance {inst_goal_id} found in this step by matching with observation."
                 )
                 return inst_goal_id
             else:
-                logger.debug(f"No matches found with observation")
+                self.log.debug(f"No matches found with observation")
 
         return None
 
-
-    def _get_valid_views(self, inst_views, category, use_full_image):
-        views = []
-        for inst_view in inst_views:
-            if inst_view.category_id != category:
-                continue
-            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
-            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
-            logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
-            logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
-            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
-                continue
-            if use_full_image:
-                img = self.instance_memory.images[inst_view.timestep].cpu().numpy()
-                img = np.transpose(img, (1, 2, 0))
-            else:
-                img = inst_view.cropped_image
-
-            views.append(img)
-        return views

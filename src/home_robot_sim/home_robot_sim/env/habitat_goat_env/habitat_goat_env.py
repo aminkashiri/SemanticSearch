@@ -48,7 +48,6 @@ class HabitatGoatEnv(HabitatEnv):
         self.timestep = 0
         self.current_episode = None
 
-        self.episodes_data_path = config.habitat.dataset.data_path
 
         if config.AGENT.SEMANTIC_MAP.semantic_categories == "dataset":
             dataset_type = config.habitat.dataset.type
@@ -68,7 +67,6 @@ class HabitatGoatEnv(HabitatEnv):
         )
 
         self.visualizer = Visualizer(config, self.semantic_category_mapping)
-        self.imagenav_visualizer = NavVisualizer(config, self.semantic_category_mapping)
 
 
     def fetch_vocabulary(self):
@@ -88,11 +86,9 @@ class HabitatGoatEnv(HabitatEnv):
     def reset(self):
         habitat_obs = self.habitat_env.reset()
         self.current_episode = self.habitat_env.current_episode
-        self.active_task_idx = 0
 
         self._last_obs = self._preprocess_obs(habitat_obs)
         self.visualizer.reset()
-        self.imagenav_visualizer.reset()
 
         self.scene_id = self.habitat_env.current_episode.scene_id.split("/")[-1].split(
             "."
@@ -100,18 +96,12 @@ class HabitatGoatEnv(HabitatEnv):
         self.episode = self.habitat_env.current_episode
         self.episode_id = self.episode.episode_id
 
-        self.current_task_idx = (
-            self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
-        )
         self.semantic_category_mapping.reset_instance_id_to_category_id(
             self.habitat_env
         )
     
-    def reset_visualization(self):
+    def reset_vis_dir(self):
         self.visualizer.set_vis_dir(
-            self.scene_id, f"{self.episode_id}_{self.current_task_idx}"
-        )
-        self.imagenav_visualizer.set_vis_dir(
             f"{self.scene_id}_{self.episode_id}_{self.current_task_idx}"
         )
 
@@ -149,7 +139,6 @@ class HabitatGoatEnv(HabitatEnv):
             return observations[0]
         return observations
 
-    #! This is inside habitat goat env:
     def visualize_semantic_with_labels(
         self,
         semantic_array: np.ndarray,
@@ -224,32 +213,8 @@ class HabitatGoatEnv(HabitatEnv):
         action["action"] =  HabitatSimActions[action["action"].name.lower()]
         return action
 
-    def _process_info(self, info: Dict[str, Any], agent_id=None) -> Any:
-        obs = self.get_observation()
-        if isinstance(obs, list):
-            obs = obs[agent_id]
-        current_task = obs.task_observations["tasks"][self.current_task_idx]
-        info["rgb_frame"] = obs.rgb[:,:,::-1]
-        info["semantic_frame"] = obs.semantic
-        info["agent_id"] = agent_id
-        if (
-            "Goat-v1" in self.task_type and
-            current_task["type"] == "image"
-        ):
-            info["last_goal_image"] = current_task["image"]
-            info["last_collisions"] = {"is_collision": False}
-            info["last_td_map"] = obs.task_observations.get("top_down_map")
-            self.imagenav_visualizer.visualize(**info)
-        else:
-            goal_text_desc = {
-                x: y
-                for x, y in current_task.items()
-                if x != "image"
-            }
-            info["goal_name"] = str(goal_text_desc)
-            info["third_person_image"] = obs.third_person_image
-            info["top_down_map"] = obs.task_observations.get("top_down_map")
-            self.visualizer.visualize(**info)
+    def _process_info(self, info: Dict[str, Any]) -> Any:
+        self.visualizer.visualize(**info)
 
 
     def apply_action(
@@ -259,26 +224,33 @@ class HabitatGoatEnv(HabitatEnv):
         prev_obs: Optional[home_robot.core.interfaces.Observations] = None,
     ):
         super().apply_action(action, info, prev_obs)
-        self.current_task_idx = (
-            self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
-        )
     
-    def get_subepisode_metrics(self):
-        ep_metrics = super().get_episode_metrics()
+    def add_subepisode_metrics(self, all_metrics, action):
+        ep_metrics = self.get_episode_metrics()
         ep_metrics.pop("goat_top_down_map", None)
-        if self.config.habitat.dataset.type == "Goat-v1":
-            ep_metrics["goat_sub-task_success"] = ep_metrics["goat_sub-task_success"][self.current_task_idx - 1]
+
+        task_idx = action["action_args"]["task_idx"]
+
+        if self.task_type == "Goat-v1":
+            ep_metrics["goat_sub-task_success"] = ep_metrics["goat_sub-task_success"][task_idx]
             ep_metrics["goat_distance_to_sub-goal"] = ep_metrics["goat_distance_to_sub-goal"][0]
+            all_metrics[task_idx] = ep_metrics
         else:
             ep_metrics["distance_to_goal"] = ep_metrics["distance_to_goal"][0]
-        return ep_metrics
+            all_metrics[0] = ep_metrics
 
+        logger.info("-------------------------")
+        logger.info(
+            f"{self.scene_id}_{self.episode_id}_{task_idx} {ep_metrics}"
+        )
+        logger.info("-------------------------")
+    
+    @property
+    def current_task_idx(self) -> int:
+        return self.habitat_env.task.current_task_idx if "Goat-v1" in self.task_type else 0
 
 class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
     semantic_category_mapping: SemanticCategoryMapping
-
-    def __init__(self, habitat_env: habitat.core.env.Env, config):
-        super().__init__(habitat_env, config)
 
     def _preprocess_action(self, actions: List[home_robot.core.interfaces.Action]) -> int:
         for action in actions:
@@ -286,5 +258,41 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
         return actions
 
     def _process_info(self, infos: List[Dict[str, Any]]) -> Any:
-        for i, info in enumerate(infos):
-            super()._process_info(info, i)
+        for info in infos:
+            super()._process_info(info)
+
+    def add_subepisode_metrics(self, all_metrics, actions):
+        ep_metrics = self.get_episode_metrics()
+        ep_metrics.pop("goat_top_down_map", None)
+
+        stopped_agents = []
+        stopped_tasks = []
+        for a in actions:
+            if a["action"] == 0:
+                stopped_agents.append(a["action_args"]["agent_id"])
+                stopped_tasks.append(a["action_args"]["task_idx"])
+
+        # print("task type: ", self.task_type, ep_metrics)
+        if self.task_type == "MultiAgentObjectNav-v1":
+            ep_metrics["distance_to_goal"] = ep_metrics["distance_to_goal"][stopped_agents[0]]
+            all_metrics[0] = ep_metrics
+        elif self.task_type == "MultiAgentGoat-v1":
+            for agent_id, task_idx in zip(stopped_agents, stopped_tasks):
+                metrics = ep_metrics.copy()
+                if not task_idx is None and all_metrics.get(task_idx) is None: # Only considers the first agent that stops for each task #! myTODO: Maybe success should be considered if any of the agents stop
+                    metrics["multiagent_goat_success"] = metrics["multiagent_goat_success"][task_idx]
+                    metrics["multiagent_goat_distance_to_sub-goal"] = metrics["multiagent_goat_distance_to_sub-goal"][task_idx][agent_id]
+                    all_metrics[task_idx] = metrics
+                    logger.info("-------------------------")
+                    logger.info(
+                        f"{self.scene_id}_{self.episode_id}_{task_idx} {metrics}"
+                    )
+                    logger.info("-------------------------")
+        else:
+            raise Exception(f"{self.task_type} Not implemented")
+
+
+    def reset_vis_dir(self):
+        self.visualizer.set_vis_dir(
+            f"{self.scene_id}_{self.episode_id}"
+        )

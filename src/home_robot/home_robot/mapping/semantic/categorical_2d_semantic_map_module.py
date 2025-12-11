@@ -364,9 +364,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         #! myTODO: It doesn't look like this is used anywhere, so I'm commenting it out.
         # map_features = self._get_map_features(local_map, global_map)
 
-        logger.debug(f"Updated global pose is: {global_pose}")
-        logger.debug(f"Updated local pose is: {local_pose}")
-        logger.debug(f"Updated local map boundaries are: {lmb}")
+        logger.debug(f"Updated pose: global={global_pose.tolist()}, local={local_pose.tolist()}, lmb: {lmb.tolist()}")
         return (
             # map_features,
             local_map,
@@ -1181,9 +1179,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
         """
-        assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
 
         if self.record_instance_ids:
+            assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
             self._update_global_map_instances(global_map, local_map, lmb)
             global_map[
                 : MC.NON_SEM_CHANNELS + self.num_sem_categories,
@@ -1331,3 +1329,129 @@ class Categorical2DSemanticMapModule(nn.Module):
             + 1,
         ] = 1
         return visited_map
+
+    #! myTODO: Not complete
+    # def merge_instances(self, global_map, local_map):
+    #     for i in range(self.num_sem_categories):
+    #         if (
+    #             torch.sum(local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories])
+    #             > 0
+    #         ):
+    #             max_instance_id = (
+    #                 torch.max(
+    #                     global_map[
+    #                         MC.NON_SEM_CHANNELS
+    #                         + self.num_sem_categories : MC.NON_SEM_CHANNELS
+    #                         + 2 * self.num_sem_categories,
+    #                     ]
+    #                 )
+    #                 .int()
+    #                 .item()
+    #             )
+    #             # if the local map has any object instances, update the global map with instance ids
+    #             # logger.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
+    #             instance_channel = self._merge_map_util(
+    #                 global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
+    #                 local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
+    #                 (lmb[0], lmb[1]),
+    #                 (lmb[2], lmb[3]),
+    #                 max_instance_id,
+    #             )
+    #             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i] = (
+    #                 instance_channel
+    #             )
+
+    # def merge_instance_util(
+    #     self,
+    #     global_instances: Tensor,
+    #     local_map: Tensor,
+    #     x_range: tuple,
+    #     y_range: tuple,
+    #     max_instance_id: int,
+    # ) -> Tensor:
+    #     """
+    #     Update one instance channels in the global map from one instance channels in the local map:
+    #     aggregate local instances with existing global instances or create new global instances.
+
+    #     Args:
+    #         global_instances (Tensor): The global map tensor.
+    #         local_map (Tensor): The local map tensor.
+    #         x_range (tuple): The range of indices in the x-axis for the local map in the global map.
+    #         y_range (tuple): The range of indices in the y-axis for the local map in the global map.
+
+    #     Returns:
+    #         Tensor: The updated global instances tensor.
+
+    #     """
+    #     p = self.padding_for_instance_overlap  # default: 1
+    #     d = self.dilation_for_instances  # default: 0
+
+    #     H = global_instances.shape[0]
+    #     W = global_instances.shape[1]
+
+    #     x1, x2 = x_range
+    #     y1, y2 = y_range
+
+    #     # padding added on each side
+    #     t_p = min(x1, p)
+    #     b_p = min(H - x2, p)
+    #     l_p = min(y1, p)
+    #     r_p = min(W - y2, p)
+
+    #     # the indices of the padded local_map in the global map
+    #     x_start = x1 - t_p
+    #     x_end = x2 + b_p
+    #     y_start = y1 - l_p
+    #     y_end = y2 + r_p
+
+    #     local_map = torch.round(local_map)
+
+    #     # pad the local map
+    #     extended_local_map = F.pad(local_map.float(), (l_p, r_p), mode="replicate")
+    #     extended_local_map = F.pad(
+    #         extended_local_map.transpose(1, 0), (t_p, b_p), mode="replicate"
+    #     ).transpose(1, 0)
+
+    #     self.instance_dilation_selem = skimage.morphology.disk(d)
+    #     # dilate the extended local map
+    #     if d > 0:
+    #         extended_dilated_local_map = torch.round(
+    #             torch.tensor(
+    #                 cv2.dilate(
+    #                     extended_local_map.cpu().numpy(),
+    #                     self.instance_dilation_selem,
+    #                     iterations=1,
+    #                 ),
+    #                 device=local_map.device,
+    #                 dtype=local_map.dtype,
+    #             )
+    #         )
+    #     else:
+    #         extended_dilated_local_map = torch.clone(extended_local_map)
+    #     # Get the instances from the global map within the local map's region
+
+    #     self._create_or_update_global_instances(
+    #         extended_dilated_local_map,
+    #         global_instances[x_start:x_end, y_start:y_end],
+    #         max_instance_id,
+    #         torch.unique(extended_local_map).tolist(),
+    #     )
+
+    #     # Update the global map with the associated instances from the local map
+
+    #     # only to speed up
+    #     max_temp_id = int(max(self.instance_memory.temp_id_to_global_id.keys()))
+    #     temp_id_lookup = np.full(max_temp_id + 1, -1, dtype=np.int16)  # -1 for unmapped
+    #     for temp_id, global_id in self.instance_memory.temp_id_to_global_id.items():
+    #         temp_id_lookup[temp_id] = global_id
+    #     global_instances_in_local = temp_id_lookup[local_map.cpu().numpy().astype(int)]
+
+    #     global_instances[x1:x2, y1:y2] = torch.maximum(
+    #         global_instances[x1:x2, y1:y2],
+    #         torch.tensor(
+    #             global_instances_in_local,
+    #             dtype=torch.int64,
+    #             device=global_instances.device,
+    #         ),
+    #     )
+    #     return global_instances

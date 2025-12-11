@@ -201,6 +201,7 @@ class NavVisualizer:
         dilated_obstacle_map: Optional[np.ndarray] = None,
         goal_instance_map: Optional[np.ndarray] = None,
         is_local: bool = True,
+        agent_id: int = None,
         **kwargs,
     ) -> None:
         """Visualize frame input and semantic map.
@@ -302,8 +303,14 @@ class NavVisualizer:
         except Exception as e:
             import pdb; pdb.set_trace()
         for i in range(nframes):
-            name = f"{timestep}_13.snapshot_{i}.png"
-            cv2.imwrite(os.path.join(self.vis_dir, name), frame)
+            # name = f"{timestep}_13.snapshot_{i}.png"
+            # cv2.imwrite(os.path.join(self.vis_dir, name), frame)
+
+            agent_text = "" if agent_id is None else f"agent_{agent_id}_"
+            cv2.imwrite(
+                os.path.join(self.vis_dir, f"{agent_text}{timestep}_13.snapshot.png"),
+                frame,
+            )
 
     def pad_frame(self, frame: np.ndarray, width: int) -> np.ndarray:
         """Pad the width of a frame to `width` centered white sides."""

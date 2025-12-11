@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import yaml
-from typing import List
+from typing import List, Union
 from tqdm import tqdm
 from pathlib import Path
 
@@ -20,9 +20,11 @@ from habitat.core.env import Env
 from omegaconf import DictConfig, OmegaConf
 from habitat.config.default import get_config
 from home_robot.utils.logger import get_logger
-from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
-from home_robot_sim.env.habitat_goat_env.habitat_goat_env import MultiAgentHabitatGoatEnv
+from home_robot.agent.goat_agent.multiagent_goat_agent import MultiAgentGoatAgent
+from home_robot_sim.env.habitat_goat_env.habitat_goat_env import (
+    MultiAgentHabitatGoatEnv,
+)
 
 from eval_episode import read_args, save_results
 
@@ -30,13 +32,16 @@ from eval_episode import read_args, save_results
 def read_configs(args):
     project_config = OmegaConf.load(args.project_config_path)
     if project_config.DATASET == "habitat_objnav_2023":
-        habitat_config_path = "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml" # V2
+        habitat_config_path = (
+            "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml"  # V2
+        )
     elif project_config.DATASET == "goat":
-        habitat_config_path = "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml"
+        habitat_config_path = (
+            "benchmark/nav/goat/multiagent_goat_hm3d_rgbd_with_semantic.yaml"
+        )
     else:
         raise NotImplementedError("Support for other datasets is not tested.")
 
-    
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
 
@@ -49,9 +54,9 @@ def read_configs(args):
     config.habitat.task.type = "MultiAgent" + config.habitat.task.type
     config.habitat.simulator.agents.main_agent.sim_sensors.depth_sensor.min_depth = 0.0
 
-
     base_agent_conf = config.habitat.simulator.agents.pop("main_agent")
     import copy
+
     agents = []
     for i in range(config.NUM_AGENTS):
         agents.append(f"agent{i}")
@@ -59,10 +64,9 @@ def read_configs(args):
 
         config.habitat.simulator.agents[f"agent{i}"] = agent_conf
     config.habitat.simulator.agents_order = agents
-    
+
     with open("./ma_merged_config.yaml", "w") as f:
         f.write(yaml.dump(OmegaConf.to_container(config), sort_keys=False))
-
 
     all_scenes = os.listdir(
         os.path.dirname(
@@ -73,11 +77,10 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:]
+    config.habitat.dataset.content_scenes = all_scenes[:3]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
-    
 
 
 if __name__ == "__main__":
@@ -89,60 +92,54 @@ if __name__ == "__main__":
 
     logger = get_logger()
 
-    config =  read_configs(args)
+    config = read_configs(args)
 
     logger.info("Starting code")
     logger.info(f"Using scenes: {config.habitat.dataset.content_scenes}")
 
     habitat_env = Env(config)
     env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
-    agents: List[GoatAgent] = []
+    agents: List[MultiAgentGoatAgent] = []
     for i in range(config.NUM_AGENTS):
-        agents.append(GoatAgent(config, env.semantic_category_mapping, i))
+        agents.append(MultiAgentGoatAgent(config, env.semantic_category_mapping, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
 
     results = {}
+    results_file = os.path.join(results_dir, "per_episode_metrics.json")
+    if os.path.exists(results_file):
+        with open(results_file, "r") as fp:
+            results = json.load(fp)
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
         logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
-        if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
-            with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
-                results = json.load(fp)
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
 
-        if env.episode_id != "0":
-            continue
-        env.reset_visualization()
+        env.reset_vis_dir()
         for agent in agents:
-            agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
+            agent.reset(env.scene_id, env.episode_id)
 
         ep_step = 0
-        all_subtask_metrics = []
+        all_subtask_metrics = {}
         pbar = tqdm(
-            total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
+            total=config.AGENT.max_steps * 5, file=sys.__stdout__, dynamic_ncols=True
         )
+        pbar.set_description(f"{env.scene_id}_{env.episode_id}")
 
-        old_task_idx = -1
         while not env.episode_over:
-            if env.current_task_idx != old_task_idx:
-                logger.info(
-                    f"Starting task {env.current_task_idx} in scene {env.scene_id} episode {env.episode_id}"
-                )
-                old_task_idx = env.current_task_idx
-                pbar.set_description(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx}"
-                )
-
             ep_step += 1
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
             )
-            logger.debug(f"Agent state: {env.habitat_env.sim.agents[0].get_state().position}")
-            logger.debug(f"Agent state: {env.habitat_env.sim.agents[1].get_state().position}")
+            logger.debug(
+                f"Agent state: {env.habitat_env.sim.agents[0].get_state().position}"
+            )
+            logger.debug(
+                f"Agent state: {env.habitat_env.sim.agents[1].get_state().position}"
+            )
             env.timestep = agent.get_subtask_timestep() + 1
             observations = env.get_observation()
 
@@ -152,47 +149,34 @@ if __name__ == "__main__":
             for agent, obs in zip(agents, observations):
                 agent.update_state(obs)
 
-            stop_called = False
             for agent in agents:
-                other_agents = list(filter(lambda x: x.agent_id != agent.agent_id, agents))
+                other_agents = list(
+                    filter(lambda x: x.agent_id != agent.agent_id, agents)
+                )
                 action, info, stuck = agent.act(other_agents)
 
-                stop_called = action["action"] == DiscreteNavigationAction.STOP or stop_called
-                
                 actions.append(action)
                 infos.append(info)
                 stucks.append(stuck)
-            
+
             if all(stucks):
-                actions = [agent._process_action(DiscreteNavigationAction.STOP) for agent in agents]
+                actions = [
+                    agent._process_action((None, DiscreteNavigationAction.STOP))
+                    for agent in agents
+                ]
 
             logger.info(f"Actions taken: {actions}")
             env.apply_action(actions, info=infos)
             pbar.update(1)
 
-            if stop_called:
-                for agent in agents:
-                    agent.reset_sub_episode()
-                ep_metrics = env.get_subepisode_metrics()
-                logger.info("-------------------------")
-                logger.info(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
-                )
-                logger.info("-------------------------")
+            stopped_agent = next(
+                (i for i, a in enumerate(actions) if a["action"] == 0), None
+            )
 
-                all_subtask_metrics.append(ep_metrics)
-                if not env.episode_over:
-                    for agent in agents:
-                        agent._reset_vis_dir(
-                            env.scene_id, env.episode_id, env.current_task_idx
-                        )
-                    env.visualizer.set_vis_dir(
-                        env.scene_id,
-                        f"{env.episode_id}_{env.current_task_idx}",
-                    )
-                    pbar.reset()
+            if stopped_agent is None:
+                continue
 
-        
+            env.add_subepisode_metrics(all_subtask_metrics, actions)
 
         # import cProfile
         # import pstats
@@ -210,4 +194,6 @@ if __name__ == "__main__":
             f"------------------------ Episode {env.scene_id} {env.episode.episode_id} over ------------------------"
         )
         pbar.close()
-        results = save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)
+        save_results(
+            results, env, results_dir, ep_step, all_subtask_metrics, agent, obs
+        )
