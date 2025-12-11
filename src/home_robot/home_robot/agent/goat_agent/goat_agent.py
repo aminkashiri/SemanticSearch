@@ -3,7 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import json
+import os
 import torch
 import psutil
 import numpy as np
@@ -23,6 +23,7 @@ from home_robot.mapping.semantic.categorical_2d_semantic_map_module import (
     Categorical2DSemanticMapModule,
 )
 
+
 class Task:
     type: str
     goal_semantic_id: int
@@ -32,29 +33,32 @@ class Task:
     goal_description: str = None
 
 
-
 class GoatAgent(Agent):
-    """Simple object nav agent based on a 2D semantic map"""
+    """Simple object nav agent based on a 2D semantic map
+    Works for tasks: Objectnav, Goat-v1, MultiagentGoat-V1
 
-    # Flag for debugging data flow and task configuraiton
-    verbose = False
+    """
 
     def __init__(
         self, config, semantic_category_mapping, agent_id=None, device_id: int = 0
     ):
-        # self.max_steps = config.AGENT.max_steps
+        if agent_id is None:
+            self.is_multiagent = False
+        else:
+            self.is_multiagent = True
+
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
-        self.max_steps = [500] * 10
+        self.max_steps = [config.AGENT.max_steps] * 10
+        self.task_type = config.habitat.task.type
+        self.seq_goals = bool(config.SEQ)
 
-        self.goal_matching_vis_dir = f"{config.DUMP_LOCATION}/goal_grounding_vis/{config.EXP_NAME}"
-        Path(self.goal_matching_vis_dir).mkdir(parents=True, exist_ok=True)
-
-        self.instance_memory = None
-        self.record_instance_ids = getattr(
-            config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
+        # self.record_instance_ids = True if "Goat-v1" in self.task_type else False
+        self.record_instance_ids = (
+            True  # Code doesn't work with False, I can fix this later
         )
 
+        self.instance_memory = None
         if self.record_instance_ids:
             self.instance_memory = InstanceMemory(
                 config.AGENT.SEMANTIC_MAP.du_scale,
@@ -63,11 +67,6 @@ class GoatAgent(Agent):
                 mask_cropped_instances=False,
                 padding_cropped_instances=200,
             )
-
-        ## imagenav stuff
-        self.goal_image = None
-        self.goal_mask = None
-        self.goal_image_keypoints = None
 
         self.goal_policy_config = config.AGENT.SUPERGLUE
 
@@ -113,9 +112,7 @@ class GoatAgent(Agent):
             exp_pred_threshold=config.AGENT.SEMANTIC_MAP.exp_pred_threshold,
             map_pred_threshold=config.AGENT.SEMANTIC_MAP.map_pred_threshold,
             min_obs_height_cm=config.AGENT.SEMANTIC_MAP.min_obs_height_cm,
-            record_instance_ids=getattr(
-                config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
-            ),
+            record_instance_ids=self.record_instance_ids,
             instance_memory=self.instance_memory,
             max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
             exploration_type=config.AGENT.exploration_type,
@@ -131,7 +128,6 @@ class GoatAgent(Agent):
         )
         self.inst_goal_id = None
 
-
         self.visualize = config.VISUALIZE or config.PRINT_IMAGES
         self.semantic_map = Categorical2DSemanticMapState(
             device=self.device,
@@ -139,14 +135,12 @@ class GoatAgent(Agent):
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             global_downscaling=config.AGENT.SEMANTIC_MAP.global_downscaling,
-            record_instance_ids=getattr(
-                config.AGENT.SEMANTIC_MAP, "record_instance_ids", False
-            ),
+            record_instance_ids=self.record_instance_ids,
             instance_memory=self.instance_memory,
             # close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
             agent_id=agent_id,
         )
-        self.max_num_sub_task_episodes = config.ENVIRONMENT.max_num_sub_task_episodes
+        self.max_subtasks_per_episode = config.ENVIRONMENT.max_subtasks_per_episode
 
         if config.AGENT.panorama_start:
             panorama_start_steps = int(360 / config.habitat.simulator.turn_angle)
@@ -177,7 +171,7 @@ class GoatAgent(Agent):
             agent_id=self.agent_id,
         )
 
-        self.sub_task_timesteps = None
+        self.subtask_timesteps = None
         self.total_timesteps = None
         self.last_pose = None
         self.reject_visited_targets = False
@@ -191,20 +185,29 @@ class GoatAgent(Agent):
             from home_robot.perception.detection.detic.detic_perception import (
                 DeticPerception,
             )
+
             self.segmentation = DeticPerception(
                 vocabulary="custom",
-                custom_vocabulary="," + ",".join(self.semantic_category_mapping.vocabulary),
+                custom_vocabulary=","
+                + ",".join(self.semantic_category_mapping.vocabulary),
                 sem_gpu_id=(-1 if config.NO_GPU else 0),
             )
         self.match_memory = True
 
     def get_subtask_timestep(self) -> int:
-        return self.sub_task_timesteps[self.current_task_idx]
+        """
+        Only has meaning when we have sequential goals and a single agent. Otherwise, it is the total timestep.
+        """
+        if self.seq_goals:
+            return self.subtask_timesteps[self.current_task_idx]
+        else:
+            return self.total_timesteps
 
-    def reset(self, scene_id, episode_id, current_task_idx):
+    def reset(self, scene_id, episode_id):
         """Initialize agent state. Reset is at the beginning of a new episode (not each task)."""
         self.total_timesteps = 0
-        self.sub_task_timesteps = [0] * self.max_num_sub_task_episodes
+        if self.seq_goals:
+            self.subtask_timesteps = [0] * self.max_subtasks_per_episode
         self.last_pose = np.zeros(3)
         self.semantic_map.init_map_and_pose()
         if self.instance_memory is not None:
@@ -214,40 +217,42 @@ class GoatAgent(Agent):
         self.navigate_to_best = False
 
         self.current_task_idx = -1
-        self.reset_sub_episode()
+        self.reset_for_next_task()
         self.planner.reset()
         self.matching.step = 0
         self.inst_goal_id = None
 
         self.stuck_counter = 0
-        self._reset_vis_dir(scene_id, episode_id, current_task_idx)
+        self.reset_vis_dir(scene_id, episode_id, 0)
         self.last_communication_time = {}
 
-    def reset_sub_episode(self) -> None:
-        """Reset for a new sub-episode since pre-processing is temporally dependent."""
-        self.goal_image = None
-        self.goal_image_keypoints = None
-        self.goal_mask = None
-        self.inst_goal_id = None
+    def handle_stop(self, action):
+        self.reset_for_next_task()
 
-        self.current_task_idx += 1
+    def reset_for_next_task(self) -> None:
+        """Reset for a new task, and not a new episode."""
+        self.inst_goal_id = None
+        if self.seq_goals:
+            self.current_task_idx += 1
         self.navigate_to_best = False
         self.match_memory = True
-        self.planner.reset_sub_episode()
-    
+        self.planner.reset_for_next_task()
+
     def update_steps(self):
         self.total_timesteps += 1
-        self.sub_task_timesteps[self.current_task_idx] += 1
+        if self.seq_goals:
+            self.subtask_timesteps[self.current_task_idx] += 1
         self.matching.step = self.total_timesteps
-        self.semantic_map_module.timestep += self.get_subtask_timestep()
+        self.semantic_map_module.timestep = self.get_subtask_timestep()
         self.planner.total_timesteps = self.total_timesteps
         self.planner.timestep = self.get_subtask_timestep()
-    
+
     def update_state(self, obs):
+        self._last_obs = obs
         obs_preprocessed, pose_delta = self._preprocess_obs(obs)
         self.update_steps()
         self.log.info(
-            f"---------------- Subtask step {self.get_subtask_timestep()} ----------------"
+            f"---------------- Updating state - step:{self.get_subtask_timestep()} ----------------"
         )
         self.log.debug(
             f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB"
@@ -260,7 +265,7 @@ class GoatAgent(Agent):
             self.stuck_counter += 1
         else:
             self.stuck_counter = 0
-    
+
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
         for task_obs in tasks_obs:
@@ -277,40 +282,8 @@ class GoatAgent(Agent):
             tasks.append(task)
         return tasks
 
-    def communicate_with_single_neighbor(self, neighbor):
-        data = self.get_communication_data()
-        neighbor_data = neighbor.receive_communication(self.agent_id, data)
-        self.merge_communication_data(neighbor_data)
-        self.last_communication_time[neighbor.agent_id] = self.total_timesteps
-
-    def communicate(self, neighbors):
-        for neighbor in neighbors:
-            last = self.last_communication_time.get(neighbor.agent_id, -1)
-            if self.total_timesteps - last > 0:
-                self.communicate_with_single_neighbor(neighbor)
-
-        lmb = self.semantic_map.lmb
-        self.semantic_map.local_map[:] = self.semantic_map.global_map[
-            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
-        ]
-
-    def receive_communication(self, sender_id, data):
-        self.last_communication_time[sender_id] = self.total_timesteps
-        self.merge_communication_data(data)
-        return self.get_communication_data()
-
-    def get_communication_data(self):
-        return {"map": self.semantic_map.global_map}
-
-    def merge_communication_data(self, data):
-        self.semantic_map_module.merge_neighbor_maps(
-            data["map"], self.semantic_map.global_map
-        )
-   
-    def act(self, other_agents=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any], bool]:
+    def act(self, **kwargs) -> Tuple[DiscreteNavigationAction, Dict[str, Any], bool]:
         """Act end-to-end."""
-        neighbors = self._get_neighbors(other_agents)
-        self.communicate(neighbors)
         stuck = False
         if (
             self.get_subtask_timestep() >= self.max_steps[self.current_task_idx]
@@ -320,27 +293,14 @@ class GoatAgent(Agent):
             )
             stuck = True
 
-        action, vis_inputs = self._get_best_action(neighbors)
+        action, vis_inputs = self._get_best_action(**kwargs)
         action = self._process_action(action)
+        if action["action"] == DiscreteNavigationAction.STOP:
+            self.handle_stop(action)
 
-        info = self._get_vis_info(vis_inputs)
+        info = self._get_vis_info(vis_inputs, action)
 
         return action, info, stuck
-
-    def _get_neighbors(self, other_agents):
-        neighbors = []
-        if other_agents is None:
-            return neighbors
-        for agent in other_agents:
-            dist = (
-                agent.semantic_map.global_pose[:2] - self.semantic_map.global_pose[:2]
-            ).norm()
-            if dist < self.communication_radius:
-                neighbors.append(agent)
-                self.log.debug(
-                    f"Communicating with agent: {agent.agent_id} with distance {dist}"
-                )
-        return neighbors
 
     def _update_maps(self, obs: torch.Tensor, pose_delta: torch.Tensor):
         # * before module call obs.shape is [380+3+1+num_instances]
@@ -363,15 +323,20 @@ class GoatAgent(Agent):
             self.semantic_map.origins,
         )
 
-    def _get_vis_info(self, vis_inputs):
+    def _get_vis_info(self, vis_inputs, action):
         if not self.visualize:
             return None
 
         is_local = vis_inputs.get("is_local", True)
+        obs = self._last_obs
         info = {
+            "agent_id": self.agent_id,
+            "rgb_frame": obs.rgb[:, :, ::-1],
+            "semantic_frame": obs.semantic,
+            "top_down_map": obs.task_observations.get("top_down_map"),
+            "is_collision": False,  #!myTODO
             "inst_goal_id": self.inst_goal_id,
             "timestep": self.get_subtask_timestep(),
-            "total_timesteps": self.total_timesteps,
             "explored_map": self.semantic_map.get_explored_map(is_local),
             "obstacle_map": self.semantic_map.get_obstacle_map(is_local),
             "semantic_map_1D": self.semantic_map.get_semantic_map_1D(is_local),
@@ -383,8 +348,20 @@ class GoatAgent(Agent):
             "instance_memory": self.instance_memory,
             **vis_inputs,
         }
-
+        self._get_task_info(obs, action, info)
         return info
+
+    def _get_task_info(self, obs, action, info):
+        current_task = obs.task_observations["tasks"][self.current_task_idx]
+        info["task_type"] = current_task["type"]
+        goal_text_desc = {x: y for x, y in current_task.items() if x != "image"}
+        info["caption"] = str(goal_text_desc)
+        if current_task["type"] == "imagenav":
+            info["goal_image"] = current_task["image"]
+        else:
+            info["third_person_image"] = obs.third_person_image
+
+        info["caption"] += f" | Action: {action['action']}"
 
     def _preprocess_obs(self, obs: Observations):
         """Take a home-robot observation, preprocess it to put it into the correct format for the
@@ -392,7 +369,9 @@ class GoatAgent(Agent):
 
         if not self.ground_truth_semantics:
             obs = self.segmentation.predict(obs)
-            obs.task_observations["instance_frame"] = obs.task_observations["instance_map"] + 1
+            obs.task_observations["instance_frame"] = (
+                obs.task_observations["instance_map"] + 1
+            )
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = (
@@ -451,12 +430,11 @@ class GoatAgent(Agent):
         # * preprocessed obs shape is (1, 3+1+num_sem_classes+num_instances, H, W)
         return obs_preprocessed, pose_delta
 
-    def _get_best_action(self, neighbors):
+    def _get_best_action(self, **kwargs):
         task = self.tasks[self.current_task_idx]
         action, vis_input = self.planner.plan(
             self.inst_goal_id,
             task.goal_semantic_id,
-            neighbors=neighbors,
         )
 
         if not action is None:
@@ -472,11 +450,12 @@ class GoatAgent(Agent):
 
         prev_inst_goal_id = self.inst_goal_id
         self.inst_goal_id = self.matching.search_for_goal(
-            task, True, self.semantic_map.global_pose,
+            task,
+            True,
+            self.semantic_map.global_pose,
             score_thresh=0,
         )
-        assert not self.inst_goal_id is None
-        if self.inst_goal_id == prev_inst_goal_id:
+        if self.inst_goal_id is None or self.inst_goal_id == prev_inst_goal_id:
             self.log.info("Best match is the same as the previous one. Stopping")
             return DiscreteNavigationAction.STOP, {}
 
@@ -485,7 +464,6 @@ class GoatAgent(Agent):
             task.goal_semantic_id,
             fallback_to_frontier=False,
             postfix="_last_shot",
-            neighbors=neighbors,
         )
 
         if action is None:
@@ -513,16 +491,30 @@ class GoatAgent(Agent):
                 self.semantic_map.global_pose,
             )
             if not inst_goal_id is None:
-                # Else, we should not replace, maybe we have previously seen a goal and moving toward it. 
+                # Else, we should not replace, maybe we have previously seen a goal and moving toward it.
                 self.inst_goal_id = inst_goal_id
-        
+
         self.match_memory = False
 
-    def _reset_vis_dir(self, scene_id, episode_id, current_task_idx):
-        self.planner.set_vis_dir(scene_id, f"{episode_id}_{current_task_idx}")
-        self.matching.set_vis_dir(f"{scene_id}_{episode_id}_{current_task_idx}")
+    def reset_vis_dir(self, scene_id, episode_id, current_task_idx=None):
+        if self.seq_goals:
+            dir_name = f"{scene_id}_{episode_id}_{current_task_idx}"
+        else:
+            dir_name = f"{scene_id}_{episode_id}"
+
+        if not self.agent_id is None:
+            dir_name = os.path.join(dir_name, f"agent_{self.agent_id}")
+
+        self.planner.set_vis_dir(dir_name)
+        self.matching.set_vis_dir(dir_name)
         self.semantic_map.vis_dir = self.planner.vis_dir
         self.semantic_map_module.vis_dir = self.planner.vis_dir
 
     def _process_action(self, action):
-        return {"action": action, "action_args": {"agent_id": 0 if self.agent_id is None else self.agent_id, "task_idx": self.current_task_idx}}
+        return {
+            "action": action,
+            "action_args": {
+                "agent_id": 0 if self.agent_id is None else self.agent_id,
+                "task_idx": self.current_task_idx,
+            },
+        }

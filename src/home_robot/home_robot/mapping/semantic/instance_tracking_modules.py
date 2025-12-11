@@ -9,6 +9,8 @@ import torch
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
+MIN_PIXELS = 1000
+MIN_EDGE = 15
 
 class InstanceView:
     """
@@ -75,9 +77,29 @@ class Instance:
         category_id: category id of instance
         instance_views: list of InstanceView objects
         """
+        self.id = None
         self.name = None
         self.category_id = None
         self.instance_views = []
+
+    def _get_valid_views(self, all_images, last_view):
+        views = []
+        all_views = [self.instance_views[-1]] if last_view else self.instance_views
+        for inst_view in all_views:
+            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
+            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+            # self.log.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
+            # self.log.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
+            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
+                continue
+            if last_view:
+                img = all_images[inst_view.timestep].cpu().numpy()
+                img = np.transpose(img, (1, 2, 0))
+            else:
+                img = inst_view.cropped_image
+
+            views.append(img)
+        return views
 
 
 class InstanceMemory:
@@ -148,6 +170,7 @@ class InstanceMemory:
         if global_instance is None:
             # create a new global instance
             global_instance = Instance()
+            global_instance.id = global_instance_id
             global_instance.category_id = instance_view.category_id
             global_instance.instance_views.append(instance_view)
             self.instances[global_instance_id] = global_instance

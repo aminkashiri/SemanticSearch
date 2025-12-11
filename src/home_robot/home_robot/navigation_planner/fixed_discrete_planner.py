@@ -146,7 +146,7 @@ class DiscretePlanner:
 
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
-        self.prefix = "" if self.agent_id is None else f"agent_{self.agent_id}_"
+        self.prefix = ""
         self.moved_forward = False
 
     def reset(self):
@@ -170,12 +170,11 @@ class DiscretePlanner:
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.moved_forward = False
     
-    def reset_sub_episode(self):
+    def reset_for_next_task(self):
         self.moved_forward = False
 
-    def set_vis_dir(self, scene_id: str, episode_id: str):
-        self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
-        shutil.rmtree(self.vis_dir, ignore_errors=True)
+    def set_vis_dir(self, dir_name):
+        self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
         os.makedirs(self.vis_dir, exist_ok=True)
 
     def disable_print_images(self):
@@ -183,8 +182,8 @@ class DiscretePlanner:
 
     def plan(
         self,
-        inst_goal_id: int,
-        goal_semantic_id: int,
+        inst_goal_id: int = None,
+        goal_semantic_id: int = None,
         fallback_to_frontier=True,
         postfix="",
         neighbors=None,

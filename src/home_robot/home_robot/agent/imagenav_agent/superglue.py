@@ -59,10 +59,9 @@ class Matching(nn.Module):
         self.default_vis_dir = default_vis_dir
         self.vis_dir = default_vis_dir
 
-    def set_vis_dir(self, episode_id: str) -> None:
+    def set_vis_dir(self, dir_name: str) -> None:
         if self.print_images:
-            self.vis_dir = os.path.join(self.default_vis_dir, str(episode_id))
-            shutil.rmtree(self.vis_dir, ignore_errors=True)
+            self.vis_dir = os.path.join(self.default_vis_dir, str(dir_name))
             os.makedirs(self.vis_dir, exist_ok=True)
 
     @staticmethod
