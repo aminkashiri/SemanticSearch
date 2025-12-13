@@ -16,7 +16,7 @@ install_requires = [
     "pybind11-global",
     "sophuspy",
     "trimesh",
-    "pin==2.6.17",
+    "pin==2.6.21",
 ]
 
 setup(

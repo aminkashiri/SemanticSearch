@@ -11,8 +11,8 @@ SHOW_RL_OBS: True
 ENVIRONMENT:
   forward: 0.25           # Keep
   turn_angle: 30.0        # Keep
-  frame_height: 480       # Adjusted to standard sensor +
-  frame_width: 640        # Adjusted to standard sensor resolution
+  frame_height: 720       # Adjusted to standard sensor +
+  frame_width: 1280        # Adjusted to standard sensor resolution
   camera_height: 0.3556     # Keep
   hfov: 60.0              # Adjusted: Defaulting to a common, less extreme HFOV for real cameras.
   min_depth: 0.2          # Adjusted: Ignore unreliable very close-range depth data (e.g., 20cm)

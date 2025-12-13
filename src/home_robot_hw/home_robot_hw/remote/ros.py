@@ -9,7 +9,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import ros_numpy
 import rospy
-import sophus as sp
+import sophuspy as sp
 import tf2_ros
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
