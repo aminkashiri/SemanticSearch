@@ -231,13 +231,17 @@ class ScoutObjectNavEnv:
         if not np.allclose(continuous_action, 0):
             # Execute the movement
             try:
+                # Use non-blocking navigation for faster execution
                 self.robot.nav.navigate_to(
-                    continuous_action, relative=True, blocking=True
+                    continuous_action, relative=True, blocking=False
                 )
+                # Small sleep to let command propagate
+                rospy.sleep(0.1)
             except Exception as e:
                 print(f"[ERROR] Navigation failed: {e}")
         
-        rospy.sleep(0.5)
+        # Don't sleep here - let eval loop control timing
+        # rospy.sleep(0.5)  # REMOVED for speed
         return self._episode_over
 
     def set_goal(self, goal):
@@ -267,6 +271,16 @@ class ScoutObjectNavEnv:
         # Get sensor data from robot
         rgb, depth, _ = self.robot.get_images(compute_xyz=True, rotate_images=False)
         current_pose = xyt2sophus(self.robot.get_base_pose())
+        
+        # Resize images if needed to match config
+        target_height = getattr(self.config.ENVIRONMENT, 'frame_height', 480)
+        target_width = getattr(self.config.ENVIRONMENT, 'frame_width', 640)
+        
+        if rgb.shape[0] != target_height or rgb.shape[1] != target_width:
+            import cv2
+            print(f"[ENV] Resizing from {rgb.shape[:2]} to ({target_height}, {target_width})")
+            rgb = cv2.resize(rgb, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+            depth = cv2.resize(depth, (target_width, target_height), interpolation=cv2.INTER_NEAREST)
 
         # Calculate relative pose from episode start
         relative_pose = self._episode_start_pose.inverse() * current_pose

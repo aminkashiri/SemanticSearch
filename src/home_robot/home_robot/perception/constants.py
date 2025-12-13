@@ -24,9 +24,8 @@ from home_robot.utils.constants import (
 hm3d_to_mp3d_path = Path(__file__).resolve().parent / "matterport_category_mappings.tsv"
 df = pd.read_csv(hm3d_to_mp3d_path, sep="    ", header=0, engine="python")
 hm3d_to_mp3d = {row["category"]: row["mpcat40index"] for _, row in df.iterrows()}
-hm3d_raw_to_mp3d = {row["raw_category"]: "_".join(row["mpcat40"].split(" ")) for _, row in df.iterrows()}
 hm3d_raw_to_hm3d = {row["raw_category"]: row["category"] for _, row in df.iterrows()}
-all_hm3d_categories = list(set(row["category"] for _, row in df.iterrows()))
+all_hm3d_categories = [row["category"] for _, row in df.iterrows()]
 
 
 class SemanticCategoryMapping(ABC):
@@ -76,115 +75,6 @@ class SemanticCategoryMapping(ABC):
     def num_sem_obj_categories(self):
         return self.num_sem_categories()
 
-class HabitatObjNav2022Categories(SemanticCategoryMapping):
-    """
-    Mapping for Habitat ObjNav 2022 Challenge
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.vocabulary = ["chair", "bed", "plant", "toilet", "tv_monitor", "sofa"]
-        self.goal_id_to_goal_name = {idx+1: name for idx, name in enumerate(self.vocabulary)}
-        self.goal_name_to_goal_id = {name: idx+1 for idx, name in enumerate(self.vocabulary)}
-        self._instance_id_to_category_id = None
-
-    def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
-        return (goal_id, self.goal_id_to_goal_name[goal_id])
-
-    def reset_instance_id_to_category_id(self, env: Env):
-        self._instance_id_to_category_id = []
-        i = 0
-        for obj in env.sim.semantic_annotations().objects:
-            # obj.category.index() is a local index for that category in that scene, not a global index
-            raw_category = obj.category.name().lower().strip()
-            category_id = self.goal_name_to_goal_id.get(hm3d_raw_to_mp3d.get(raw_category), 0)
-            # if category_id != 0:
-                # print(f"{raw_category} -> {hm3d_raw_to_mp3d.get(raw_category)}", end=",")
-                # print(f"{i} -> {category_id}", end="|")
-                # print(f"index: {obj.category.index()}")
-            i += 1
-            self._instance_id_to_category_id.append(category_id)
-
-        for goal in env.current_episode.goals:
-            instance_id = int(goal.object_name.split("_")[-1])
-            if self._instance_id_to_category_id[instance_id] == 0:
-                print(f"Manually adding: {goal.object_name} -> {goal.object_category}, {instance_id}->{self.goal_name_to_goal_id[goal.object_category]}")
-                # print(f"> raw_category: {hm3d_raw_to_mp3d.get(goal.object_name.split('_')[0])}")
-                self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[goal.object_category]
-
-        self._instance_id_to_category_id = np.array(self._instance_id_to_category_id)
-
-    @property
-    def all_hm3d_categories(self):
-        return list(set(all_hm3d_categories))
-
-    @property
-    def instance_id_to_category_id(self) -> np.ndarray:
-        return self._instance_id_to_category_id
-
-    @property
-    def map_color_palette(self):
-        return coco_map_color_palette
-
-    @property
-    def frame_color_palette(self):
-        return coco_frame_color_palette
-
-    @property
-    def categories_legend_path(self):
-        return coco_categories_legend_path
-
-    @property
-    def num_sem_categories(self):
-        return 6
-
-class GoatCategories(SemanticCategoryMapping):
-    """
-    Goat Dataset Mapping 
-    """
-    def __init__(self, vocabulary):
-        super().__init__()
-        self.vocabulary = vocabulary
-        self.goal_id_to_goal_name = {idx+1: name for idx, name in enumerate(vocabulary)}
-        self.goal_name_to_goal_id = {name: idx+1 for idx, name in enumerate(vocabulary)}
-        self._instance_id_to_category_id = None
-
-    def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
-        return (goal_id, self.goal_id_to_goal_name[goal_id])
-
-    def reset_instance_id_to_category_id(self, env: Env):
-        self._instance_id_to_category_id = []
-        for obj in env.sim.semantic_annotations().objects:
-            raw_category = obj.category.name().lower().strip()
-            category_id = self.goal_name_to_goal_id.get(hm3d_raw_to_hm3d.get(raw_category), 0)
-            self._instance_id_to_category_id.append(category_id)
-
-        self._instance_id_to_category_id = np.array(self._instance_id_to_category_id)
-
-    @property
-    def all_hm3d_categories(self):
-        return list(set(all_hm3d_categories))
-
-    @property
-    def instance_id_to_category_id(self) -> np.ndarray:
-        return self._instance_id_to_category_id
-
-    @property
-    def map_color_palette(self):
-        return languagenav_2categories_map_color_palette
-
-    @property
-    def frame_color_palette(self):
-        return languagenav_2categories_frame_color_palette
-
-    @property
-    def categories_legend_path(self):
-        return languagenav_2categories_legend_path
-
-    @property
-    def num_sem_categories(self):
-        # 0 is unused, 1 is object category, 2 is start receptacle category, 3 is goal receptacle category, 4 is "other/misc"
-        return len(self.vocabulary)
 
 class PaletteIndices:
     """
@@ -245,7 +135,7 @@ coco_categories_mapping = {
     39: 14,  # bottle
 }
 
-coco_categories_color_palette = [1.0, 1.0, 1.0] + [
+coco_categories_color_palette = [
     0.9400000000000001,
     0.7818,
     0.66,  # chair
