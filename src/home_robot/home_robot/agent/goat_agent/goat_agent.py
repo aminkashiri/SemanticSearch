@@ -18,6 +18,18 @@ from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
     Categorical2DSemanticMapState,
 )
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
+from home_robot.perception.detection.maskrcnn.coco_categories import coco_categories
+
+from .goat_agent_module import GoatAgentModule
+from .goat_matching import GoatMatching
+
+from home_robot.utils.logger import get_logger
+logger = get_logger()
+
+from home_robot.utils.visualization import visualize_map
+
+# For visualizing exploration issues
+debug_frontier_map = False
 from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
 from home_robot.mapping.semantic.categorical_2d_semantic_map_module import (
     Categorical2DSemanticMapModule,

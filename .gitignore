@@ -60,3 +60,4 @@ logs/*
 
 
 .llm_venv/
+.venv_temp/

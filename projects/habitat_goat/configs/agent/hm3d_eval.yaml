@@ -68,6 +68,7 @@ AGENT:
     step_size: 5                    # maximum distance of the short-term goal selected by the planner
     discrete_actions: True         # discrete motion planner output space or not
     planner_type: "old"             # ("old", "new") where "new" is the latest one being used for spot in real world
+    min_goal_distance_cm: 50
 
   SUPERGLUE:
     max_keypoints: 1024

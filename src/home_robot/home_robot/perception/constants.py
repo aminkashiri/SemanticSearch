@@ -10,8 +10,11 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from habitat.core.env import Env
-from habitat_sim.utils.common import d3_40_colors_rgb
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from habitat.core.env import Env
+    from habitat_sim.utils.common import d3_40_colors_rgb
 
 from home_robot.utils.constants import (
     MAX_DEPTH_REPLACEMENT_VALUE,
@@ -41,7 +44,7 @@ class SemanticCategoryMapping(ABC):
         pass
 
     @abstractmethod
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         pass
 
     @property
@@ -386,7 +389,7 @@ class HM3DtoCOCOIndoor(SemanticCategoryMapping):
             self.hm3d_goal_id_to_coco_goal_name[goal_id],
         )
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         self._instance_id_to_category_id = np.array(
             [
                 mp3d_to_coco.get(
@@ -439,52 +442,52 @@ languagenav_2categories_legend_path = str(
 #     d3_40_colors_rgb[1:].flatten()
 # )
 
-languagenav_2categories_color_palette = [255, 255, 255] + list(
-    np.array([d3_40_colors_rgb[1:].flatten()] * 10).flatten()
-)[:737]
+# languagenav_2categories_color_palette = [255, 255, 255] + list(
+#     np.array([d3_40_colors_rgb[1:].flatten()] * 10).flatten()
+# )[:737]
 
-languagenav_2categories_frame_color_palette = languagenav_2categories_color_palette + [
-    255,
-    255,
-    255,
-]
+# languagenav_2categories_frame_color_palette = languagenav_2categories_color_palette + [
+#     255,
+#     255,
+#     255,
+# ]
 
-languagenav_2categories_map_color_palette = [
-    int(x * 255.0)
-    for x in [
-        1.0,
-        1.0,
-        1.0,  # empty space
-        0.6,
-        0.6,
-        0.6,  # obstacles
-        0.95,
-        0.95,
-        0.95,  # explored area
-        0.96,
-        0.36,
-        0.26,  # visited area
-        0.12,
-        0.46,
-        0.70,  # closest goal
-        0.63,
-        0.78,
-        0.95,  # rest of goal
-        0.6,
-        0.87,
-        0.54,  # been close map
-        0.0,
-        1.0,
-        0.0,  # short term goal
-        0.6,
-        0.17,
-        0.54,  # blacklisted targets map
-        0.0,
-        0.0,
-        0.0,  # instance border
-        *[x / 255.0 for x in languagenav_2categories_color_palette],
-    ]
-]
+# languagenav_2categories_map_color_palette = [
+#     int(x * 255.0)
+#     for x in [
+#         1.0,
+#         1.0,
+#         1.0,  # empty space
+#         0.6,
+#         0.6,
+#         0.6,  # obstacles
+#         0.95,
+#         0.95,
+#         0.95,  # explored area
+#         0.96,
+#         0.36,
+#         0.26,  # visited area
+#         0.12,
+#         0.46,
+#         0.70,  # closest goal
+#         0.63,
+#         0.78,
+#         0.95,  # rest of goal
+#         0.6,
+#         0.87,
+#         0.54,  # been close map
+#         0.0,
+#         1.0,
+#         0.0,  # short term goal
+#         0.6,
+#         0.17,
+#         0.54,  # blacklisted targets map
+#         0.0,
+#         0.0,
+#         0.0,  # instance border
+#         *[x / 255.0 for x in languagenav_2categories_color_palette],
+#     ]
+# ]
 
 class LanguageNavCategories(SemanticCategoryMapping):
     """
@@ -499,7 +502,7 @@ class LanguageNavCategories(SemanticCategoryMapping):
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
         return (goal_id, self.goal_id_to_goal_name[goal_id])
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         self._instance_id_to_category_id = []
         for obj in env.sim.semantic_annotations().objects:
             raw_category = obj.category.name().lower().strip()
@@ -541,159 +544,159 @@ class LanguageNavCategories(SemanticCategoryMapping):
         return 4
 
 
-rearrange_3categories_indexes = {
-    1: "object",
-    2: "start_receptacle",
-    3: "goal_receptacle",
-}
+# rearrange_3categories_indexes = {
+#     1: "object",
+#     2: "start_receptacle",
+#     3: "goal_receptacle",
+# }
 
-rearrange_3categories_padded = (
-    ["."] + [rearrange_3categories_indexes[i] for i in range(1, 4)] + ["other"]
-)
+# rearrange_3categories_padded = (
+#     ["."] + [rearrange_3categories_indexes[i] for i in range(1, 4)] + ["other"]
+# )
 
-rearrange_3categories_legend_path = str(
-    Path(__file__).resolve().parent / "rearrange_3categories_legend.png"
-)
+# rearrange_3categories_legend_path = str(
+#     Path(__file__).resolve().parent / "rearrange_3categories_legend.png"
+# )
 
-rearrange_3categories_color_palette = [255, 255, 255] + list(
-    d3_40_colors_rgb[1:4].flatten()
-)
-rearrange_3categories_frame_color_palette = rearrange_3categories_color_palette + [
-    255,
-    255,
-    255,
-]
+# rearrange_3categories_color_palette = [255, 255, 255] + list(
+#     d3_40_colors_rgb[1:4].flatten()
+# )
+# rearrange_3categories_frame_color_palette = rearrange_3categories_color_palette + [
+#     255,
+#     255,
+#     255,
+# ]
 
 
-rearrange_3categories_map_color_palette = [
-    int(x * 255.0)
-    for x in [
-        1.0,
-        1.0,
-        1.0,  # empty space
-        0.6,
-        0.6,
-        0.6,  # obstacles
-        0.95,
-        0.95,
-        0.95,  # explored area
-        0.96,
-        0.36,
-        0.26,  # visited area
-        0.12,
-        0.46,
-        0.70,  # closest goal
-        0.63,
-        0.78,
-        0.95,  # rest of goal
-        0.6,
-        0.87,
-        0.54,  # been close map
-        0.0,
-        1.0,
-        0.0,  # short term goal
-        0.6,
-        0.17,
-        0.54,  # blacklisted targets map
-        0.0,
-        0.0,
-        0.0,  # instance border
-        *[x / 255.0 for x in rearrange_3categories_color_palette],
-    ]
-]
+# rearrange_3categories_map_color_palette = [
+#     int(x * 255.0)
+#     for x in [
+#         1.0,
+#         1.0,
+#         1.0,  # empty space
+#         0.6,
+#         0.6,
+#         0.6,  # obstacles
+#         0.95,
+#         0.95,
+#         0.95,  # explored area
+#         0.96,
+#         0.36,
+#         0.26,  # visited area
+#         0.12,
+#         0.46,
+#         0.70,  # closest goal
+#         0.63,
+#         0.78,
+#         0.95,  # rest of goal
+#         0.6,
+#         0.87,
+#         0.54,  # been close map
+#         0.0,
+#         1.0,
+#         0.0,  # short term goal
+#         0.6,
+#         0.17,
+#         0.54,  # blacklisted targets map
+#         0.0,
+#         0.0,
+#         0.0,  # instance border
+#         *[x / 255.0 for x in rearrange_3categories_color_palette],
+#     ]
+# ]
 
-# ----------------------------------------------------
-# Mukul 33 Indoor Categories
-# ----------------------------------------------------
+# # ----------------------------------------------------
+# # Mukul 33 Indoor Categories
+# # ----------------------------------------------------
 
-mukul_33categories_indexes = {
-    1: "alarm_clock",
-    2: "bathtub",
-    3: "bed",
-    4: "book",
-    5: "bottle",
-    6: "bowl",
-    7: "cabinet",
-    8: "carpet",
-    9: "chair",
-    10: "chest_of_drawers",
-    11: "couch",
-    12: "cushion",
-    13: "drinkware",
-    14: "fireplace",
-    15: "fridge",
-    16: "laptop",
-    17: "oven",
-    18: "picture",
-    19: "plate",
-    20: "potted_plant",
-    21: "shelves",
-    22: "shoes",
-    23: "shower",
-    24: "sink",
-    25: "stool",
-    26: "table",
-    27: "table_lamp",
-    28: "toaster",
-    29: "toilet",
-    30: "tv",
-    31: "vase",
-    32: "wardrobe",
-    33: "washer_dryer",
-}
-mukul_33categories_padded = (
-    ["."] + [mukul_33categories_indexes[i] for i in range(1, 34)] + ["other"]
-)
+# mukul_33categories_indexes = {
+#     1: "alarm_clock",
+#     2: "bathtub",
+#     3: "bed",
+#     4: "book",
+#     5: "bottle",
+#     6: "bowl",
+#     7: "cabinet",
+#     8: "carpet",
+#     9: "chair",
+#     10: "chest_of_drawers",
+#     11: "couch",
+#     12: "cushion",
+#     13: "drinkware",
+#     14: "fireplace",
+#     15: "fridge",
+#     16: "laptop",
+#     17: "oven",
+#     18: "picture",
+#     19: "plate",
+#     20: "potted_plant",
+#     21: "shelves",
+#     22: "shoes",
+#     23: "shower",
+#     24: "sink",
+#     25: "stool",
+#     26: "table",
+#     27: "table_lamp",
+#     28: "toaster",
+#     29: "toilet",
+#     30: "tv",
+#     31: "vase",
+#     32: "wardrobe",
+#     33: "washer_dryer",
+# }
+# mukul_33categories_padded = (
+#     ["."] + [mukul_33categories_indexes[i] for i in range(1, 34)] + ["other"]
+# )
 
-mukul_33categories_legend_path = str(
-    Path(__file__).resolve().parent / "mukul_33categories_legend.png"
-)
+# mukul_33categories_legend_path = str(
+#     Path(__file__).resolve().parent / "mukul_33categories_legend.png"
+# )
 
-mukul_33categories_color_palette = [255, 255, 255] + list(
-    d3_40_colors_rgb[1:34].flatten()
-)
-mukul_33categories_frame_color_palette = mukul_33categories_color_palette + [
-    255,
-    255,
-    255,
-]
+# mukul_33categories_color_palette = [255, 255, 255] + list(
+#     d3_40_colors_rgb[1:34].flatten()
+# )
+# mukul_33categories_frame_color_palette = mukul_33categories_color_palette + [
+#     255,
+#     255,
+#     255,
+# ]
 
-mukul_33categories_map_color_palette = [
-    int(x * 255.0)
-    for x in [
-        1.0,
-        1.0,
-        1.0,  # empty space
-        0.6,
-        0.6,
-        0.6,  # obstacles
-        0.95,
-        0.95,
-        0.95,  # explored area
-        0.96,
-        0.36,
-        0.26,  # visited area
-        0.12,
-        0.46,
-        0.70,  # closest goal
-        0.63,
-        0.78,
-        0.95,  # rest of goal
-        0.6,
-        0.87,
-        0.54,  # been close map
-        0.0,
-        1.0,
-        0.0,  # short term goal
-        0.6,
-        0.17,
-        0.54,  # blacklisted targets map
-        0.0,
-        0.0,
-        0.0,  # instance border
-        *[x / 255.0 for x in mukul_33categories_color_palette],
-    ]
-]
+# mukul_33categories_map_color_palette = [
+#     int(x * 255.0)
+#     for x in [
+#         1.0,
+#         1.0,
+#         1.0,  # empty space
+#         0.6,
+#         0.6,
+#         0.6,  # obstacles
+#         0.95,
+#         0.95,
+#         0.95,  # explored area
+#         0.96,
+#         0.36,
+#         0.26,  # visited area
+#         0.12,
+#         0.46,
+#         0.70,  # closest goal
+#         0.63,
+#         0.78,
+#         0.95,  # rest of goal
+#         0.6,
+#         0.87,
+#         0.54,  # been close map
+#         0.0,
+#         1.0,
+#         0.0,  # short term goal
+#         0.6,
+#         0.17,
+#         0.54,  # blacklisted targets map
+#         0.0,
+#         0.0,
+#         0.0,  # instance border
+#         *[x / 255.0 for x in mukul_33categories_color_palette],
+#     ]
+# ]
 
 
 class FloorplannertoMukulIndoor(SemanticCategoryMapping):
@@ -711,7 +714,7 @@ class FloorplannertoMukulIndoor(SemanticCategoryMapping):
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
         return (goal_id, self.floorplanner_goal_id_to_goal_name[goal_id])
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         # Identity everywhere except index 0 mapped to 34
         self._instance_id_to_category_id = np.arange(self.num_sem_categories)
         self._instance_id_to_category_id[0] = self.num_sem_categories - 1
@@ -781,51 +784,51 @@ hssd_28categories_legend_path = str(
     Path(__file__).resolve().parent / "hssd_28_cat_legend.png"
 )
 
-hssd_28categories_color_palette = [255, 255, 255] + list(
-    d3_40_colors_rgb[1:34].flatten()
-)
-hssd_28categories_frame_color_palette = hssd_28categories_color_palette + [
-    255,
-    255,
-    255,
-]
+# hssd_28categories_color_palette = [255, 255, 255] + list(
+#     d3_40_colors_rgb[1:34].flatten()
+# )
+# hssd_28categories_frame_color_palette = hssd_28categories_color_palette + [
+#     255,
+#     255,
+#     255,
+# ]
 
-hssd_28categories_map_color_palette = [
-    int(x * 255.0)
-    for x in [
-        1.0,
-        1.0,
-        1.0,  # empty space
-        0.6,
-        0.6,
-        0.6,  # obstacles
-        0.95,
-        0.95,
-        0.95,  # explored area
-        0.96,
-        0.36,
-        0.26,  # visited area
-        0.12,
-        0.46,
-        0.70,  # closest goal
-        0.63,
-        0.78,
-        0.95,  # rest of goal
-        0.6,
-        0.87,
-        0.54,  # been close map
-        0.0,
-        1.0,
-        0.0,  # short term goal
-        0.6,
-        0.17,
-        0.54,  # blacklisted targets map
-        0.0,
-        0.0,
-        0.0,  # instance border
-        *[x / 255.0 for x in hssd_28categories_color_palette],
-    ]
-]
+# hssd_28categories_map_color_palette = [
+#     int(x * 255.0)
+#     for x in [
+#         1.0,
+#         1.0,
+#         1.0,  # empty space
+#         0.6,
+#         0.6,
+#         0.6,  # obstacles
+#         0.95,
+#         0.95,
+#         0.95,  # explored area
+#         0.96,
+#         0.36,
+#         0.26,  # visited area
+#         0.12,
+#         0.46,
+#         0.70,  # closest goal
+#         0.63,
+#         0.78,
+#         0.95,  # rest of goal
+#         0.6,
+#         0.87,
+#         0.54,  # been close map
+#         0.0,
+#         1.0,
+#         0.0,  # short term goal
+#         0.6,
+#         0.17,
+#         0.54,  # blacklisted targets map
+#         0.0,
+#         0.0,
+#         0.0,  # instance border
+#         *[x / 255.0 for x in hssd_28categories_color_palette],
+#     ]
+# ]
 
 
 class HM3DtoHSSD28Indoor(SemanticCategoryMapping):
@@ -839,7 +842,7 @@ class HM3DtoHSSD28Indoor(SemanticCategoryMapping):
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
         return (goal_id, self.floorplanner_goal_id_to_goal_name[goal_id])
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         pass
 
     @property
@@ -873,7 +876,7 @@ class RearrangeBasicCategories(SemanticCategoryMapping):
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
         return (goal_id, self.goal_id_to_goal_name[goal_id])
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         # Identity everywhere except index 0 mapped to 4
         self._instance_id_to_category_id = np.arange(self.num_sem_categories)
         self._instance_id_to_category_id[0] = self.num_sem_categories - 1
@@ -918,7 +921,7 @@ class RearrangeDETICCategories(SemanticCategoryMapping):
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
         return (goal_id, self.goal_id_to_goal_name[goal_id])
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         self._instance_id_to_category_id = np.arange(self.num_sem_categories)
         self._instance_id_to_category_id[0] = self.num_sem_categories - 1
 
@@ -1890,7 +1893,7 @@ class HM3DtoLongTailIndoor(SemanticCategoryMapping):
             self.hm3d_goal_id_to_longtail_goal_name[goal_id],
         )
 
-    def reset_instance_id_to_category_id(self, env: Env):
+    def reset_instance_id_to_category_id(self, env: "Env"):
         self._instance_id_to_category_id = np.ndarray(
             [
                 long_tail_indoor_categories.index(

@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 from typing import Iterable, Tuple
+from typing import Iterable, Tuple
 
 import rospy
 from geometry_msgs.msg import Twist
@@ -16,6 +17,13 @@ from home_robot_hw.ros.utils import matrix_to_pose_msg
 from .abstract import AbstractControlModule, enforce_enabled
 
 
+class ScoutNavigationClient(AbstractControlModule):
+    """
+    A simplified navigation client for the Scout mobile robot.
+    This class handles basic navigation commands by publishing to the /cmd_vel topic.
+    It does not rely on a sophisticated "goto" controller like the Stretch, as the Scout's
+    kinematics are much simpler.
+    """
 class ScoutNavigationClient(AbstractControlModule):
     """
     A simplified navigation client for the Scout mobile robot.

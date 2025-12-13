@@ -16,7 +16,7 @@ from home_robot.agent.ovmm_agent.ovmm_perception import (
     build_vocab_from_category_map,
     read_category_map_file,
 )
-from home_robot.agent.ovmm_agent.ppo_agent import PPOAgent
+# from home_robot.agent.ovmm_agent.ppo_agent import PPOAgent
 from home_robot.core.abstract_agent import Agent
 from home_robot.core.interfaces import Action, DiscreteNavigationAction, Observations
 from home_robot.manipulation import HeuristicPlacePolicy

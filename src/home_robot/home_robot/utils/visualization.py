@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 from typing import Tuple
 import matplotlib.pyplot as plt
+import numpy as np
+import cv2, os
 
 
 def show_image(rgb):
@@ -65,6 +67,37 @@ def draw_line(
         mat[x - w : x + w, y - w : y + w] = 1
     return mat
 
+def visualize_map(input_shape, dir, name, features=None, points=None, traversible=None, goal_map=None, dilated_goal_map=None, frontier_map=None):
+    shape = input_shape + (3,)
+    white = np.ones(shape, dtype=np.uint8) * 255
+
+    if not traversible is None:
+        white[traversible == 0] = [0, 0, 0] # black
+
+    if not dilated_goal_map is None:
+        white[dilated_goal_map == 1] = [255, 0, 255] # magenta
+    
+    if not goal_map is None:
+        white[goal_map == 1] = [0, 0, 255] # red
+
+    if not frontier_map is None:
+        white[frontier_map == 1] = [255, 255, 0] # cyan
+
+    if not features is None:
+        for feature_map, color in features:
+            if not feature_map is None:
+                white[feature_map == 1] = color
+    
+    if not points is None:
+        for point, color in points:
+            white[point[0], point[1]] = color
+
+    white = np.flipud(white)
+    # logger.debug(f"SAVING 4.dilate")
+    cv2.imwrite(
+        os.path.join(dir, name),
+        white,
+    )
 
 def visualize_map(input_shape, dir, name, features=None, points=None, traversible=None, goal_map=None, dilated_goal_map=None, frontier_map=None):
     shape = input_shape + (3,)

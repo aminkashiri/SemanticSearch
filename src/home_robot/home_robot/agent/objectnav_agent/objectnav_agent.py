@@ -16,7 +16,7 @@ from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
     Categorical2DSemanticMapState,
 )
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
-from home_robot.navigation_planner.discrete_planner import DiscretePlanner
+from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
 
 from .objectnav_agent_module import ObjectNavAgentModule
 
@@ -34,7 +34,7 @@ class ObjectNavAgent(Agent):
         self,
         config,
         device_id: int = 0,
-        min_goal_distance_cm: float = 50.0,
+        min_goal_distance_cm: float = 100.0,
         continuous_angle_tolerance: float = 30.0,
     ):
         self.config = config
@@ -54,6 +54,8 @@ class ObjectNavAgent(Agent):
         )
 
         if self.record_instance_ids:
+            # NOTE: Assuming 'Instance' here refers to 'InstanceMemory' or similar class
+            # from the import section (InstanceMemory) which was previously used.
             self.instance_memory = InstanceMemory(
                 self.num_environments,
                 config.AGENT.SEMANTIC_MAP.du_scale,
@@ -327,7 +329,9 @@ class ObjectNavAgent(Agent):
     def get_nav_to_recep(self):
         return None
 
-    def act(self, obs: Observations) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
+    def act(
+        self, obs: Observations
+    ) -> Tuple[DiscreteNavigationAction, Dict[str, Any], Any, Observations]:
         """Act end-to-end."""
         # t0 = time.time()
 
@@ -397,28 +401,52 @@ class ObjectNavAgent(Agent):
         closest_goal_map = None
         short_term_goal = None
         dilated_obstacle_map = None
-        if planner_inputs[0]["found_goal"]:
-            self.episode_panorama_start_steps = 0
-        if self.timesteps[0] < self.episode_panorama_start_steps:
-            action = DiscreteNavigationAction.TURN_RIGHT
-        elif self.timesteps[0] > self.max_steps:
-            action = DiscreteNavigationAction.STOP
-        else:
-            (
-                action,
-                closest_goal_map,
-                short_term_goal,
-                dilated_obstacle_map,
-            ) = self.planner.plan(
-                **planner_inputs[0],
-                use_dilation_for_stg=self.use_dilation_for_stg,
-                timestep=self.timesteps[0],
-                debug=self.verbose,
-            )
-            # this is just changing the visualization but not the actual performance
-            # if self.timesteps_before_goal_update[0] == self.goal_update_steps - 1:
-                # self.closest_goal_map[0] = closest_goal_map
-            self.closest_goal_map[0] = closest_goal_map
+        replan = False
+        stop = False
+        
+        # Exception handling for planner crashes
+        try:
+            if planner_inputs[0]["found_goal"]:
+                self.episode_panorama_start_steps = 0
+            
+            if self.timesteps[0] < self.episode_panorama_start_steps:
+                action = DiscreteNavigationAction.TURN_RIGHT
+            elif self.timesteps[0] > self.max_steps:
+                action = DiscreteNavigationAction.STOP
+            else:
+                # FIXED: Unpacking all 6 return values from planner.plan()
+                (
+                    action,
+                    closest_goal_map,
+                    short_term_goal,
+                    dilated_obstacle_map,
+                    replan,
+                    stop,  # ← Added this missing 6th value
+                ) = self.planner.plan(
+                    **planner_inputs[0],
+                    use_dilation_for_stg=self.use_dilation_for_stg,
+                    timestep=self.timesteps[0],
+                    debug=self.verbose,
+                )
+                self.closest_goal_map[0] = closest_goal_map
+        
+        except Exception as e:
+            # If the planner crashes, handle gracefully
+            print(f"CRITICAL PLANNER ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Action: If not past max_steps, turn to continue exploration/replan
+            if self.timesteps[0] > self.max_steps:
+                action = DiscreteNavigationAction.STOP
+            else:
+                # Force a turn to try and gather new map data on the next step
+                action = DiscreteNavigationAction.TURN_RIGHT
+                
+            # Set defaults to avoid KeyErrors downstream
+            short_term_goal = None
+            closest_goal_map = None
+            dilated_obstacle_map = None
 
         # t3 = time.time()
         # print(f"[Agent] Planning time: {t3 - t2:.2f}")
@@ -429,7 +457,7 @@ class ObjectNavAgent(Agent):
             vis_inputs[0]["semantic_frame"] = obs.task_observations["semantic_frame"]
             vis_inputs[0]["closest_goal_map"] = self.closest_goal_map[0]
             vis_inputs[0]["third_person_image"] = obs.third_person_image
-            vis_inputs[0]["short_term_goal"] = None
+            vis_inputs[0]["short_term_goal"] = short_term_goal
             vis_inputs[0]["dilated_obstacle_map"] = dilated_obstacle_map
             vis_inputs[0]["semantic_map_config"] = self.config.AGENT.SEMANTIC_MAP
             vis_inputs[0]["instance_memory"] = self.instance_memory
@@ -440,8 +468,9 @@ class ObjectNavAgent(Agent):
             "short_term_goal": short_term_goal,
         }
 
-        return action, info
-
+        # Return 4 values as expected by the interface
+        return action, info, None, obs
+    
     def _preprocess_obs(self, obs: Observations):
         """Take a home-robot observation, preprocess it to put it into the correct format for the
         semantic map."""
