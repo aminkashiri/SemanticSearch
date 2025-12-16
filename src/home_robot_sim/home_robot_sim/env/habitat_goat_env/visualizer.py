@@ -212,6 +212,7 @@ class Visualizer:
         metrics = None, #TODO
         blacklisted_targets_map: np.ndarray = None,
         frontier_map: np.ndarray = None,
+        depth_frame: np.ndarray = None,
         **kwargs,
     ):
         """Visualize frame input and semantic map."""
@@ -262,6 +263,13 @@ class Visualizer:
                 V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
                 V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2,
             ] = self.get_td_map(top_down_map)
+        else:
+            if depth_frame:
+                depth_frame[depth_frame > 5.0] = 0.0
+                main_frame[
+                    V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
+                    V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X1 + V.FIRST_PERSON_W,
+                ] = self.prepare_for_vis(depth_frame / depth_frame.max() * 255.0, "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
 
         main_frame[V.Y1 : V.Y2, V.RGB_X1 : V.RGB_X2] = self.prepare_for_vis(
             rgb_frame,
@@ -531,6 +539,9 @@ class Visualizer:
         new_h = self.ind_frame_height - text_bar_height - 2 * border_size
         new_w = int(new_h / frame.shape[0] * frame.shape[1])
         frame = cv2.resize(frame, (new_w, new_h))
+
+        if frame.ndim == 2:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
         if set_found_goal:
             frame = self._found_goal_detection(frame)

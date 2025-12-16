@@ -301,10 +301,10 @@ class GoatMatching(Matching):
             )
         )
 
+        self.log.debug(
+            f"Matching with observation: {len(obs_match_confidences)} instances"
+        )
         if len(obs_match_confidences) > 0:
-            self.log.debug(
-                f"Matching with observation: {len(obs_match_confidences)} instances"
-            )
             self.log.debug(
                 f"Global instance ids: {obs_match_instance_ids}"
             )
