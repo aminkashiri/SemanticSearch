@@ -584,7 +584,7 @@ class DiscretePlanner:
             view_pose: Global loc that we can see the goal instance.
             method: "line_to_com" or "line_to_closest" or "closest_to_viewpoint"
         """
-        if np.sum(goal_instance_map) < 50 and not try_best:
+        if np.sum(goal_instance_map) < 47 and not try_best:
             self.log.info(f"Goal instance map too small ({np.sum(goal_instance_map)} cells). Not planning to it.")
             return None
         viewpoint_location = (
@@ -1031,7 +1031,7 @@ class DiscretePlanner:
 
             if metric == "distance":
                 agent_distances.append(distance)
-                if len(neighbors) == 0:
+                if neighbors is None or len(neighbors) == 0:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
@@ -1141,7 +1141,7 @@ class DiscretePlanner:
         ), "No frontiers found, but frontier_map is not empty."
 
         my_priority = 1
-        if len(neighbors) != 0:
+        if not neighbors is None:
             for neighbor in neighbors:
                 neighbor_loc = (
                     self.semantic_map.global_location_to_local_location(

@@ -17,12 +17,10 @@ from home_robot.utils.constants import (
 )
 from home_robot_sim.env.habitat_abstract_env import HabitatEnv
 from home_robot_sim.env.habitat_goat_env.visualizer import Visualizer
-from home_robot.agent.imagenav_agent.visualizer import NavVisualizer
 from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
     MaskRCNNPerception,
 )
 
-from home_robot_sim.env.habitat_goat_env.visualizer import Visualizer
 
 from home_robot.utils.logger import get_logger
 from home_robot.utils.visualization import visualize_semantic_with_labels
@@ -101,8 +99,11 @@ class HabitatGoatEnv(HabitatEnv):
         )
     
     def reset_vis_dir(self):
+        dir_name = f"{self.scene_id}_{self.episode_id}"
+        if self.config.SEQ:
+            dir_name = f"{dir_name}_{self.current_task_idx}"
         self.visualizer.set_vis_dir(
-            f"{self.scene_id}_{self.episode_id}_{self.current_task_idx}"
+            dir_name
         )
 
     def _preprocess_obs(
