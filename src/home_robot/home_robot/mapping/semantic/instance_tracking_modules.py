@@ -88,8 +88,9 @@ class Instance:
         for inst_view in all_views:
             # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
             bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
-            # self.log.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
-            # self.log.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
+            # logger.debug(f"Evaluating instance {self.id}")
+            # logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
+            # logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
             if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
                 continue
             if last_view:
@@ -239,6 +240,7 @@ class InstanceMemory:
             mode="nearest",
         ).squeeze(0).squeeze(0).int()
         
+        # logger.debug(f"In process instances")
         for temp_instance_id in temp_instance_ids:
             assert temp_instance_id != 0
             
@@ -246,6 +248,7 @@ class InstanceMemory:
             
             category_id = semantic_frame[instance_mask].unique()
             category_id = category_id[0].item()
+            # logger.debug(f"Temp instance id: {temp_instance_id}, category id: {category_id}")
             
             if category_id == 0:
                 continue
