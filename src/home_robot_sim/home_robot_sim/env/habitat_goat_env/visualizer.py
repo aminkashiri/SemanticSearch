@@ -264,7 +264,7 @@ class Visualizer:
                 V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2,
             ] = self.get_td_map(top_down_map)
         else:
-            if depth_frame:
+            if not depth_frame is None:
                 depth_frame[depth_frame > 5.0] = 0.0
                 main_frame[
                     V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
@@ -280,6 +280,7 @@ class Visualizer:
         )
 
         sem_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
+        # sem_frame = semantic_frame
         main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
             sem_frame,
             "Semantics",

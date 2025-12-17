@@ -68,8 +68,10 @@ def read_configs(args):
     config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor.min_depth = 0.0
     config.habitat.simulator.agents_order = ["agent0"]
     if project_config.DATASET == "goat":
+        config.SEQ = 1
         config.habitat.dataset.split = "val_seen"
     else:
+        config.SEQ = 0
         config.habitat.dataset.split = "val"
 
     with open("./merged_config.yaml", "w") as f:
@@ -84,7 +86,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:]
+    config.habitat.dataset.content_scenes = all_scenes[1:2]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -101,18 +103,15 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
         obs_tasks.append(obs_task)
 
     ep_results = {}
+    all_subtask_metrics = [all_subtask_metrics[key] for key in sorted(all_subtask_metrics.keys())]
     ep_results["metrics"] = all_subtask_metrics
     ep_results["total_num_steps"] = ep_step
-    ep_results["sub_task_timesteps"] = agent.sub_task_timesteps
+    if agent.seq_goals:
+        ep_results["sub_task_timesteps"] = agent.subtask_timesteps[:len(all_subtask_metrics)]
     ep_results["tasks"] = obs_tasks
 
     for metric in all_subtask_metrics[0].keys():
         values = [y[metric] for y in all_subtask_metrics]
-        if isinstance(values[0], dict):
-            for i, v in enumerate(values):
-                values[i] = min(v.values())
-
-
         ep_results[f"{metric}_mean"] = np.round(
             np.nanmean(values),
             4,
@@ -127,16 +126,12 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
         json.dump(results, fp, indent=4)
 
     stats = {}
-
     for metric in all_subtask_metrics[0].keys():
         values = [
             y[metric]
             for scene_ep_id in results.keys()
             for y in results[scene_ep_id]["metrics"]
         ]
-        if isinstance(values[0], dict):
-            for i, v in enumerate(values):
-                values[i] = min(values[i].values())
         stats[f"{metric}_mean"] = np.round(
             np.nanmean(values),
             4,
@@ -166,7 +161,7 @@ if __name__ == "__main__":
 
     habitat_env = Env(config)
     env = HabitatGoatEnv(habitat_env, config=config)
-    agent = GoatAgent(
+    agent: GoatAgent = GoatAgent(
         config, env.semantic_category_mapping
     )
 
@@ -174,34 +169,42 @@ if __name__ == "__main__":
     os.makedirs(results_dir, exist_ok=True)
 
     results = {}
+    results_file = os.path.join(results_dir, "per_episode_metrics.json")
+    if os.path.exists(results_file):
+        with open(results_file, "r") as fp:
+            results = json.load(fp)
 
     for i in range(len(env.habitat_env.episodes)):
         env.reset()
-        if os.path.exists(os.path.join(results_dir, "per_episode_metrics.json")):
-            with open(os.path.join(results_dir, "per_episode_metrics.json"), "r") as fp:
-                results = json.load(fp)
         logger.info(f"Evaluating scene {env.scene_id} episode {env.episode_id}")
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
-        env.reset_visualization()
-        agent.reset(env.scene_id, env.episode_id, env.current_task_idx)
+        
+        # if not env.episode_id in ["25", "9", "24", "11"]:
+        #     continue
+        env.reset_vis_dir()
+        agent.reset(env.scene_id, env.episode_id)
 
         ep_step = 0
-        all_subtask_metrics = []
+        all_subtask_metrics = {}
         pbar = tqdm(
             total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
         )
 
         old_task_idx = -1
         while not env.episode_over:
-            if env.current_task_idx != old_task_idx:
-                logger.info(
-                    f"Starting task {env.current_task_idx} in scene {env.scene_id} episode {env.episode_id}"
-                )
-                old_task_idx = env.current_task_idx
-                pbar.set_description(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx}"
-                )
+            pbar.set_description(
+                f"{env.scene_id}_{env.episode_id}"
+            )
+            if config.SEQ:
+                if env.current_task_idx != old_task_idx:
+                    logger.info(
+                        f"Starting task {env.current_task_idx} in scene {env.scene_id} episode {env.episode_id}"
+                    )
+                    old_task_idx = env.current_task_idx
+                    pbar.set_description(
+                        f"{env.scene_id}_{env.episode_id}_{env.current_task_idx}"
+                    )
             ep_step += 1
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
@@ -212,7 +215,6 @@ if __name__ == "__main__":
 
             agent.update_state(obs)
             action, info, stuck = agent.act()
-            stop_called = action["action"] == DiscreteNavigationAction.STOP
             if stuck: 
                 action = agent._process_action(DiscreteNavigationAction.STOP)
 
@@ -220,24 +222,13 @@ if __name__ == "__main__":
             env.apply_action(action, info)
             pbar.update(1)
 
-            if stop_called:
-                ep_metrics = env.get_episode_metrics()
-                agent.reset_sub_episode()
-                logger.info("-------------------------")
-                logger.info(
-                    f"{env.scene_id}_{env.episode_id}_{env.current_task_idx - 1} {ep_metrics}"
-                )
-                logger.info("-------------------------")
-
-                all_subtask_metrics.append(ep_metrics)
+            if action["action"] == 0:
+                env.add_subepisode_metrics(all_subtask_metrics, action)
                 if not env.episode_over:
-                    agent._reset_vis_dir(
+                    agent.reset_vis_dir(
                         env.scene_id, env.episode_id, env.current_task_idx
                     )
-                    env.visualizer.set_vis_dir(
-                        env.scene_id,
-                        f"{env.episode_id}_{env.current_task_idx}",
-                    )
+                    env.reset_vis_dir()
                     pbar.reset()
 
         logger.info(
