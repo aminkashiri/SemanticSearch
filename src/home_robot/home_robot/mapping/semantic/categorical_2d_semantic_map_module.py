@@ -5,6 +5,7 @@
 
 import cv2
 import torch
+import matplotlib
 import numpy as np
 import torch.nn as nn
 import skimage.morphology
@@ -26,6 +27,7 @@ from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
 # For debugging input and output maps - shows matplotlib visuals
 debug_maps = False
+matplotlib.use("Agg")
 
 logger = get_logger()
 
@@ -189,6 +191,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         gaze_width=30,
         gaze_distance=3,
         agent_cell_radius: int = 1,
+        print_images: bool = False
     ):
         """
         Arguments:
@@ -288,6 +291,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         self.avg_pooling_layer = nn.AvgPool2d(self.du_scale)
         self._disk_masks = {}
+        self.print_images = print_images
 
     @torch.no_grad()
     def forward(
@@ -552,21 +556,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         )  # shape: (min_visible_dist-10+1, 1)
         rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
         stair_mask[rr, cc] = 1
-        if False:
-            import matplotlib
-
-            # matplotlib.use("TkAgg")
-            # matplotlib.use("Agg")
+        if self.print_images:
             plt.clf()
             plt.subplot(321)
             plt.title("ground plane")
             plt.imshow(np.flipud(ground_plane))
-            # plt.subplot(322)
-            # plt.title("hfov")
-            # plt.imshow(np.flipud(within_hfov))
-            # plt.subplot(323)
-            # plt.title("vfov")
-            # plt.imshow(np.flipud(within_vfov))
             plt.subplot(322)
             plt.title("withinfov")
             plt.imshow(np.flipud(within_fov))
@@ -738,7 +732,8 @@ class Categorical2DSemanticMapModule(nn.Module):
                     image=obs[:3],
                 )
 
-        feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
+        # feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
+        feat[1:, :] = obs[4:, :, :].view(
             obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
 
@@ -1266,15 +1261,16 @@ class Categorical2DSemanticMapModule(nn.Module):
             MC.NON_SEM_CHANNELS :, :, :
         ]
 
-        if debug_maps:
-            plt.subplot(131)
-            plt.imshow(local_map[0, 7])  # second object = cup
-            plt.subplot(132)
-            plt.imshow(local_map[0, 6])  # first object = chair
-            # This is the channel in MAP FEATURES mode
-            plt.subplot(133)
-            plt.imshow(map_features[0, 12])
-            plt.show()
+        if self.print_images:
+            pass
+            # plt.subplot(131)
+            # plt.imshow(local_map[0, 7])  # second object = cup
+            # plt.subplot(132)
+            # plt.imshow(local_map[0, 6])  # first object = chair
+            # # This is the channel in MAP FEATURES mode
+            # plt.subplot(133)
+            # plt.imshow(map_features[0, 12])
+            # plt.show()
 
         return map_features.detach()
 
