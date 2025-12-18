@@ -64,7 +64,9 @@ class HabitatGoatEnv(HabitatEnv):
             self.habitat_env
         )
 
-        self.visualizer = Visualizer(config, self.semantic_category_mapping)
+        self.visualization_level = config.VISUALIZATION_LEVEL
+        if self.visualization_level > 0:
+            self.visualizer = Visualizer(config, self.semantic_category_mapping)
 
 
     def fetch_vocabulary(self):
@@ -86,7 +88,8 @@ class HabitatGoatEnv(HabitatEnv):
         self.current_episode = self.habitat_env.current_episode
 
         self._last_obs = self._preprocess_obs(habitat_obs)
-        self.visualizer.reset()
+        if self.visualization_level > 0:
+            self.visualizer.reset()
 
         self.scene_id = self.habitat_env.current_episode.scene_id.split("/")[-1].split(
             "."
@@ -147,11 +150,10 @@ class HabitatGoatEnv(HabitatEnv):
         postfix: str = "",
     ):
 
-        if not self.visualizer.vis_dir is None:
-            save_path = os.path.join(
-                self.visualizer.vis_dir, f"{self.timestep+1}_0.sem_input{postfix}.png"
-            )
-            visualize_semantic_with_labels(semantic_array, palette, save_path)
+        save_path = os.path.join(
+            self.visualizer.vis_dir, f"{self.timestep+1}_0.sem_input{postfix}.png"
+        )
+        visualize_semantic_with_labels(semantic_array, palette, save_path)
 
     def _preprocess_semantic(
         self, obs: home_robot.core.interfaces.Observations, habitat_semantic: np.ndarray
@@ -215,7 +217,8 @@ class HabitatGoatEnv(HabitatEnv):
         return action
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
-        self.visualizer.visualize(**info)
+        if self.visualization_level > 0:
+            self.visualizer.visualize(**info)
 
 
     def apply_action(
@@ -296,6 +299,7 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
 
 
     def reset_vis_dir(self):
-        self.visualizer.set_vis_dir(
-            f"{self.scene_id}_{self.episode_id}"
-        )
+        if self.visualization_level > 0:
+            self.visualizer.set_vis_dir(
+                f"{self.scene_id}_{self.episode_id}"
+            )

@@ -98,8 +98,6 @@ class Visualizer:
 
     def __init__(self, config, semantic_category_mapping, dataset=None):
         self.semantic_category_mapping = semantic_category_mapping
-        self.show_images = config.VISUALIZE
-        self.print_images = config.PRINT_IMAGES
         self.default_vis_dir = f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}"
         self._dataset = dataset
         os.makedirs(self.default_vis_dir, exist_ok=True)
@@ -223,8 +221,6 @@ class Visualizer:
         else:
             V = VIS_LAYOUT
 
-        if not self.show_images and not self.print_images:
-            return
 
         main_frame = self.init_frame(caption)
 
@@ -292,16 +288,12 @@ class Visualizer:
         # if instance_memory is not None:
         #     image_vis = self._visualize_instance_counts(image_vis, instance_memory)
 
-        if self.show_images:
-            cv2.imshow("Visualization", main_frame)
-            cv2.waitKey(1)
 
-        if self.print_images:
-            if agent_id is None:
-                path = os.path.join(self.vis_dir, f"{timestep}_13.snapshot.png")
-            else:
-                path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
-            success = cv2.imwrite(path, main_frame)
+        if agent_id is None:
+            path = os.path.join(self.vis_dir, f"{timestep}_13.snapshot.png")
+        else:
+            path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
+        success = cv2.imwrite(path, main_frame)
 
     def _visualize_instance_counts(
         self, image_vis: np.ndarray, instance_memory: InstanceMemory

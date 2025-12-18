@@ -123,16 +123,14 @@ class InstanceMemory:
 
     def __init__(
         self,
-        du_scale: int,
-        debug_visualize: bool = False,
         config=None,
         save_dir="instances",
         mask_cropped_instances=False,
         padding_cropped_instances=0,
         category_id_to_category_name=None,
     ):
-        self.du_scale = du_scale
-        self.debug_visualize = debug_visualize
+        self.du_scale = config.AGENT.SEMANTIC_MAP.du_scale
+        self.print_images = config.VISUALIZATION_LEVEL > 2
         self.mask_cropped_instances = mask_cropped_instances
         self.padding_cropped_instances = padding_cropped_instances
         self.category_id_to_category_name = category_id_to_category_name
@@ -144,7 +142,7 @@ class InstanceMemory:
         else:
             self.save_dir = save_dir
 
-        if self.debug_visualize:
+        if self.print_images:
             shutil.rmtree(self.save_dir, ignore_errors=True)
 
         self.reset()
@@ -179,7 +177,7 @@ class InstanceMemory:
             # add instance view to global instance
             global_instance.instance_views.append(instance_view)
         self.temp_id_to_global_id[int(temp_id)] = global_instance_id
-        if self.debug_visualize:
+        if self.print_images:
             category_name = (
                 f"cat_{instance_view.category_id}"
                 if self.category_id_to_category_name is None
