@@ -344,19 +344,13 @@ class DiscretePlanner:
 
         traversible = 1 - dilated_obstacles
         return traversible
-
-    def get_goal_map_pose(
+    
+    def raycast_from_viewpoint_to_goal_mask(
         self,
         traversible,
         goal_instance_map,
         viewpoint_location,
-        is_local,
-        pose_idx,
-        method,
-    ):
-        self.log.info(
-            f"Creating goal map using viewpoint. Choosing {pose_idx}th traversible viewpoint."
-        )
+        method):
 
         self.log.debug(f"Viewpoint is : {viewpoint_location}")
         if method == "line_to_com":
@@ -402,18 +396,34 @@ class DiscretePlanner:
                 in_segment = False
 
         first_pixels.append(viewpoint_location)
+        return first_pixels
 
-        if pose_idx >= len(first_pixels):
+
+    def get_goal_map_pose(
+        self,
+        traversible,
+        goal_instance_map,
+        viewpoint_location,
+        is_local,
+        pose_idx,
+        method,
+    ):
+        self.log.info(
+            f"Creating goal map using viewpoint. Choosing {pose_idx}th traversible viewpoint."
+        )
+        candidate_locations = self.raycast_from_viewpoint_to_goal_mask(traversible, goal_instance_map, viewpoint_location,method)
+        if pose_idx >= len(candidate_locations):
             self.log.info(f"No traversible view found for the instance goal.")
             return None
 
-        goal_location = first_pixels[pose_idx]
+        goal_location = candidate_locations[pose_idx]
+
         goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
         goal_map[goal_location[0], goal_location[1]] = 1
         self.visualize_get_goal_map(
             traversible,
             goal_instance_map,
-            first_pixels,
+            candidate_locations,
             viewpoint_location,
             goal_location,
             pose_idx,
@@ -478,6 +488,61 @@ class DiscretePlanner:
             traversible.shape,
             self.vis_dir,
             f"{self.prefix}{self.timestep}_6.get_closest_to_viewpoint{'' if is_local else '_global'}.png",
+            traversible=traversible,
+            features=features,
+            points=points,
+        )
+        return goal_map
+
+    def get_hybrid_goal_map2(
+        self, traversible, goal_instance_map, viewpoint_location, is_local, try_index
+    ):
+        """
+        This is a hybrid to approach. We get closest cluster of free cells to the viewpoint. We try to dilate a goal a lot, so it can contain cells on different sides of the goal.
+        Finally, we choose the closest cell in the cluster to a goal point.
+        """
+        self.log.info(f"Creating goal map using hybrid method.")
+        candidate_locations = self.raycast_from_viewpoint_to_goal_mask(traversible, goal_instance_map, viewpoint_location, "line_to_com")
+        if try_index >= len(candidate_locations):
+            self.log.info(f"No traversible view found for the instance goal.")
+            return None
+
+        candidate_location = candidate_locations[try_index]
+        candidate_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
+        candidate_map[candidate_location[0], candidate_location[1]] = 1
+
+        kernel_size = 10
+        candidate_map = cv2.dilate(
+            candidate_map.astype(np.uint8),
+            skimage.morphology.disk(kernel_size),
+            iterations=1,
+        )
+        free_goal_cells = np.logical_and(
+            candidate_map == 1, traversible == 1
+        )
+        
+
+        # Compute each pixel's distance to the nearest goal cell
+        goal_distance_map = distance_transform_edt(goal_instance_map == 0)
+        min_dist = goal_distance_map[free_goal_cells].min()
+        goal_location = tuple(np.argwhere(
+            free_goal_cells & (goal_distance_map == min_dist)
+        )[0])
+
+
+        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
+        goal_map[goal_location[0], goal_location[1]] = 1
+
+
+        features = [(goal_instance_map, [0, 165, 255]), (free_goal_cells, [100,100,0])]  # orange - goal_instance_map
+        points = []
+        points.append((viewpoint_location, [255, 0, 0]))
+        points.append((goal_location, [0, 0, 255]))
+
+        visualize_map(
+            traversible.shape,
+            self.vis_dir,
+            f"{self.prefix}{self.timestep}_6.get_hybrid_goal2{'' if is_local else '_global'}.png",
             traversible=traversible,
             features=features,
             points=points,
@@ -606,7 +671,7 @@ class DiscretePlanner:
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
         elif method == "hybrid":
-            goal_map = self.get_hybrid_goal_map(
+            goal_map = self.get_hybrid_goal_map2(
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
 
