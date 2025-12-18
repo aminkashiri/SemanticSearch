@@ -284,6 +284,8 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
                     metrics["multiagent_goat_success"] = metrics["multiagent_goat_success"][task_idx]
                     metrics["multiagent_goat_distance_to_sub-goal"] = metrics["multiagent_goat_distance_to_sub-goal"][task_idx][agent_id]
                     all_metrics[task_idx] = metrics
+                    for task_idx in all_metrics.keys():
+                        all_metrics[task_idx]["multiagent_goat_spl"] = metrics["multiagent_goat_spl"]
                     logger.info("-------------------------")
                     logger.info(
                         f"{self.scene_id}_{self.episode_id}_{task_idx} {metrics}"
