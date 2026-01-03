@@ -86,7 +86,8 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[1:2]
+    # config.habitat.dataset.content_scenes = ["bCPU9suPUw9", "HY1NcmCgn3n", "MHPLjHsuG27", "k1cupFYWXJ6", "XB4GS9ShBRE", "q5QZSEeHe5g"]
+    config.habitat.dataset.content_scenes = all_scenes[:20]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -104,6 +105,9 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
 
     ep_results = {}
     all_subtask_metrics = [all_subtask_metrics[key] for key in sorted(all_subtask_metrics.keys())]
+    for m in all_subtask_metrics:
+        if np.isnan(m.get("spl", np.nan)):
+            m["success"] = np.nan
     ep_results["metrics"] = all_subtask_metrics
     ep_results["total_num_steps"] = ep_step
     if agent.seq_goals:
@@ -122,8 +126,14 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
         )
 
     results[f"{env.scene_id}_{env.episode_id}"] = ep_results
+    for scene_ep_id in results:
+        for m in results[scene_ep_id]["metrics"]:
+            if np.isnan(m.get("spl", np.nan)):
+                m["success"] = np.nan
+                m["distance_to_goal"] = np.nan
     with open(os.path.join(results_dir, "per_episode_metrics.json"), "w") as fp:
         json.dump(results, fp, indent=4)
+
 
     stats = {}
     for metric in all_subtask_metrics[0].keys():
@@ -162,7 +172,7 @@ if __name__ == "__main__":
     habitat_env = Env(config)
     env = HabitatGoatEnv(habitat_env, config=config)
     agent: GoatAgent = GoatAgent(
-        config, env.semantic_category_mapping
+        config, env.semantic_category_mapping.vocabulary
     )
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
@@ -180,7 +190,7 @@ if __name__ == "__main__":
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
         
-        # if not env.episode_id in ["25", "9", "24", "11"]:
+        # if not env.episode_id in ["25"]:
         #     continue
         env.reset_vis_dir()
         agent.reset(env.scene_id, env.episode_id)

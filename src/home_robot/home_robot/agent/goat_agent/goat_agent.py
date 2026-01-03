@@ -7,7 +7,7 @@ import os
 import torch
 import psutil
 import numpy as np
-from pathlib import Path
+from ultralytics import YOLOv10
 import home_robot.utils.pose as pu
 from .goat_matching import GoatMatching
 from scipy.ndimage import binary_erosion
@@ -42,7 +42,7 @@ class GoatAgent(Agent):
     """
 
     def __init__(
-        self, config, semantic_category_mapping, agent_id=None, device_id: int = 0
+        self, config, vocabulary, agent_id=None, device_id: int = 0
     ):
         if agent_id is None:
             self.is_multiagent = False
@@ -81,8 +81,7 @@ class GoatAgent(Agent):
             self.device_id = device_id
             self.device = torch.device(f"cuda:{self.device_id}")
 
-        self.semantic_category_mapping = semantic_category_mapping
-        self.num_sem_categories = semantic_category_mapping.num_sem_categories
+        self.num_sem_categories = len(vocabulary)
         agent_cell_radius = int(
             np.ceil(config.AGENT.radius * 100.0 / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
@@ -132,6 +131,7 @@ class GoatAgent(Agent):
             global_downscaling=config.AGENT.SEMANTIC_MAP.global_downscaling,
             record_instance_ids=self.record_instance_ids,
             instance_memory=self.instance_memory,
+            visualization_level=config.VISUALIZATION_LEVEL,
             # close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
             agent_id=agent_id,
         )
@@ -163,6 +163,7 @@ class GoatAgent(Agent):
             semantic_map=self.semantic_map,
             frontier_metric=config.AGENT.frontier_metric,
             agent_id=self.agent_id,
+            ground_truth_semantics=config.GROUND_TRUTH_SEMANTICS,
         )
 
         self.subtask_timesteps = None
@@ -176,32 +177,35 @@ class GoatAgent(Agent):
         self.communication_radius = config.AGENT.COMMUNICATION.radius
         self.ground_truth_semantics = config.GROUND_TRUTH_SEMANTICS
         if not self.ground_truth_semantics:
-            from home_robot.perception.detection.detic.detic_perception import (
-                DeticPerception,
-            )
+            if "Goat-v1" in self.task_type:
+                from home_robot.perception.detection.detic.detic_perception import (
+                    DeticPerception,
+                )
 
-            vocab = self.semantic_category_mapping.vocabulary
-            # for i in range(len(vocab)):
-            #     if vocab[i] == "plant":
-            #         # vocab[i] = "flower_pot,flowers,pot,vase,bouqet"
-            #         vocab[i] = "flower_pot"
-            self.segmentation = DeticPerception(
-                vocabulary="custom",
-                custom_vocabulary=","
-                + ",".join(vocab),
-                # + ",".join(self.semantic_category_mapping.vocabulary),
-                sem_gpu_id=(-1 if config.NO_GPU else 0),
-            )
-            # from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
-            #     MaskRCNNPerception,
-            # )
+                # for i in range(len(vocab)):
+                #     if vocab[i] == "plant":
+                #         # vocab[i] = "flower_pot,flowers,pot,vase,bouqet"
+                #         vocab[i] = "flower_pot"
+                self.segmentation = DeticPerception(
+                    vocabulary="custom",
+                    custom_vocabulary=","
+                    + ",".join(vocabulary),
+                    sem_gpu_id=(-1 if config.NO_GPU else 0),
+                )
+            else:
+                from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
+                    MaskRCNNPerception,
+                )
 
-            # self.segmentation = MaskRCNNPerception(
-            #     sem_pred_prob_thr=0.8,
-            #     sem_gpu_id=(-1 if config.NO_GPU else 0),
-            # )
+                # MaskRCNN IDs are the same as our semantic category mappoing vocab.
+                self.segmentation = MaskRCNNPerception(
+                    sem_pred_prob_thr=0.8,
+                    sem_gpu_id=(-1 if config.NO_GPU else 0),
+                )
         self.match_memory = True
         self.visualization_level = config.VISUALIZATION_LEVEL
+        self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
+        self.history_scores = []
 
     def get_subtask_timestep(self) -> int:
         """
@@ -234,6 +238,7 @@ class GoatAgent(Agent):
         self.stuck_counter = 0
         self.reset_vis_dir(scene_id, episode_id, 0)
         self.last_communication_time = {}
+        self.history_scores = []
 
     def handle_stop(self, action):
         self.reset_for_next_task()
@@ -247,7 +252,7 @@ class GoatAgent(Agent):
         self.match_memory = True
         self.planner.reset_for_next_task()
 
-    def update_steps(self):
+    def _update_steps(self):
         self.total_timesteps += 1
         if self.seq_goals:
             self.subtask_timesteps[self.current_task_idx] += 1
@@ -255,11 +260,6 @@ class GoatAgent(Agent):
         self.semantic_map_module.timestep = self.get_subtask_timestep()
         self.planner.total_timesteps = self.total_timesteps
         self.planner.timestep = self.get_subtask_timestep()
-
-    def update_state(self, obs):
-        self._last_obs = obs
-        self.update_steps()
-        obs_preprocessed, pose_delta = self._preprocess_obs(obs)
         self.log.info(
             f"---------------- Updating state - step:{self.get_subtask_timestep()} ----------------"
         )
@@ -267,13 +267,12 @@ class GoatAgent(Agent):
             f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB"
         )
 
-        self._update_maps(obs_preprocessed, pose_delta)
-
+    def update_state(self, obs):
+        self._curr_obs = obs
+        self._update_steps()
+        self._update_pose()
+        self._update_maps()
         self._search_for_goal()
-        if torch.norm(pose_delta[:2]).item() < 0.05:
-            self.stuck_counter += 1
-        else:
-            self.stuck_counter = 0
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
@@ -311,25 +310,16 @@ class GoatAgent(Agent):
 
         return action, info, stuck
 
-    def _update_maps(self, obs: torch.Tensor, pose_delta: torch.Tensor):
+    def _update_maps(self):
+        obs_preprocessed, instance_scores, category_scores = self._preprocess_obs(self._curr_obs)
         # * before module call obs.shape is [380+3+1+num_instances]
         # Update map with observations and generate map features
-        (
-            self.semantic_map.local_map,
-            self.semantic_map.global_map,
-            self.semantic_map.local_pose,
-            self.semantic_map.global_pose,
-            self.semantic_map.lmb,
-            self.semantic_map.origins,
-        ) = self.semantic_map_module(
-            obs,
-            pose_delta,
-            self.semantic_map.local_map,
-            self.semantic_map.global_map,
-            self.semantic_map.local_pose,
-            self.semantic_map.global_pose,
-            self.semantic_map.lmb,
-            self.semantic_map.origins,
+        self.semantic_map_module(
+            obs_preprocessed,
+            self.pose_delta,
+            self.semantic_map,
+            instance_scores,
+            category_scores
         )
 
     def _get_vis_info(self, vis_inputs, action):
@@ -337,13 +327,13 @@ class GoatAgent(Agent):
             return None
 
         is_local = vis_inputs.get("is_local", True)
-        obs = self._last_obs
+        obs = self._curr_obs
         info = {
             "agent_id": self.agent_id,
             "rgb_frame": obs.rgb[:, :, ::-1],
+            # "rgb_frame": self.frame_yolo,
             "depth_frame": obs.depth,
-            "semantic_frame": obs.semantic,
-            # "semantic_frame": obs.task_observations.get("semantic_frame"),
+            "semantic_frame": obs.semantic if obs.task_observations.get("semantic_frame") is None else obs.task_observations["semantic_frame"],
             "top_down_map": obs.task_observations.get("top_down_map"),
             "is_collision": False,  #!myTODO
             "inst_goal_id": self.inst_goal_id,
@@ -373,6 +363,19 @@ class GoatAgent(Agent):
             info["third_person_image"] = obs.third_person_image
 
         info["caption"] += f" | Action: {action['action']}"
+
+    def _update_pose(self):
+        obs = self._curr_obs
+        curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
+        pose_delta = torch.tensor(
+            pu.get_rel_pose_change(curr_pose, self.last_pose), device=self.device
+        )
+        self.last_pose = curr_pose
+        self.pose_delta = pose_delta
+        if torch.norm(self.pose_delta[:2]).item() < 0.05:
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = 0
 
     def _preprocess_obs(self, obs: Observations):
         """Take a home-robot observation, preprocess it to put it into the correct format for the
@@ -417,33 +420,59 @@ class GoatAgent(Agent):
             obs.semantic = obs.semantic * mask_union
             obs.task_observations["instance_frame"] = obs.task_observations["instance_frame"] * mask_union
 
+        category_scores = None
         if not self.ground_truth_semantics:
-            obs = self.segmentation.predict(obs, draw_instance_predictions=True)
-            # obs = self.segmentation.predict(obs)
-            obs.task_observations["instance_frame"] = obs.task_observations["instance_map"] + 1
-            if self.visualization_level > 2:
-                self.visualize_semantic_with_labels(
-                    semantic_array=obs.semantic + 10,
-                    palette=self.semantic_category_mapping.map_color_palette,
-                    postfix="_before_sem"
-                )
-                self.visualize_semantic_with_labels(
-                    semantic_array=obs.task_observations["instance_frame"] + 10,
-                    palette=self.semantic_category_mapping.map_color_palette,
-                    postfix="_before_instance"
-                )
+            if "Goat-v1" in self.task_type :
+                obs = self.segmentation.predict(obs, draw_instance_predictions=True)
+            else: # HM3D Objnav Challenge
+                obs = self.segmentation.predict(obs)
+                # print(f"obs.cls id: ", obs.task_observations["instance_classes"])
+                # print(f"obs.scores: ", obs.task_observations["instance_scores"])
+            # if self.visualization_level > 2:
+                # self.visualize_semantic_with_labels(
+                #     semantic_array=obs.semantic + 10,
+                #     palette=self.semantic_category_mapping.map_color_palette,
+                #     postfix="_before_sem"
+                # )
+                # self.visualize_semantic_with_labels(
+                #     semantic_array=obs.task_observations["instance_frame"] + 10,
+                #     palette=self.semantic_category_mapping.map_color_palette,
+                #     postfix="_before_instance"
+                # )
             filter_instances_by_depth(obs)
-            if self.visualization_level > 2:
-                self.visualize_semantic_with_labels(
-                    semantic_array=obs.semantic + 10,
-                    palette=self.semantic_category_mapping.map_color_palette,
-                    postfix="after_sem"
-                )
-                self.visualize_semantic_with_labels(
-                    semantic_array=obs.task_observations["instance_frame"] + 10,
-                    palette=self.semantic_category_mapping.map_color_palette,
-                    postfix="_after_instance"
-                )
+            # if self.visualization_level > 2:
+            #     self.visualize_semantic_with_labels(
+            #         semantic_array=obs.semantic + 10,
+            #         palette=self.semantic_category_mapping.map_color_palette,
+            #         postfix="after_sem"
+            #     )
+            #     self.visualize_semantic_with_labels(
+            #         semantic_array=obs.task_observations["instance_frame"] + 10,
+            #         palette=self.semantic_category_mapping.map_color_palette,
+            #         postfix="_after_instance"
+            #     )
+
+
+            from home_robot.perception.constants import coco_categories_mapping
+            import cv2
+            yolo_output = self.yolo(source=obs.rgb,conf=0.2,  verbose=False)
+            category_scores = {i: [] for i in range(7)}
+            for box in yolo_output[0].boxes:
+                cls = int(box.cls[0])
+                if cls in coco_categories_mapping:
+
+                    category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
+                    # class_name = self.yolo.names[cls]
+            self.frame_yolo = cv2.cvtColor(yolo_output[0].plot(), cv2.COLOR_BGR2RGB)
+                    
+            for i in range(7):
+                if len(category_scores[i])>0:
+                    category_scores[i] = np.mean(category_scores[i])
+                else:
+                    category_scores[i] = 0
+            # category_scores[3] = 1
+            # print(category_scores)
+            self.history_scores.append(category_scores)
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = (
@@ -459,34 +488,33 @@ class GoatAgent(Agent):
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:
-            # * Why using instance_frame which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our ovon classes.
+            # * Why using instance_frame which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our classes.
             instance_frame = obs.task_observations["instance_frame"]
             unique_ids, new_instance_frame = np.unique(instance_frame, return_inverse=True)
-            instance_frame = new_instance_frame.reshape(instance_frame.shape)
-            instance_frame = torch.from_numpy(instance_frame).to(self.device)
+            assert unique_ids[0] == 0
+            new_instance_frame = new_instance_frame.reshape(instance_frame.shape)
+            new_instance_frame = torch.from_numpy(new_instance_frame).to(self.device)
 
             # One-hot encode
             instance_frame_onehot = torch.eye(len(unique_ids), device=self.device)[
-                instance_frame
-            ]
+                new_instance_frame
+            ][:,:, 1:] # First layer is background
+            inst_scores = None
+            if not self.ground_truth_semantics:
+                inst_scores = np.concatenate(([0],obs.task_observations["instance_scores"]))[unique_ids][1:]
 
             obs_preprocessed = torch.cat(
                 [obs_preprocessed, instance_frame_onehot], dim=-1
             )
         obs_preprocessed = obs_preprocessed.permute(2, 0, 1)
 
-        curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
-        pose_delta = torch.tensor(
-            pu.get_rel_pose_change(curr_pose, self.last_pose), device=rgb.device
-        )
-        self.last_pose = curr_pose
 
         assert obs.camera_pose is None
 
         self.tasks = self._preprocess_tasks(obs.task_observations["tasks"])
 
         # * preprocessed obs shape is (1, 3+1+num_sem_classes+num_instances, H, W)
-        return obs_preprocessed, pose_delta
+        return obs_preprocessed, inst_scores, category_scores
 
     def _get_best_action(self, **kwargs):
         task = self.tasks[self.current_task_idx]

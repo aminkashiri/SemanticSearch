@@ -31,15 +31,15 @@ coco_categories_mapping = {
     59: 3,  # bed
     61: 4,  # toilet
     62: 5,  # tv
-    60: 6,  # table
-    69: 7,  # oven
-    71: 8,  # sink
-    72: 9,  # refrigerator
-    73: 10,  # book
-    0: 11,  # person
-    75: 12,  # vase
-    41: 13,  # cup
-    39: 14,  # bottle
+    # 60: 6,  # table
+    # 69: 7,  # oven
+    # 71: 8,  # sink
+    # 72: 9,  # refrigerator
+    # 73: 10,  # book
+    # 0: 11,  # person
+    # 75: 12,  # vase
+    # 41: 13,  # cup
+    # 39: 14,  # bottle
     # Potential new categories
     # 24: 15,  # backpack
     # 25: 16,  # umbrella
@@ -47,7 +47,7 @@ coco_categories_mapping = {
     # 44: 18,  # bowl
     # 46: 19,  # banana
     # 47: 20,  # apple
-    77: 15,  # teddy bear
+    # 77: 15,  # teddy bear
 }
 
 coco_categories_color_palette = [

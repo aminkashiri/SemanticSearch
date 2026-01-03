@@ -37,6 +37,7 @@ class InstanceView:
     pose: np.ndarray = None
     instance_id: Optional[int] = None
     object_coverage: Optional[int] = None
+    score: float = None
 
     def __init__(
         self,
@@ -48,7 +49,8 @@ class InstanceView:
         point_cloud,
         pose,
         object_coverage,
-        category_id=None,
+        score,
+        category_id,
     ):
         """
         Initialize InstanceView
@@ -62,6 +64,7 @@ class InstanceView:
         self.pose = pose
         self.category_id = category_id
         self.object_coverage = object_coverage
+        self.score = score
 
 
 class Instance:
@@ -101,6 +104,18 @@ class Instance:
 
             views.append(img)
         return views
+    
+    def _get_score(self, last_k=10, agg="mean"):
+        scores = []
+        for inst_view in self.instance_views:
+            scores.append(inst_view.score)
+        
+
+        # scores = scores[-last_k:]
+        # return np.mean(scores)
+
+        return np.max(scores)
+
 
 
 class InstanceMemory:
@@ -208,6 +223,8 @@ class InstanceMemory:
         self,
         semantic_frame_onehot: torch.Tensor,
         instance_frame_onehot: torch.Tensor,
+        instance_scores,
+        category_scores,
         point_cloud: torch.Tensor,
         pose: torch.Tensor,
         image: torch.Tensor,
@@ -308,6 +325,11 @@ class InstanceMemory:
             point_cloud_instance = point_cloud[instance_mask_downsampled.cpu().numpy()]
             
             object_coverage = np.sum(instance_mask_cpu) / instance_mask_cpu.size
+
+            if instance_scores is None:
+                score = 1.0
+            else:
+                score = (instance_scores[temp_instance_id-1] + category_scores.get(category_id, 0))/2,
             
             instance_view = InstanceView(
                 bbox=bbox,
@@ -319,6 +341,7 @@ class InstanceMemory:
                 category_id=category_id,
                 pose=pose_cpu,
                 object_coverage=object_coverage,
+                score=score,
             )
             
             self.unprocessed_views[temp_instance_id.item()] = instance_view

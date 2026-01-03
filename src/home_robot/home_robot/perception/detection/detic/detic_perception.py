@@ -239,7 +239,7 @@ class DeticPerception(PerceptionModule):
         semantic_map, instance_map = overlay_masks(masks, class_idcs, (height, width))
 
         obs.semantic = semantic_map.astype(int)
-        obs.task_observations["instance_map"] = instance_map
+        obs.task_observations["instance_frame"] = instance_map.astype(int) + 1
         obs.task_observations["instance_classes"] = class_idcs
         obs.task_observations["instance_scores"] = scores
 

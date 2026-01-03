@@ -41,7 +41,7 @@ class GoatMatching(Matching):
         self.score_thresh = {
             "languagenav": config.score_thresh_lang,
             "imagenav": config.score_thresh_image,
-            "objectnav": 0.0
+            "objectnav": 0.70
         }
         self.log = logger 
 
@@ -52,21 +52,27 @@ class GoatMatching(Matching):
         #! myTODO: This is last steps global_pose, but I think it doesn't matter much. Ideally, I think we should do all these steps after SemMapModule.
         all_confidences = []
         for inst in instances:
-            # pick a view with maximum object coverage
-            best_view = np.argmax([view.object_coverage for view in inst.instance_views])
 
-            #1 Score based on coverage:
-            # score = instance_views[best_view].object_coverage
+            score = inst._get_score()
 
-            #2 Score based on distance:
-            instance_pose = inst.instance_views[best_view].pose
-            global_xy = global_pose[:2].cpu()
-            instance_xy = instance_pose[:2]
-            score = 1 / (torch.norm(global_xy - instance_xy).item()+1)
 
-            #3 Score based on distance and coverage:
-            #! myTODO: Very important because we should not go to poses were only a couple of pixels are from the object.
-            #! However, many times when we get close, we get better views which also have lower distances. 
+            #! myTODO: All following are based on how good the goal is, not "if the goal is correct". I should probably use both in the pipeline
+
+            # # pick a view with maximum object coverage
+            # best_view = np.argmax([view.object_coverage for view in inst.instance_views])
+
+            # #1 Score based on coverage:
+            # # score = instance_views[best_view].object_coverage
+
+            # #2 Score based on distance:
+            # instance_pose = inst.instance_views[best_view].pose
+            # global_xy = global_pose[:2].cpu()
+            # instance_xy = instance_pose[:2]
+            # score = 1 / (torch.norm(global_xy - instance_xy).item()+1)
+
+            # #3 Score based on distance and coverage:
+            # #! myTODO: Very important because we should not go to poses were only a couple of pixels are from the object.
+            # #! However, many times when we get close, we get better views which also have lower distances. 
 
             all_confidences.append([score])
         return all_confidences

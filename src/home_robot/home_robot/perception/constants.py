@@ -80,41 +80,33 @@ class HabitatObjNav2022Categories(SemanticCategoryMapping):
 
     def __init__(self):
         super().__init__()
-        self.vocabulary = ["chair", "bed", "plant", "toilet", "tv_monitor", "sofa"]
-        self.goal_id_to_goal_name = {idx+1: name for idx, name in enumerate(self.vocabulary)}
-        self.goal_name_to_goal_id = {name: idx+1 for idx, name in enumerate(self.vocabulary)}
+        self.vocabulary = ["chair", "sofa", "plant", "bed", "toilet", "tv_monitor"] # Order is only important for visualization colors
+        self.cat_id_to_goal_name = {idx+1: name for idx, name in enumerate(self.vocabulary)}
+        self.goal_name_to_cat_id = {name: idx+1 for idx, name in enumerate(self.vocabulary)}
         self._instance_id_to_category_id = None
 
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
-        return (goal_id, self.goal_id_to_goal_name[goal_id])
+        return (goal_id, self.cat_id_to_goal_name[goal_id])
 
     def reset_instance_id_to_category_id(self, env: Env):
-        self._instance_id_to_category_id = []
-        i = 0
-        for obj in env.sim.semantic_annotations().objects:
-            # obj.category.index() is a local index for that category in that scene, not a global index
-            raw_category = obj.category.name().lower().strip()
-            category_id = self.goal_name_to_goal_id.get(hm3d_raw_to_mp3d.get(raw_category), 0)
-            # if category_id != 0:
-                # print(f"{raw_category} -> {hm3d_raw_to_mp3d.get(raw_category)}", end=",")
-                # print(f"{i} -> {category_id}", end="|")
-                # print(f"index: {obj.category.index()}")
-            i += 1
-            self._instance_id_to_category_id.append(category_id)
+        self._instance_id_to_category_id = np.zeros(len(env.sim.semantic_annotations().objects), dtype=np.int)
+        # for i, obj in enumerate(env.sim.semantic_annotations().objects):
+        #     # obj.category.index() is a local index for that category in that scene, not a global index
+        #     raw_category = obj.category.name().lower().strip()
+        #     category_id = self.cat_name_to_cat_id.get(hm3d_raw_to_mp3d.get(raw_category), 0)
+        #     # if category_id != 0:
+        #         # print(f"{raw_category} -> {hm3d_raw_to_mp3d.get(raw_category)}", end=",")
+        #         # print(f"{i} -> {category_id}", end="|")
+        #         # print(f"index: {obj.category.index()}")
+        #     self._instance_id_to_category_id[i] = category_id
 
         # Each goal, is an instance goal, and has different id. So we are mapping all of the ids
         for goal in env.current_episode.goals:
             instance_id = int(goal.object_name.split("_")[-1])
             if self._instance_id_to_category_id[instance_id] == 0:
-                print(f"Manually adding: {goal.object_name} -> {goal.object_category}, {instance_id}->{self.goal_name_to_goal_id[goal.object_category]}")
+                # print(f"Manually adding: {goal.object_name} -> {goal.object_category}, {instance_id}->{self.cat_name_to_cat_id[goal.object_category]}")
                 # print(f"> raw_category: {hm3d_raw_to_mp3d.get(goal.object_name.split('_')[0])}")
-                self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[goal.object_category]
-
-        self._instance_id_to_category_id = np.array(self._instance_id_to_category_id)
-
-    @property
-    def all_hm3d_categories(self):
-        return list(set(all_hm3d_categories))
+                self._instance_id_to_category_id[instance_id] = self.goal_name_to_cat_id[goal.object_category]
 
     @property
     def instance_id_to_category_id(self) -> np.ndarray:
@@ -158,10 +150,6 @@ class GoatCategories(SemanticCategoryMapping):
                 object_category = "_".join(inst_goal['object_category'].split(" "))
                 # print(f"Manually adding: {inst_goal['object_id']} -> {object_category}, {instance_id}->{self.goal_name_to_goal_id[object_category]}")
                 self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[object_category]
-
-    @property
-    def all_hm3d_categories(self):
-        return list(set(all_hm3d_categories))
 
     @property
     def instance_id_to_category_id(self) -> np.ndarray:
@@ -232,15 +220,15 @@ coco_categories_mapping = {
     59: 3,  # bed
     61: 4,  # toilet
     62: 5,  # tv
-    60: 6,  # table
-    69: 7,  # oven
-    71: 8,  # sink
-    72: 9,  # refrigerator
-    73: 10,  # book
-    74: 11,  # clock
-    75: 12,  # vase
-    41: 13,  # cup
-    39: 14,  # bottle
+    # 60: 6,  # table
+    # 69: 7,  # oven
+    # 71: 8,  # sink
+    # 72: 9,  # refrigerator
+    # 73: 10,  # book
+    # 74: 11,  # clock
+    75: 2,  # vase
+    # 41: 13,  # cup
+    # 39: 14,  # bottle
 }
 
 coco_categories_color_palette = [1.0, 1.0, 1.0] + [

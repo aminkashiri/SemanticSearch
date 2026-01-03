@@ -238,9 +238,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.camera_matrix = du.get_camera_matrix(self.screen_w, self.screen_h, hfov)
         self.num_sem_categories = num_sem_categories
 
-        self.map_size_parameters = mu.MapSizeParameters(
-            map_resolution, map_size_cm, global_downscaling
-        )
         self.resolution = map_resolution
         self.global_map_size_cm = map_size_cm
         self.global_downscaling = global_downscaling
@@ -267,9 +264,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.min_mapped_height = int(
             self.min_obs_height_cm / self.z_resolution - self.min_voxel_height
         )
-
-        # self.old_x = None
-        # self.old_y = None
 
         self.max_mapped_height = int(
             (self.agent_height + 1) / self.z_resolution - self.min_voxel_height
@@ -298,12 +292,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         self,
         obs: Tensor,
         pose_delta: Tensor,
-        init_local_map: Tensor,
-        init_global_map: Tensor,
-        init_local_pose: Tensor,
-        init_global_pose: Tensor,
-        init_lmb: Tensor,
-        init_origins: Tensor,
+        state,
+        instance_scores: Tensor,
+        category_scores,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, IntTensor, Tensor]:
         """Update maps and poses with a sequence of observations and generate map
         features at each time step.
@@ -345,38 +336,29 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
         logger.debug(f"Updating maps and current position")
 
-        global_map, global_pose = init_global_map.clone(), init_global_pose.clone()
-        lmb, origins = init_lmb.clone(), init_origins.clone()
-        local_map, local_pose = self._update_local_map_and_pose(
+        state.local_map, state.local_pose = self._update_local_map_and_pose(
             obs,
             pose_delta,
-            init_local_map.clone(),
-            init_local_pose.clone(),
-            origins,
-            lmb,
+            state.local_map,
+            state.local_pose,
+            state.origins,
+            state.lmb,
+            instance_scores,
+            category_scores,
         )
         # updates in place
-        self._update_global_map_and_pose(
-            local_map, global_map, local_pose, global_pose, lmb, origins
-        )
-        local_map, local_pose, lmb, origins = mu.get_local_parameters_from_global_pose(
-            global_map,
-            global_pose,
-            self.map_size_parameters,
+        self._update_global_map_and_pose(state)
+
+        state.local_map, state.local_pose, state.lmb, state.origins = mu.get_local_parameters_from_global_pose(
+            state.global_map,
+            state.global_pose,
+            state.map_size_parameters,
         )
 
-        #! myTODO: It doesn't look like this is used anywhere, so I'm commenting it out.
-        # map_features = self._get_map_features(local_map, global_map)
-
-        logger.debug(f"Updated pose: global={global_pose.tolist()}, local={local_pose.tolist()}, lmb: {lmb.tolist()}")
+        logger.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
         return (
             # map_features,
-            local_map,
-            global_map,
-            local_pose,
-            global_pose,
-            lmb,
-            origins,
+            state
         )
 
     def _aggregate_instance_map_channels_per_category(
@@ -586,6 +568,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         prev_pose: Tensor,
         origins: Tensor,
         lmb: Tensor,
+        instance_scores: Tensor,
+        category_scores,
     ) -> Tuple[Tensor, Tensor]:
         """Update local map and sensor pose given a new observation using parameter-free
         differentiable projective geometry.
@@ -628,11 +612,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         #     agent_height = agent_pos[2]
 
         # else:
-        yaw = 0
         tilt = torch.zeros(0)
         agent_height = self.agent_height
 
-        yaw = torch.tensor(yaw)
+        yaw = torch.tensor(0)
         depth = obs[3, :, :].float()
         depth[depth > self.max_depth] = 0
 
@@ -727,6 +710,8 @@ class Categorical2DSemanticMapModule(nn.Module):
                 self.instance_memory.process_instances(
                     semantic_channels,
                     instance_channels,
+                    instance_scores,
+                    category_scores,
                     point_cloud_t.squeeze(0),
                     torch.concat([current_pose + origins, lmb], axis=0),
                     image=obs[:3],
@@ -1164,30 +1149,27 @@ class Categorical2DSemanticMapModule(nn.Module):
 
     def _update_global_map_and_pose(
         self,
-        local_map: Tensor,
-        global_map: Tensor,
-        local_pose: Tensor,
-        global_pose: Tensor,
-        lmb: Tensor,
-        origins: Tensor,
+        state,
     ):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
         """
+        global_map = state.global_map
+        lmb = state.lmb
 
         if self.record_instance_ids:
             assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
-            self._update_global_map_instances(global_map, local_map, lmb)
+            self._update_global_map_instances(global_map, state.local_map, lmb)
             global_map[
                 : MC.NON_SEM_CHANNELS + self.num_sem_categories,
                 lmb[0] : lmb[1],
                 lmb[2] : lmb[3],
-            ] = local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
+            ] = state.local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
         else:
-            global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
+            global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = state.local_map
 
-        local_map[:] = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
-        global_pose[:] = local_pose + origins
+        state.local_map = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+        state.global_pose = state.local_pose + state.origins
 
     def merge_neighbor_maps(
         self,
@@ -1219,60 +1201,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             temp_copy[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
         )
-
-    def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
-        """Get global and local map features.
-
-        Arguments:
-            local_map: local map of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-            global_map: global map of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
-
-        Returns:
-            map_features: semantic map features of shape
-             (batch_size, 2 * MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-        """
-        map_features_channels = 2 * MC.NON_SEM_CHANNELS + self.num_sem_categories
-
-        if self.record_instance_ids:
-            map_features_channels += self.num_sem_categories
-
-        map_features = torch.zeros(
-            map_features_channels,
-            self.local_map_size,
-            self.local_map_size,
-            device=local_map.device,
-            dtype=local_map.dtype,
-        )
-
-        # Local obstacles, explored area, and current and past position
-        map_features[0 : MC.NON_SEM_CHANNELS, :, :] = local_map[
-            0 : MC.NON_SEM_CHANNELS, :, :
-        ]
-        # Global obstacles, explored area, and current and past position
-        map_features[MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :] = (
-            nn.MaxPool2d(self.global_downscaling)(
-                global_map[0 : MC.NON_SEM_CHANNELS, :, :]
-            )
-        )
-        # Local semantic categories
-        map_features[2 * MC.NON_SEM_CHANNELS :, :, :] = local_map[
-            MC.NON_SEM_CHANNELS :, :, :
-        ]
-
-        if self.print_images:
-            pass
-            # plt.subplot(131)
-            # plt.imshow(local_map[0, 7])  # second object = cup
-            # plt.subplot(132)
-            # plt.imshow(local_map[0, 6])  # first object = chair
-            # # This is the channel in MAP FEATURES mode
-            # plt.subplot(133)
-            # plt.imshow(map_features[0, 12])
-            # plt.show()
-
-        return map_features.detach()
 
     def _get_disk_mask(self, radius):
         """Cache disk masks for reuse"""
