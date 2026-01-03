@@ -200,7 +200,7 @@ class HabitatGoatEnv(HabitatEnv):
 
     def _preprocess_goals(self, goals):
         for goal_v in goals:
-            goal_v["semantic_id"] = self.semantic_category_mapping.goal_name_to_goal_id[
+            goal_v["semantic_id"] = self.semantic_category_mapping.goal_name_to_cat_id[
                 "_".join(goal_v["category"].split(" "))
             ]
             if goal_v.get("image") is not None:

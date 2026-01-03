@@ -275,10 +275,10 @@ class Visualizer:
             is_collision
         )
 
-        sem_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
-        # sem_frame = semantic_frame
+        if len(semantic_frame.shape) == 2:
+            semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
         main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
-            sem_frame,
+            semantic_frame,
             "Semantics",
             (V.FIRST_PERSON_W, V.HEIGHT),
             inst_goal_found,

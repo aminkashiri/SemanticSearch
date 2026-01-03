@@ -38,6 +38,7 @@ class Categorical2DSemanticMapState:
         map_resolution: int,
         map_size_cm: int,
         global_downscaling: int,
+        visualization_level,
         record_instance_ids: bool = False,
         instance_memory: Optional[InstanceMemory] = None,
         agent_id: int = 0,
@@ -66,22 +67,15 @@ class Categorical2DSemanticMapState:
         self.global_map_size = self.global_map_size_cm // self.resolution
         self.local_map_size = self.local_map_size_cm // self.resolution
 
-        # Map consists of multiple channels (5 NON_SEM_CHANNELS followed by semantic channels) containing the following:
-        # 0: Obstacle Map
-        # 1: Explored Area
-        # 2: Current Agent Location
-        # 3: Past Agent Locations
-        # 4: Regions agent has been close to
-        # 5, 6, 7, .., num_sem_categories + 5: Semantic Categories
         num_channels = self.num_sem_categories + MC.NON_SEM_CHANNELS
         if record_instance_ids:
-            # num_sem_categories + 5, ..., 2 * num_sem_categories + 5: Instance ids per semantic category
             num_channels += self.num_sem_categories
             self.instance_memory = instance_memory
         
         self.num_channels = num_channels
         self.vis_dir = None
         self.agent_id = agent_id
+        self.visualization_level = visualization_level
 
     def init_map_and_pose(self):
         """Initialize global and local map and sensor pose variables."""
@@ -224,7 +218,7 @@ class Categorical2DSemanticMapState:
         else:
             return self.global_loc
     
-    def get_frontier_map(self, local=True, timestep=None):
+    def get_frontier_map(self, local=True, timestep=None, min_size=10):
         """
         Detect frontiers: free cells adjacent to unknown areas.
 
@@ -236,7 +230,7 @@ class Categorical2DSemanticMapState:
             frontier_map (np.ndarray): binary map (1=frontier, 0=non-frontier)
         """
 
-        def remove_small_frontiers(frontier_map, min_size=10):
+        def remove_small_frontiers(frontier_map, min_size):
             labeled_map, num_features = label(frontier_map)
             cleaned_map = np.zeros_like(frontier_map)
             for region_id in range(1, num_features + 1):
@@ -258,7 +252,7 @@ class Categorical2DSemanticMapState:
 
         unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0).numpy()
         frontier_map = free_space & (unknown_neighbors > 0)
-        frontier_map2 = remove_small_frontiers(frontier_map, min_size=10)
+        frontier_map2 = remove_small_frontiers(frontier_map, min_size)
         # frontier_map3 = self.remove_close_frontiers(frontier_map2)
         frontier_map4 = frontier_map2 & (1-self.get_unreachable_frontiers_map(local))
         self.print_maps(
@@ -315,6 +309,9 @@ class Categorical2DSemanticMapState:
         """
         if timestep is None:
             return
+        
+        if self.visualization_level < 3:
+            return
 
         #! myTODO: Can use visualize_map function from home_robot.visualization.visualize_map
         H, W = known_map.shape
@@ -329,10 +326,12 @@ class Categorical2DSemanticMapState:
         vis_map[:,2*W:3*W,:][frontier_map3 == 1] = [255, 0, 0]
         vis_map[:,3*W:4*W,:][frontier_map4 == 1] = [255, 0, 0]
 
-        # cv2.imwrite(
-        #     os.path.join(self.vis_dir, f"agent{self.agent_id}_{timestep}_2.frontiers{'' if local else '_global'}.png"),
-        #     np.flipud(vis_map)
-        # )
+        agent_text = f"agent{self.agent_id}_" if self.agent_id is not None else ""
+        cv2.imwrite(
+            os.path.join(self.vis_dir, f"{agent_text}{timestep}_2.frontiers{'' if local else '_global'}.png"),
+            np.flipud(vis_map)
+        )
+
     def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:
         if local:
             return (np.copy(
