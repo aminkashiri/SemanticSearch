@@ -11,9 +11,9 @@ from home_robot.core.interfaces import DiscreteNavigationAction
 
 class MultiAgentGoatAgent(GoatAgent):
     def __init__(
-        self, config, semantic_category_mapping, agent_id=None, device_id: int = 0
+        self, config, vocabulary, agent_id=None, device_id: int = 0
     ):
-        super().__init__(config, semantic_category_mapping, agent_id, device_id)
+        super().__init__(config, vocabulary, agent_id, device_id)
         self.inst_goal_ids = None
         self.tasks_done = None
         # self.tasks_failed = None
@@ -39,7 +39,7 @@ class MultiAgentGoatAgent(GoatAgent):
             if self.tasks_done[i]:
                 continue
 
-            if self.inst_goal_ids[i] is None or self.total_timesteps % 30 == 0:
+            if self.inst_goal_ids[i] is None or self.total_timesteps % 10 == 0:
                 inst_goal_id = self.matching.search_for_goal(
                     task,
                     self.match_memory,

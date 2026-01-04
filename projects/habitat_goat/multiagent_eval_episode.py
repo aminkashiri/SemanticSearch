@@ -77,7 +77,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:3]
+    config.habitat.dataset.content_scenes = all_scenes[:]
     # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
     agents: List[MultiAgentGoatAgent] = []
     for i in range(config.NUM_AGENTS):
-        agents.append(MultiAgentGoatAgent(config, env.semantic_category_mapping, i))
+        agents.append(MultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         ep_step = 0
         all_subtask_metrics = {}
         pbar = tqdm(
-            total=config.AGENT.max_steps * 5, file=sys.__stdout__, dynamic_ncols=True
+            total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
         )
         pbar.set_description(f"{env.scene_id}_{env.episode_id}")
 
@@ -177,6 +177,9 @@ if __name__ == "__main__":
                 continue
 
             env.add_subepisode_metrics(all_subtask_metrics, actions)
+        
+        
+
 
         # import cProfile
         # import pstats

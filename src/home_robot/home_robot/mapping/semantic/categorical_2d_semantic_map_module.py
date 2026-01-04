@@ -530,14 +530,15 @@ class Categorical2DSemanticMapModule(nn.Module):
         stair_mask = (ground_plane == 0) & within_fov & visible_ground
         stair_mask_vis = stair_mask.copy()
 
-        #! myTODO: 10 is hardcoded
-        # Extend to agents location
-        x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
-        rows = np.arange(10, min_visible_dist + 1).reshape(
-            -1, 1
-        )  # shape: (min_visible_dist-10+1, 1)
-        rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
-        stair_mask[rr, cc] = 1
+        stair_mask = cv2.dilate(stair_mask.astype(np.uint8), selem, iterations=2)
+        # #! myTODO: 10 is hardcoded
+        # # Extend to agents location
+        # x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
+        # rows = np.arange(10, min_visible_dist + 1).reshape(
+        #     -1, 1
+        # )  # shape: (min_visible_dist-10+1, 1)
+        # rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
+        # stair_mask[rr, cc] = 1
         if self.print_images:
             plt.clf()
             plt.subplot(321)
@@ -617,7 +618,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         yaw = torch.tensor(0)
         depth = obs[3, :, :].float()
-        depth[depth > self.max_depth] = 0
+        depth[depth > self.max_depth] = 0 # If changed max depth, stairs code should also be changed
 
         # * This point cloud is with respect to cameras location. Is it not converted to world's coords.
         point_cloud_t = du.get_point_cloud_from_z_t(
@@ -751,7 +752,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         all_height_proj = voxels.sum(3)
         # * Shape is: [voxech_channels, height, width]
 
-        fp_map_pred = agent_height_proj[0, :, :]
+        fp_map_pred = agent_height_proj[0, :, :] > 10
+        # print(f"unique values in fp_map_pred before thresholding: {torch.unique(fp_map_pred)}")
 
         # +rows is away from the camera, with the camra origin at row 0
         # +cols is to the right of the image frame, the camera origin is at num_cols/2
