@@ -194,7 +194,7 @@ class GoatAgent(Agent):
                 )
             else:
                 from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
-                    MaskRCNNPerception,
+                    MaskRCNNPerception, MaskRCNNRedNetPerception
                 )
 
                 # MaskRCNN IDs are the same as our semantic category mappoing vocab.
@@ -202,10 +202,15 @@ class GoatAgent(Agent):
                     sem_pred_prob_thr=0.8,
                     sem_gpu_id=(-1 if config.NO_GPU else 0),
                 )
+                # self.segmentation_red = MaskRCNNRedNetPerception(
+                #     sem_pred_prob_thr=0.8,
+                #     sem_gpu_id=(-1 if config.NO_GPU else 0),
+                #     device=self.device
+                # )
         self.match_memory = True
         self.visualization_level = config.VISUALIZATION_LEVEL
         self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
-        self.history_scores = []
+        # self.history_scores = []
 
     def get_subtask_timestep(self) -> int:
         """
@@ -238,7 +243,7 @@ class GoatAgent(Agent):
         self.stuck_counter = 0
         self.reset_vis_dir(scene_id, episode_id, 0)
         self.last_communication_time = {}
-        self.history_scores = []
+        # self.history_scores = []
 
     def handle_stop(self, action):
         self.reset_for_next_task()
@@ -429,27 +434,28 @@ class GoatAgent(Agent):
                 # print(f"obs.cls id: ", obs.task_observations["instance_classes"])
                 # print(f"obs.scores: ", obs.task_observations["instance_scores"])
             # if self.visualization_level > 2:
-                # self.visualize_semantic_with_labels(
-                #     semantic_array=obs.semantic + 10,
-                #     palette=self.semantic_category_mapping.map_color_palette,
-                #     postfix="_before_sem"
-                # )
-                # self.visualize_semantic_with_labels(
-                #     semantic_array=obs.task_observations["instance_frame"] + 10,
-                #     palette=self.semantic_category_mapping.map_color_palette,
-                #     postfix="_before_instance"
-                # )
-            filter_instances_by_depth(obs)
-            # if self.visualization_level > 2:
             #     self.visualize_semantic_with_labels(
             #         semantic_array=obs.semantic + 10,
             #         palette=self.semantic_category_mapping.map_color_palette,
-            #         postfix="after_sem"
+            #         postfix="_without_rednet_sem"
             #     )
             #     self.visualize_semantic_with_labels(
             #         semantic_array=obs.task_observations["instance_frame"] + 10,
             #         palette=self.semantic_category_mapping.map_color_palette,
-            #         postfix="_after_instance"
+            #         postfix="_without_rednet_instance"
+            #     )
+            filter_instances_by_depth(obs)
+            # obs = self.segmentation_red.predict(obs, draw_instance_predictions=True)
+            # if self.visualization_level > 2:
+            #     self.visualize_semantic_with_labels(
+            #         semantic_array=obs.semantic + 10,
+            #         palette=self.semantic_category_mapping.map_color_palette,
+            #         postfix="_with_rednet_sem"
+            #     )
+            #     self.visualize_semantic_with_labels(
+            #         semantic_array=obs.task_observations["instance_frame"] + 10,
+            #         palette=self.semantic_category_mapping.map_color_palette,
+            #         postfix="_with_rednet_instance"
             #     )
 
 
@@ -472,7 +478,7 @@ class GoatAgent(Agent):
                     category_scores[i] = 0
             # category_scores[3] = 1
             # print(category_scores)
-            self.history_scores.append(category_scores)
+            # self.history_scores.append(category_scores)
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = (
@@ -491,14 +497,19 @@ class GoatAgent(Agent):
             # * Why using instance_frame which are the raw semantics? To differentiate between objects with diff raw semantics but same category in our classes.
             instance_frame = obs.task_observations["instance_frame"]
             unique_ids, new_instance_frame = np.unique(instance_frame, return_inverse=True)
-            assert unique_ids[0] == 0
             new_instance_frame = new_instance_frame.reshape(instance_frame.shape)
             new_instance_frame = torch.from_numpy(new_instance_frame).to(self.device)
 
             # One-hot encode
             instance_frame_onehot = torch.eye(len(unique_ids), device=self.device)[
                 new_instance_frame
-            ][:,:, 1:] # First layer is background
+            ]
+            if unique_ids[0] == 0:
+                instance_frame_onehot = instance_frame_onehot[:,:, 1:] # First layer is background
+            else:
+                assert 0 not in unique_ids, "Expected no background (0) in unique_ids"
+            
+
             inst_scores = None
             if not self.ground_truth_semantics:
                 inst_scores = np.concatenate(([0],obs.task_observations["instance_scores"]))[unique_ids][1:]

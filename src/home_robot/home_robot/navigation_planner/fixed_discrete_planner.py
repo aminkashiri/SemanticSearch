@@ -924,7 +924,7 @@ class DiscretePlanner:
     def get_frontier_planning_maps(self):
         min_size = 10
         if self.min_dilation:
-            min_size = 8
+            min_size = 6
         frontier_map = self.semantic_map.get_frontier_map(
             local=True, timestep=self.timestep, min_size=min_size
         )
