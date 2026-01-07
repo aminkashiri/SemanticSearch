@@ -787,7 +787,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane * 1.0
         agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map
         agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
-        agent_view[MC.EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
+        agent_view[MC.GAZE_EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
 
         agent_view[MC.NON_SEM_CHANNELS :, y1:y2, x1:x2] = (
             all_height_proj[1:] / self.cat_pred_threshold
@@ -848,7 +848,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.subplot(224)
 
         # Add stairs to obstacle map
-        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | (
+        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0.5) | (
             (current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0)
         )
 
@@ -899,70 +899,62 @@ class Categorical2DSemanticMapModule(nn.Module):
             curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP]
         )
 
-        # Set a disk around the agent to explored
-        # This is around the current agent - we just sort of assume we know where we are
-        self._set_disk_to_one(
-            self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc
-        )
+        # 1
+        # self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
+        # # Record the region the agent has been close to using a disc centered at the agent
+        # radius = self.been_close_to_radius // self.resolution
+        # self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
 
-        # Record the region the agent has been close to using a disc centered at the agent
-        radius = self.been_close_to_radius // self.resolution
-        self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
+        # 2
+        traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+        visited_np = (current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1) & (traversible_np == 1)
+        traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
+        # traversible_ma[curr_loc[0], curr_loc[1]] = 0
+        traversible_ma[visited_np == 1] = 0
+        import skfmm
+        distances = skfmm.distance(traversible_ma)
+        distances = np.ma.filled(distances, np.max(distances) + 1)
+        distances = torch.from_numpy(distances).to(current_map.device)
 
-        # Record the region the agent has been close to using a disc centered at the agent
+        current_map[MC.BEEN_CLOSE_MAP] = 0
+        current_map[MC.BEEN_CLOSE_MAP][distances <= self.been_close_to_radius // self.resolution] = 1
+        current_map[MC.EXPLORED_MAP] = (current_map[MC.GAZE_EXPLORED_MAP] > 0.5) | (current_map[MC.BEEN_CLOSE_MAP] == 1.0)
+
+
         radius = self.target_blacklisting_radius // self.resolution
         self._set_disk_to_one(radius, current_map, MC.BLACKLISTED_TARGETS_MAP, curr_loc)
 
-        # debug_maps = True
+        # debug_maps = False
         if debug_maps:
             import matplotlib
 
-            matplotlib.use("TkAgg")
+            matplotlib.use("Agg")
             current_map = current_map.cpu()
-            explored = current_map[0, MC.EXPLORED_MAP].numpy()
-            been_close = current_map[0, MC.BEEN_CLOSE_MAP].numpy()
-            obstacles = current_map[0, MC.OBSTACLE_MAP].numpy()
-            plt.subplot(331)
+            gaze_explored = current_map[MC.GAZE_EXPLORED_MAP].numpy()
+            explored = current_map[MC.EXPLORED_MAP].numpy()
+            been_close = current_map[MC.BEEN_CLOSE_MAP].numpy()
+            obstacles = current_map[MC.OBSTACLE_MAP].numpy()
+
+            plt.clf()
+            plt.subplot(221)
             plt.axis("off")
-            plt.title("explored")
-            plt.imshow(explored)
-            plt.subplot(332)
+            plt.title("gaze_explored")
+            # print("unique values in gaze explored map: ", np.unique(gaze_explored))
+            plt.imshow(gaze_explored==1)
+            plt.subplot(222)
             plt.axis("off")
             plt.title("been close")
             plt.imshow(been_close)
-            plt.subplot(333)
+            plt.subplot(223)
             plt.axis("off")
-            plt.imshow(been_close * explored)
-            plt.subplot(334)
+            plt.title("explored")
+            plt.imshow(explored==1)
+            plt.subplot(224)
             plt.axis("off")
             plt.title("obstacles")
             plt.imshow(obstacles)
-            plt.subplot(335)
-            plt.axis("off")
-            plt.title("obstacles_eroded")
-
-            obs_eroded = cv2.erode(obstacles, np.ones((5, 5)), iterations=5)
-            plt.imshow(obs_eroded)
-            plt.subplot(336)
-            plt.axis("off")
-            plt.imshow(been_close * obstacles)
-            plt.subplot(337)
-            plt.axis("off")
-            # rgb = obs[0, :3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
-            rgb = obs[0, :3].permute(1, 2, 0)
-            # print("rgs.shape", rgb.shape)
-            plt.imshow(rgb.cpu().numpy().astype(np.uint8))
-            plt.subplot(338)
-            plt.imshow(depth.cpu().numpy())
-            plt.axis("off")
-            plt.subplot(339)
-            seg = np.zeros_like(depth.cpu().numpy())
-            for i in range(4, obs_channels):
-                seg += (i - 4) * obs[0, i].cpu().numpy()
-            #     print("class =", i, np.sum(obs[0, i].cpu().numpy()), "pts")
-            plt.imshow(seg)
-            plt.axis("off")
-            plt.show()
+            # plt.show()
+            plt.savefig(self.vis_dir + f"/{self.timestep}_0.local_map.png")
 
         return current_map, current_pose
 
@@ -1179,11 +1171,12 @@ class Categorical2DSemanticMapModule(nn.Module):
         global_map: Tensor,
     ):
         # These channels should not be changed with other agents info
+        #! myTODO: Think about GAZE_EXPLORED_MAP and VISITED_MAP. IMPORTANT
         protected_channels = torch.tensor(
             [
                 MC.CURRENT_LOCATION,
                 MC.VISITED_MAP,
-                MC.BEEN_CLOSE_MAP,
+                # MC.BEEN_CLOSE_MAP,
                 MC.BLACKLISTED_TARGETS_MAP,
             ],
             device=global_map.device,

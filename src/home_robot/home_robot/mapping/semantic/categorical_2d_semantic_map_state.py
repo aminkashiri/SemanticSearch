@@ -95,41 +95,41 @@ class Categorical2DSemanticMapState:
     def get_obstacle_map(self, local=True) -> np.ndarray:
         """Get local obstacle map for an environment."""
         if local:
-            return (np.copy(self.local_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.local_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
         else:
-            return (np.copy(self.global_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.global_map[MC.OBSTACLE_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
 
     def get_explored_map(self, local=True) -> np.ndarray:
         """Get local explored map for an environment."""
         if local:
-            return (np.copy(self.local_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.local_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
         else:
-            return (np.copy(self.global_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.global_map[MC.EXPLORED_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
 
     def get_visited_map(self, local=True) -> np.ndarray:
         """Get local visited map for an environment."""
         if local:
-            return (np.copy(self.local_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.local_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
         else:
-            return (np.copy(self.global_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.global_map[MC.VISITED_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
 
     def get_been_close_map(self, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""
         if local:
-            return (np.copy(self.local_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.local_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
         else:
-            return (np.copy(self.global_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0).astype(np.uint8)
+            return (np.copy(self.global_map[MC.BEEN_CLOSE_MAP, :, :].cpu().numpy()) > 0.5).astype(bool)
 
     def get_blacklisted_targets_map(self, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""
         if local:
             return (np.copy(
                 self.local_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
-            ) > 0).astype(np.uint8)
+            ) > 0.5).astype(bool)
         else:
             return (np.copy(
                 self.global_map[MC.BLACKLISTED_TARGETS_MAP, :, :].cpu().numpy()
-            ) > 0).astype(np.uint8)
+            ) > 0.5).astype(bool)
 
     def get_semantic_map(self, local=True) -> np.ndarray:
         """Get local map of semantic categories for an environment."""
@@ -165,7 +165,7 @@ class Categorical2DSemanticMapState:
 
         instance_map = (
             instances_map[inst_map_idx] == instance_id
-        ).astype(int)
+        ).astype(bool)
         return instance_map
 
 
@@ -218,7 +218,7 @@ class Categorical2DSemanticMapState:
         else:
             return self.global_loc
     
-    def get_frontier_map(self, local=True, timestep=None, min_size=10):
+    def get_frontier_map(self, traversible, local=True, timestep=None, min_size=10):
         """
         Detect frontiers: free cells adjacent to unknown areas.
 
@@ -239,28 +239,34 @@ class Categorical2DSemanticMapState:
                     cleaned_map[region] = 1
             return cleaned_map
 
+        assert traversible.dtype == bool
         known_map = self.get_explored_map(local)
-        obstacle_map = self.get_obstacle_map(local)
+        known_map = (known_map > 0.5) | ~traversible
 
-        free_space = (known_map == 1) & (obstacle_map == 0)
+        free_space = torch.tensor(known_map & traversible, dtype=torch.float32)
 
-        unknown = torch.tensor(known_map == 0, dtype=torch.float32)
 
         kernel = torch.tensor(
                 [[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=torch.float32
             ).unsqueeze(0).unsqueeze(0)
 
-        unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0).numpy()
-        frontier_map = free_space & (unknown_neighbors > 0)
+        # unknown_neighbors = F.conv2d(unknown.unsqueeze(0).unsqueeze(0), kernel, padding=1).squeeze(0).squeeze(0).numpy()
+        # frontier_map = free_space & (unknown_neighbors > 0)
+        free_neighbors = (F.conv2d(
+            free_space.unsqueeze(0).unsqueeze(0),
+            kernel,
+            padding=1
+        ).squeeze() > 0).numpy().astype(bool)
+        frontier_map = ~known_map & free_neighbors
         frontier_map2 = remove_small_frontiers(frontier_map, min_size)
         # frontier_map3 = self.remove_close_frontiers(frontier_map2)
-        frontier_map4 = frontier_map2 & (1-self.get_unreachable_frontiers_map(local))
+        frontier_map4 = frontier_map2 & ~self.get_unreachable_frontiers_map(local)
         self.print_maps(
             frontier_map=frontier_map,
             frontier_map2=frontier_map2,
             # frontier_map3=frontier_map3,
             frontier_map4=frontier_map4,
-            obstacle_map=obstacle_map,
+            obstacle_map=1-traversible,
             known_map=known_map,
             timestep=timestep,
             local=local,
@@ -335,13 +341,15 @@ class Categorical2DSemanticMapState:
     def get_unreachable_frontiers_map(self, local=True) -> np.ndarray:
         if local:
             return (np.copy(
-                self.local_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(np.uint8)
+                self.local_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(bool)
             )
         else:
             return (np.copy(
-                self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(np.uint8)
+                self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :].cpu().numpy() > 0).astype(bool)
             )
 
+    def reset_unreachable_frontier(self):
+        self.global_map[MC.UNREACHABLE_FRONTIERS_MAP, :, :] = 0
 
     def set_unreachable_frontier(self, frontier_map, local=True) -> np.ndarray:
         """Get map showing regions the agent has been close to"""

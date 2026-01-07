@@ -199,14 +199,9 @@ class GoatAgent(Agent):
 
                 # MaskRCNN IDs are the same as our semantic category mappoing vocab.
                 self.segmentation = MaskRCNNPerception(
-                    sem_pred_prob_thr=0.8,
+                    sem_pred_prob_thr=0.7,
                     sem_gpu_id=(-1 if config.NO_GPU else 0),
                 )
-                # self.segmentation_red = MaskRCNNRedNetPerception(
-                #     sem_pred_prob_thr=0.8,
-                #     sem_gpu_id=(-1 if config.NO_GPU else 0),
-                #     device=self.device
-                # )
         self.match_memory = True
         self.visualization_level = config.VISUALIZATION_LEVEL
         self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
@@ -335,8 +330,7 @@ class GoatAgent(Agent):
         obs = self._curr_obs
         info = {
             "agent_id": self.agent_id,
-            "rgb_frame": obs.rgb[:, :, ::-1],
-            # "rgb_frame": self.frame_yolo,
+            "rgb_frame": obs.rgb[:, :, ::-1] if self.ground_truth_semantics else self.frame_yolo,
             "depth_frame": obs.depth,
             "semantic_frame": obs.semantic if obs.task_observations.get("semantic_frame") is None else obs.task_observations["semantic_frame"],
             "top_down_map": obs.task_observations.get("top_down_map"),
@@ -344,9 +338,8 @@ class GoatAgent(Agent):
             "inst_goal_id": self.inst_goal_id,
             "timestep": self.get_subtask_timestep(),
             "explored_map": self.semantic_map.get_explored_map(is_local),
-            "obstacle_map": self.semantic_map.get_obstacle_map(is_local),
             "semantic_map_1D": self.semantic_map.get_semantic_map_1D(is_local),
-            "frontier_map": self.semantic_map.get_frontier_map(is_local),
+            # "frontier_map": self.semantic_map.get_frontier_map(is_local),
             "been_close_map": self.semantic_map.get_been_close_map(is_local),
             "visited_map": self.semantic_map.get_visited_map(is_local),
             "global_pose": self.semantic_map.global_pose,
@@ -354,6 +347,8 @@ class GoatAgent(Agent):
             "instance_memory": self.instance_memory,
             **vis_inputs,
         }
+        if "obstacle_map" not in info:
+            info["obstacle_map"] = self.semantic_map.get_obstacle_map(is_local)
         self._get_task_info(obs, action, info)
         return info
 
@@ -433,16 +428,19 @@ class GoatAgent(Agent):
                 obs = self.segmentation.predict(obs)
                 # print(f"obs.cls id: ", obs.task_observations["instance_classes"])
                 # print(f"obs.scores: ", obs.task_observations["instance_scores"])
+
+            from home_robot.perception.constants import coco_categories_mapping,  coco_map_color_palette
             # if self.visualization_level > 2:
             #     self.visualize_semantic_with_labels(
             #         semantic_array=obs.semantic + 10,
-            #         palette=self.semantic_category_mapping.map_color_palette,
-            #         postfix="_without_rednet_sem"
+            #         palette=coco_map_color_palette,
+            #         postfix="_with_rednet_sem"
             #     )
             #     self.visualize_semantic_with_labels(
-            #         semantic_array=obs.task_observations["instance_frame"] + 10,
-            #         palette=self.semantic_category_mapping.map_color_palette,
-            #         postfix="_without_rednet_instance"
+            #         # semantic_array=obs.task_observations["instance_frame"] + 10,
+            #         semantic_array=obs.task_observations["rednet_semantic_frame"] + 10,
+            #         palette=coco_map_color_palette,
+            #         postfix="_rednet_sem_frame"
             #     )
             filter_instances_by_depth(obs)
             # obs = self.segmentation_red.predict(obs, draw_instance_predictions=True)
@@ -459,7 +457,6 @@ class GoatAgent(Agent):
             #     )
 
 
-            from home_robot.perception.constants import coco_categories_mapping
             import cv2
             yolo_output = self.yolo(source=obs.rgb,conf=0.2,  verbose=False)
             category_scores = {i: [] for i in range(7)}
@@ -473,7 +470,7 @@ class GoatAgent(Agent):
                     
             for i in range(7):
                 if len(category_scores[i])>0:
-                    category_scores[i] = np.mean(category_scores[i])
+                    category_scores[i] = np.max(category_scores[i])
                 else:
                     category_scores[i] = 0
             # category_scores[3] = 1

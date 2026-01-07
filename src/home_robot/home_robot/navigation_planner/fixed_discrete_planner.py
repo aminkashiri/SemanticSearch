@@ -119,18 +119,7 @@ class DiscretePlanner:
         self.goal_tolerance = goal_tolerance
         self.continuous_angle_tolerance = continuous_angle_tolerance
 
-        self.vis_dir = None
-        self.collision_map = None
-        self.col_width = None
-        self.last_global_pose = None
-        self.curr_global_pose = None
-        self.last_action = None
-        self.timestep = 0
-        self.total_timesteps = 0
-        self.curr_obs_dilation_selem_radius = None
-        self.obs_dilation_selem = None
         self.min_goal_distance_cm = min_goal_distance_cm
-        self.dd = None
 
         self.map_downsample_factor = map_downsample_factor
         self.map_update_frequency = map_update_frequency
@@ -139,21 +128,19 @@ class DiscretePlanner:
         self.semantic_map = semantic_map
         self.instance_memory: InstanceMemory = instance_memory
         self.goal_filtering = goal_filtering
-        self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.frontier_metric = frontier_metric
 
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
         self.prefix = ""
-        self.moved_forward = False
         self.visualization_level = visualization_level
         self.ground_truth_semantics = ground_truth_semantics
-        self.min_dilation = False
 
 
     def reset(self):
+        self.dd = None
         self.vis_dir = self.default_vis_dir
-        self.collision_map = np.zeros(self.map_shape)
+        self.collision_map = np.zeros(self.map_shape, dtype=bool)
         self.col_width = 1
         self.last_global_pose = None
         self.curr_global_pose = [
@@ -164,13 +151,9 @@ class DiscretePlanner:
         self.last_action = None
         self.timestep = 0
         self.total_timesteps = 0
-        self.curr_obs_dilation_selem_radius = self.start_obs_dilation_selem_radius
-        self.obs_dilation_selem = skimage.morphology.disk(
-            self.curr_obs_dilation_selem_radius
-        )
+        self.curr_frontier_dilation = self.start_obs_dilation_selem_radius
+        self.curr_instance_dilation = self.start_obs_dilation_selem_radius
         self.episode_panorama_start_steps = self.panorama_start_steps
-        self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
-        self.min_dilation = False
 
         self.reset_for_next_task()
     
@@ -327,8 +310,9 @@ class DiscretePlanner:
 
         return action
 
-    def get_traversible(self, obstacles, is_local):
-        dilated_obstacles = cv2.dilate(obstacles, self.obs_dilation_selem, iterations=1)
+    def get_traversible(self, is_local, dilation_raduis):
+        obstacles = self.semantic_map.get_obstacle_map(is_local)
+        dilated_obstacles = cv2.dilate(obstacles.astype(np.uint8), skimage.morphology.disk(dilation_raduis), iterations=1).astype(bool)
         dilated_obstacles[self.semantic_map.get_visited_map(is_local) == 1] = 0
 
         if is_local:
@@ -336,11 +320,11 @@ class DiscretePlanner:
             collision_map = self.collision_map[gx1:gx2, gy1:gy2] == 1
         else:
             collision_map = self.collision_map == 1
-        dilated_obstacles = np.logical_or(dilated_obstacles, collision_map)
+        dilated_obstacles = dilated_obstacles | collision_map
         robot_loc = self.semantic_map.get_loc(is_local)
         dilated_obstacles[robot_loc] = 0
 
-        traversible = 1 - dilated_obstacles
+        traversible = ~dilated_obstacles
         return traversible
     
     def raycast_from_viewpoint_to_goal_mask(
@@ -530,7 +514,7 @@ class DiscretePlanner:
         )[0])
 
 
-        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
+        goal_map = np.zeros_like(goal_instance_map, dtype=bool)
         goal_map[goal_location[0], goal_location[1]] = 1
 
 
@@ -616,7 +600,7 @@ class DiscretePlanner:
         candidate_coords = np.argwhere(close_to_goal_mask)
         goal_location = tuple(candidate_coords[closest_idx])
 
-        goal_map = np.zeros_like(goal_instance_map, dtype=np.uint8)
+        goal_map = np.zeros_like(goal_instance_map, dtype=bool)
         goal_map[goal_location[0], goal_location[1]] = 1
 
         features.append((goal_instance_map, [0, 165, 255]))  # orange - All instance cells
@@ -676,6 +660,9 @@ class DiscretePlanner:
             goal_map = self.get_hybrid_goal_map(
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
+        if not goal_map is None:
+            assert goal_map.dtype == bool
+            assert np.sum(goal_map) > 0
 
         return goal_map
 
@@ -706,7 +693,7 @@ class DiscretePlanner:
             goal_cells = np.argwhere(goal_instance_map == 1)
             distances = np.linalg.norm(goal_cells - np.asarray(location), axis=1)
             dist_to_closest = float(distances.min()) * 0.05
-            if dist_to_closest < 0.3:
+            if dist_to_closest < 0.5:
                 return True, True, None, None
 
         # goal_map = add_boundary(goal_map, value=0)
@@ -721,7 +708,8 @@ class DiscretePlanner:
             vis_postfix=postfix,
         )
 
-        navigable_goal_map = np.logical_and(goal_map, traversible)
+        navigable_goal_map = goal_map & traversible
+        assert np.all(navigable_goal_map == goal_map)
         #! myTODO
         if not np.any(navigable_goal_map):
             self.log.info(
@@ -900,10 +888,8 @@ class DiscretePlanner:
             #         "Convex hull failed. Using the largest cluster without convex hull."
             #     )
         else:
-            self.log.debug(
-                "Instance map not changed. Largest cluster is empty for some reason!"
-            )
-            clustered_map = None
+            raise Exception("No largest cluster found in the instance map.")
+            
 
         if self.visualization_level > 1:
             visualize_map(
@@ -912,102 +898,88 @@ class DiscretePlanner:
                 f"{self.prefix}{self.timestep}_3.cluster_goal.png",
                 goal_map=clustered_map_convex_hull,  # Clustered goal map convex hull is red
                 dilated_goal_map=goal_instance_map,  # All init goal points are magenta
-                traversible=1 - self.semantic_map.get_obstacle_map(is_local),
+                traversible=~self.semantic_map.get_obstacle_map(is_local),
                 features=[(clustered_map, [0, 255, 0])],  # Largest cluster is green
             )
-        if clustered_map is None:
-            return goal_instance_map
         if clustered_map_convex_hull is None:
+            assert clustered_map.dtype == bool
             return clustered_map
         return clustered_map_convex_hull
 
     def get_frontier_planning_maps(self):
         min_size = 10
-        if self.min_dilation:
+        if self.curr_frontier_dilation == self.min_obs_dilation_selem_radius:
             min_size = 6
+        traversible = self.get_traversible(True, self.curr_frontier_dilation)
         frontier_map = self.semantic_map.get_frontier_map(
-            local=True, timestep=self.timestep, min_size=min_size
+            local=True, timestep=self.timestep, min_size=min_size, traversible=traversible
         )
-        obstacle_map = self.semantic_map.get_obstacle_map(True)
-        traversible = self.get_traversible(obstacle_map, True)
-        frontier_map = frontier_map & traversible
+        assert not np.any((frontier_map == 1) & (traversible == 0)), "Non-traversible frontier cells"
 
         if frontier_map.any():
-            return frontier_map, obstacle_map, traversible, True
+            return frontier_map, traversible, True
 
+        traversible = self.get_traversible(False, self.curr_frontier_dilation)
         frontier_map = self.semantic_map.get_frontier_map(
-            local=False, timestep=self.timestep, min_size=min_size
+            local=False, timestep=self.timestep, min_size=min_size, traversible=traversible
         )
-        obstacle_map = self.semantic_map.get_obstacle_map(False)
-        traversible = self.get_traversible(obstacle_map, False)
-        frontier_map = frontier_map & traversible
 
         if frontier_map.any():
-            return frontier_map, obstacle_map, traversible, False
+            return frontier_map, traversible, False
 
-        return None, None, None, False
+        return None, None, False
 
     def plan_to_frontier_goal(self, goal_category, postfix, neighbors=None):
 
         i = 0
         while True:
-            frontier_map, obstacle_map, traversible, is_local = (
-                self.get_frontier_planning_maps()
-            )
+            frontier_map, traversible, is_local = self.get_frontier_planning_maps()
             if frontier_map is None:
-                if not self.min_dilation:
-                    self.log.info(
-                        "No frontiers remaining. Setting obstacle dilation to min to find possible frontiers."
-                    )
-                    self.min_dilation = True
-                    self.curr_obs_dilation_selem_radius = self.min_obs_dilation_selem_radius
-                    self.obs_dilation_selem = skimage.morphology.disk(
-                        self.curr_obs_dilation_selem_radius
-                    )
+                self.log.info(
+                    "No frontiers remaining. Setting obstacle dilation to min to find possible frontiers."
+                )
+                self.curr_frontier_dilation, success = self.decrease_obstacle_dilation_radius(self.curr_frontier_dilation)
+                if success:
+                    self.semantic_map.reset_unreachable_frontier()
                     continue
 
                 self.log.info("No frontiers remaining even with min dilation.")
                 return False, False, None, None, {}
 
             robot_loc = self.semantic_map.get_loc(is_local)
-            if self.prev_frontier.shape != frontier_map.shape or np.all(
-                (self.prev_frontier & frontier_map) == 0
-            ):
-                best_frontier_map = self.get_best_frontier(
-                    frontier_map,
-                    traversible,
-                    robot_loc,
-                    goal_category,
-                    is_local,
-                    neighbors=neighbors,
-                )
-            else:
-                self.log.debug("Using previous frontier map for planning.")
-                best_frontier_map = self.prev_frontier & frontier_map
+            best_frontier_map = self.get_best_frontier(
+                frontier_map,
+                traversible,
+                robot_loc,
+                goal_category,
+                is_local,
+                neighbors=neighbors,
+            )
 
-            if self.visualization_level > 1:
+            if self.visualization_level > 2:
                 visualize_map(
-                    obstacle_map.shape,
+                    traversible.shape,
                     self.vis_dir,
                     f"{self.timestep}_5.visited_map{postfix}.png",
                     points=[(robot_loc, [255, 0, 0])],
-                    traversible=1 - obstacle_map,
+                    traversible=traversible,
                     frontier_map=self.semantic_map.get_visited_map(is_local)
                 )
                 visualize_map(
-                    obstacle_map.shape,
+                    traversible.shape,
                     self.vis_dir,
                     f"{self.timestep}_6.unreachable_frontiers{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
                     points=[(robot_loc, [255, 0, 0])],
-                    traversible=1 - obstacle_map,
+                    traversible=traversible,
                     frontier_map=self.semantic_map.get_unreachable_frontiers_map(is_local)
                 )
+            if self.visualization_level > 1:
                 visualize_map(
-                    obstacle_map.shape,
+                    traversible.shape,
                     self.vis_dir,
                     f"{self.timestep}_7.planning_input_frontier{f'_{i}'}{'' if is_local else '_global'}{postfix}.png",
                     points=[(robot_loc, [255, 0, 0])],
-                    traversible=1 - obstacle_map,
+                    traversible=traversible,
                     dilated_goal_map=frontier_map,
                     frontier_map=best_frontier_map,
                 )
@@ -1025,23 +997,12 @@ class DiscretePlanner:
             )
             if reachable:
                 self.log.info("Planning to frontier successfull.")
-                self.prev_frontier = best_frontier_map
                 break
 
             self.log.info("Frontier not reachable.")
-            traversible, success = self.decrease_obstacle_dilation_radius(
-                obstacle_map, is_local
+            self.semantic_map.set_unreachable_frontier(
+                dilated_frontier_map, is_local
             )
-            if not success:
-                self.log.info(
-                    f"Obstacle dilation radius is already at minimum. Could not plan to the frontier. Trying another one."
-                )
-                # self.semantic_map.set_unreachable_frontier(best_frontier_map, is_local)
-                self.semantic_map.set_unreachable_frontier(
-                    dilated_frontier_map, is_local
-                )
-                self.reset_obs_dilation_selem_radius()
-
             i += 1
 
         vis_input = {}
@@ -1050,10 +1011,8 @@ class DiscretePlanner:
                 "short_term_goal": short_term_goal,
                 "is_local": is_local,
             }
-        vis_input["dilated_obstacle_map"] = 1 - traversible
+        vis_input["obstacle_map"] = ~traversible
         return reachable, stop, short_term_goal, is_local, vis_input
-
-    # def get_frontier_scores_distance():
 
     def get_best_frontier(
         self,
@@ -1258,32 +1217,34 @@ class DiscretePlanner:
             goal_instance_map,
             best_viewpoint,
             is_local,
-            obstacle_map,
-            robot_loc,
             traversible,
         ) = self.get_instance_planning_maps(instance_goal_id, method)
+        robot_loc = self.semantic_map.get_loc(is_local)
 
-        if self.visualization_level > 1:
+        if self.visualization_level > 2:
             visualize_map(
-                obstacle_map.shape,
+                traversible.shape,
                 self.vis_dir,
                 f"{self.timestep}_5.visited_map{postfix}.png",
                 points=[(robot_loc, [255, 0, 0])],
-                traversible=1 - obstacle_map,
+                traversible=traversible,
                 frontier_map=self.semantic_map.get_visited_map(is_local)
             )
-            # instance_on_obstacles = np.logical_and(
-            #     goal_instance_map == 1, obstacle_map == 1
-            # )
-            # visualize_map(
-            #     obstacle_map.shape,
-            #     self.vis_dir,
-            #     f"{self.timestep}_7.planning_input_instance{postfix}.png",
-            #     points=[(robot_loc, [255, 0, 0]), (viewpoint_loc, [120, 0, 0])],
-            #     traversible=1 - obstacle_map,
-            #     goal_map=goal_instance_map,
-            #     features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
-            # )
+            instance_on_obstacles = goal_instance_map & ~traversible
+            viewpoint_location = (
+            self.semantic_map.global_pose_to_local_location(best_viewpoint.pose)
+                if is_local
+                else self.semantic_map.global_pose_to_global_location(best_viewpoint.pose)
+            )
+            visualize_map(
+                traversible.shape,
+                self.vis_dir,
+                f"{self.timestep}_7.planning_input_instance{postfix}.png",
+                points=[(robot_loc, [255, 0, 0]), (viewpoint_location, [120, 0, 0])],
+                traversible=traversible,
+                goal_map=goal_instance_map,
+                features=[(instance_on_obstacles, [0, 255, 255])],  # yellow
+            )
 
         i = 0
         try_idx = 0
@@ -1306,7 +1267,7 @@ class DiscretePlanner:
                 break
 
             self.log.info(
-                f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_obs_dilation_selem_radius}"
+                f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_frontier_dilation}"
             )
 
             (reachable, stop, short_term_goal, navigable_goal_map) = (
@@ -1329,26 +1290,23 @@ class DiscretePlanner:
                 force_global = True
             else:
                 force_global = False
-                traversible, success = self.decrease_obstacle_dilation_radius(
-                    obstacle_map, is_local
-                )
+                self.curr_instance_dilation, success = self.decrease_obstacle_dilation_radius(self.curr_instance_dilation)
                 if not success:
                     try_idx += 1
                     #! myTODO: Important: This might not be lots of heurisitc. Maybe its better to use something like BLACKLISTED_TARGET_MAP, however, that has its own issues.
                     self.semantic_map.merge_map(
                         navigable_goal_map, MC.OBSTACLE_MAP, is_local
                     )
-                    self.reset_obs_dilation_selem_radius()
+                    self.curr_frontier_dilation = self.start_obs_dilation_selem_radius
             (
                 goal_instance_map,
                 best_viewpoint,
                 is_local,
-                obstacle_map,
-                robot_loc,
                 traversible,
             ) = self.get_instance_planning_maps(
                 instance_goal_id, method, force_global=force_global
             )
+            robot_loc = self.semantic_map.get_loc(is_local)
 
         if reachable:
             self.log.debug(f"Planning to instance goal successfull.")
@@ -1367,7 +1325,7 @@ class DiscretePlanner:
                 "is_local": is_local,
                 "inst_goal_found": True,
             }
-        vis_input["dilated_obstacle_map"] = 1 - traversible
+        vis_input["obstacle_map"] = 1 - traversible
         vis_input["goal_instance_map"] = goal_instance_map
 
         return (
@@ -1454,41 +1412,23 @@ class DiscretePlanner:
                 instance_goal_id, method, force_global=force_global
             )
         )
-        obstacle_map = self.semantic_map.get_obstacle_map(is_local)
-        robot_loc = self.semantic_map.get_loc(is_local)
-        traversible = self.get_traversible(obstacle_map, is_local)
+        traversible = self.get_traversible(is_local, self.curr_instance_dilation)
         return (
             goal_instance_map,
             best_viewpoint,
             is_local,
-            obstacle_map,
-            robot_loc,
             traversible,
         )
 
-    def reset_obs_dilation_selem_radius(self):
-        # Do not reset
-        if self.min_dilation:
-            return
-        self.curr_obs_dilation_selem_radius = self.start_obs_dilation_selem_radius
-        self.obs_dilation_selem = skimage.morphology.disk(
-            self.curr_obs_dilation_selem_radius
-        )
 
-    def decrease_obstacle_dilation_radius(self, obstacle_map, is_local):
-        # self.collision_map *= 0
-        if self.curr_obs_dilation_selem_radius > self.min_obs_dilation_selem_radius:
-            self.curr_obs_dilation_selem_radius -= 1
-            self.obs_dilation_selem = skimage.morphology.disk(
-                self.curr_obs_dilation_selem_radius
-            )
+    def decrease_obstacle_dilation_radius(self, curr_radius):
+        if curr_radius > self.min_obs_dilation_selem_radius:
             self.log.info(
-                f"Decreasing obstacle dilation radius to {self.curr_obs_dilation_selem_radius}. Trying again."
+                f"Decreasing obstacle dilation radius to {curr_radius - 1}."
             )
-            traversible = self.get_traversible(obstacle_map, is_local)
-            return traversible, True
+            return curr_radius - 1, True
         else:
-            return None, False
+            return curr_radius, False
 
     def visualize_get_goal_map(
         self,
