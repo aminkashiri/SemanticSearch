@@ -709,6 +709,7 @@ class DiscretePlanner:
         )
 
         navigable_goal_map = goal_map & traversible
+        #! myTODO: IF assert doesn't fail, we don't need navigable goal map
         assert np.all(navigable_goal_map == goal_map)
         #! myTODO
         if not np.any(navigable_goal_map):
