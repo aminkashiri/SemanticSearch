@@ -102,12 +102,13 @@ class HabitatGoatEnv(HabitatEnv):
         )
     
     def reset_vis_dir(self):
-        dir_name = f"{self.scene_id}_{self.episode_id}"
-        if self.config.SEQ:
-            dir_name = f"{dir_name}_{self.current_task_idx}"
-        self.visualizer.set_vis_dir(
-            dir_name
-        )
+        if self.visualization_level > 0:
+            dir_name = f"{self.scene_id}_{self.episode_id}"
+            if self.config.SEQ:
+                dir_name = f"{dir_name}_{self.current_task_idx}"
+            self.visualizer.set_vis_dir(
+                dir_name
+            )
 
     def _preprocess_obs(
         self, habitat_obs: habitat.core.simulator.Observations
