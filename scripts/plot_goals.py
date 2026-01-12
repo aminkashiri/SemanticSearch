@@ -4,17 +4,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
 
-scene_name = "q5QZSEeHe5g"
+scene_name = "7MXmsvcQjpJ"
 file_name = f"/home-robot/data/datasets/objectnav/hm3d/v2/val/content/{scene_name}.json"
-# categories = ["bed", "toilet"]
-categories = ["bed"]
-output_dir = "outputs"
 
+# Either provide ep_id or categories
+ep_id = 20
+start_position = None
+
+# categories = ["bed", "toilet"]
+
+
+
+output_dir = "outputs"
 os.makedirs(output_dir, exist_ok=True)
 
 with open(file_name, "r") as f:
     data = json.load(f)
 
+if not ep_id is None:
+    scene_data = data["episodes"][ep_id]
+    categories = [scene_data["object_category"]]
+    start_position = scene_data["start_position"]
+    
 goals_by_category = data["goals_by_category"]
 
 by_category = defaultdict(list)
@@ -27,8 +38,11 @@ for _, goals in goals_by_category.items():
 
         gx, gy, gz = goal["position"]
 
-        if gy > 1:
-            continue
+        if not start_position is None:
+            if gy > start_position[1] + 1.5 or gy < start_position[1] - 1.5:
+                continue
+        # if gy > 1:
+        #     continue
         view_pts = []
         for vp in goal.get("view_points", []):
             px, _, pz = vp["agent_state"]["position"]
@@ -86,13 +100,14 @@ for cat, instances in by_category.items():
             color=color,
         )
 
-plt.scatter(
-    [3.0026],
-    [-4.8398],
-    s=12,
-    linewidths=2,
-    color="red",
-)
+if start_position is not None:
+    plt.scatter(
+        [start_position[0]],
+        [start_position[2]],
+        s=12,
+        linewidths=2,
+        color="red",
+    )
 plt.xlabel("X")
 plt.ylabel("Z")
 plt.title(f"Goal Viewpoints (colored by instance, shaded by category)")

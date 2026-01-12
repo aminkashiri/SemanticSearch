@@ -194,12 +194,12 @@ class GoatAgent(Agent):
                 )
             else:
                 from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
-                    MaskRCNNPerception, MaskRCNNRedNetPerception
+                    MaskRCNNPerception
                 )
 
                 # MaskRCNN IDs are the same as our semantic category mappoing vocab.
                 self.segmentation = MaskRCNNPerception(
-                    sem_pred_prob_thr=0.7,
+                    sem_pred_prob_thr=0.8,
                     sem_gpu_id=(-1 if config.NO_GPU else 0),
                 )
         self.match_memory = True
