@@ -333,6 +333,29 @@ class Visualizer:
                 y_pos += offset
         return image_vis
 
+    def _wrap_text(self, text, font_scale, bbox_len):
+        global V
+        words = text.split(" ")
+        lines = []
+        current_line = ""
+
+        for word in words:
+            test_line = word if current_line == "" else current_line + " " + word
+            textsize = cv2.getTextSize(
+                test_line, self.font, font_scale, self.text_thickness
+            )[0]
+
+            if textsize[0] <= bbox_len:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+
+        if current_line:
+            lines.append(current_line)
+        
+        return lines
+
     def _put_text_on_image(
         self,
         vis_image,
@@ -343,27 +366,32 @@ class Visualizer:
         bbox_y_len: int,
         font_scale: int = None,
     ):
-        """
-        Place text at the center of the given bounding box.
-        """
         if font_scale is None:
             font_scale = self.font_scale
 
-        textsize = cv2.getTextSize(text, self.font, font_scale, self.text_thickness)[0]
-        # The x coordinate at which the left edge of text needs to be placed
+        lines = self._wrap_text(text, font_scale, bbox_x_len)
+
+        textsize = cv2.getTextSize(
+            lines[0], self.font, font_scale, self.text_thickness
+        )[0]
+
         textX = (bbox_x_len - textsize[0]) // 2 + bbox_x_start
-        # The height at which base needs to be placed
-        textY = (bbox_y_len + textsize[1]) // 2 + bbox_y_start
-        return cv2.putText(
-            vis_image,
-            text,
-            (textX, textY),
-            self.font,
-            font_scale,
-            self.text_color,
-            self.text_thickness,
-            cv2.LINE_AA,
-        )
+        textY = bbox_y_start + (bbox_y_len - textsize[1]) // 2 
+
+        for line in lines:
+            cv2.putText(
+                vis_image,
+                line,
+                (textX, textY),
+                self.font,
+                font_scale,
+                self.text_color,
+                self.text_thickness,
+                cv2.LINE_AA,
+                )
+            textY += 20
+        return vis_image
+
 
     def init_frame(self, caption):
         width = V.IMAGE_WIDTH

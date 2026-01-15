@@ -51,7 +51,7 @@ class HabitatGoatEnv(HabitatEnv):
             dataset_type = config.habitat.dataset.type
             if dataset_type == "Goat-v1":
                 self.semantic_category_mapping = GoatCategories(self.fetch_vocabulary())
-                logger.debug(f"{self.semantic_category_mapping.goal_id_to_goal_name}")
+                logger.debug(f"{self.semantic_category_mapping.cat_id_to_goal_name}")
             elif dataset_type == "ObjectNav-v1":
                 self.semantic_category_mapping = HabitatObjNav2022Categories()
             else:

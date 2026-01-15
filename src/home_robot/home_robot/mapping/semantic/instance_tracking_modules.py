@@ -329,7 +329,10 @@ class InstanceMemory:
             if instance_scores is None:
                 score = 1.0
             else:
-                score = (instance_scores[temp_instance_id-1] + category_scores.get(category_id, 0))/2,
+                if category_scores is None:
+                    score = instance_scores[temp_instance_id-1]
+                else:
+                    score = (instance_scores[temp_instance_id-1] + category_scores.get(category_id, 0))/2,
             
             instance_view = InstanceView(
                 bbox=bbox,
