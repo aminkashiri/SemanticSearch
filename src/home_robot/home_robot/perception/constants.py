@@ -135,12 +135,12 @@ class GoatCategories(SemanticCategoryMapping):
     def __init__(self, vocabulary):
         super().__init__()
         self.vocabulary = vocabulary
-        self.goal_id_to_goal_name = {idx+1: name for idx, name in enumerate(vocabulary)}
-        self.goal_name_to_goal_id = {name: idx+1 for idx, name in enumerate(vocabulary)}
+        self.cat_id_to_goal_name = {idx+1: name for idx, name in enumerate(vocabulary)}
+        self.goal_name_to_cat_id = {name: idx+1 for idx, name in enumerate(vocabulary)}
         self._instance_id_to_category_id = None
 
     def map_goal_id(self, goal_id: int) -> Tuple[int, str]:
-        return (goal_id, self.goal_id_to_goal_name[goal_id])
+        return (goal_id, self.cat_id_to_goal_name[goal_id])
 
     def reset_instance_id_to_category_id(self, env: Env):
         self._instance_id_to_category_id = np.zeros(len(env.sim.semantic_annotations().objects), dtype=np.int)
@@ -149,7 +149,7 @@ class GoatCategories(SemanticCategoryMapping):
                 instance_id = int(inst_goal['object_id'].split("_")[-1])
                 object_category = "_".join(inst_goal['object_category'].split(" "))
                 # print(f"Manually adding: {inst_goal['object_id']} -> {object_category}, {instance_id}->{self.goal_name_to_goal_id[object_category]}")
-                self._instance_id_to_category_id[instance_id] = self.goal_name_to_goal_id[object_category]
+                self._instance_id_to_category_id[instance_id] = self.goal_name_to_cat_id[object_category]
 
     @property
     def instance_id_to_category_id(self) -> np.ndarray:

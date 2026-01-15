@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
+import cv2
 import torch
 import psutil
 import numpy as np
@@ -303,10 +304,9 @@ class GoatAgent(Agent):
 
         action, vis_inputs = self._get_best_action(**kwargs)
         action = self._process_action(action)
+        info = self._get_vis_info(vis_inputs, action)
         if action["action"] == DiscreteNavigationAction.STOP:
             self.handle_stop(action)
-
-        info = self._get_vis_info(vis_inputs, action)
 
         return action, info, stuck
 
@@ -330,7 +330,8 @@ class GoatAgent(Agent):
         obs = self._curr_obs
         info = {
             "agent_id": self.agent_id,
-            "rgb_frame": obs.rgb[:, :, ::-1] if self.ground_truth_semantics else self.frame_yolo,
+            # "rgb_frame": obs.rgb[:, :, ::-1] if self.ground_truth_semantics else self.frame_yolo,
+            "rgb_frame": obs.rgb[:, :, ::-1],
             "depth_frame": obs.depth,
             "semantic_frame": obs.semantic if obs.task_observations.get("semantic_frame") is None else obs.task_observations["semantic_frame"],
             "top_down_map": obs.task_observations.get("top_down_map"),
@@ -362,7 +363,7 @@ class GoatAgent(Agent):
         else:
             info["third_person_image"] = obs.third_person_image
 
-        info["caption"] += f" | Action: {action['action']}"
+        info["caption"] += f" | Action: {str(action['action']).split('.')[-1]}"
 
     def _update_pose(self):
         obs = self._curr_obs
@@ -457,22 +458,22 @@ class GoatAgent(Agent):
             #     )
 
 
-            import cv2
-            yolo_output = self.yolo(source=obs.rgb,conf=0.2,  verbose=False)
-            category_scores = {i: [] for i in range(7)}
-            for box in yolo_output[0].boxes:
-                cls = int(box.cls[0])
-                if cls in coco_categories_mapping:
+            if not "Goat-v1" in self.task_type :
+                yolo_output = self.yolo(source=obs.rgb,conf=0.2,  verbose=False)
+                category_scores = {i: [] for i in range(7)}
+                for box in yolo_output[0].boxes:
+                    cls = int(box.cls[0])
+                    if cls in coco_categories_mapping:
 
-                    category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
-                    # class_name = self.yolo.names[cls]
-            self.frame_yolo = cv2.cvtColor(yolo_output[0].plot(), cv2.COLOR_BGR2RGB)
-                    
-            for i in range(7):
-                if len(category_scores[i])>0:
-                    category_scores[i] = np.max(category_scores[i])
-                else:
-                    category_scores[i] = 0
+                        category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
+                        # class_name = self.yolo.names[cls]
+                self.frame_yolo = cv2.cvtColor(yolo_output[0].plot(), cv2.COLOR_BGR2RGB)
+                        
+                for i in range(7):
+                    if len(category_scores[i])>0:
+                        category_scores[i] = np.max(category_scores[i])
+                    else:
+                        category_scores[i] = 0
             # category_scores[3] = 1
             # print(category_scores)
             # self.history_scores.append(category_scores)

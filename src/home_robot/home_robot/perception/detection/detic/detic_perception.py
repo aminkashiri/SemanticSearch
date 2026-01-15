@@ -223,6 +223,7 @@ class DeticPerception(PerceptionModule):
                 predictions=pred["instances"].to(self.cpu_device)
             ).get_image()
             obs.task_observations["semantic_frame"] = visualization
+            obs.task_observations["semantic_frame"] = cv2.cvtColor(visualization, cv2.COLOR_BGR2RGB)
         else:
             obs.task_observations["semantic_frame"] = None
 
