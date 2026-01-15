@@ -117,7 +117,6 @@ class Visualizer:
         self.font_scale = 0.6
         self.text_color = (20, 20, 20)  # BGR
         self.text_thickness = 1
-        self.show_rl_obs = config.SHOW_RL_OBS
         self.ind_frame_height = 480
 
         self.num_agents = config.NUM_AGENTS

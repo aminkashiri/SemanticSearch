@@ -78,7 +78,6 @@ def read_configs(args):
     logger.debug(f"All scenes: {all_scenes}")
 
     config.habitat.dataset.content_scenes = all_scenes[:]
-    # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
 
     return config
 
@@ -160,10 +159,11 @@ if __name__ == "__main__":
                 stucks.append(stuck)
 
             if all(stucks):
-                actions = [
-                    agent._process_action((None, DiscreteNavigationAction.STOP))
-                    for agent in agents
-                ]
+                actions = []
+                for agent in agents:
+                    action = agent._process_action((None, DiscreteNavigationAction.STOP))
+                    agent.handle_stop(action)
+                    actions.append(action)
 
             logger.info(f"Actions taken: {actions}")
             env.apply_action(actions, info=infos)

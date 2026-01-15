@@ -1,15 +1,14 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: hm3d_det_0.5
+EXP_NAME: goat_det_yolo
 
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
-SEQ: 0
+SEQ: 1                    # Seq 0 doesn't work with single agents. 
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
-DATASET: habitat_objnav_2023
-VISUALIZATION_LEVEL: 1    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
+DATASET: goat
+VISUALIZATION_LEVEL: 0    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
 GROUND_TRUTH_SEMANTICS: 0 # 1: use ground-truth semantics (for debugging / ablations)
-seed: 1
-SHOW_RL_OBS: False         # whether to show the observations passed to RL policices, for debugging
+USE_YOLO: 1               # 1: use YOLO in addition to Detic for object detection
 
 ENVIRONMENT:
   max_subtasks_per_episode: 10
@@ -23,7 +22,7 @@ AGENT:
   radius: 0.05            # robot radius (in meters)
 
   COMMUNICATION:
-    radius: 3           # m
+    radius: 5           # m
 
   SEMANTIC_MAP:
     semantic_categories: dataset # map semantic channel categories ("coco_indoor", "longtail_indoor", "mukul_indoor")
@@ -37,9 +36,9 @@ AGENT:
     exp_pred_threshold: 1.0  # number of depth points to be in bin to consider it as explored
     map_pred_threshold: 1.0  # number of depth points to be in bin to consider it as obstacle
     explored_radius: 20     # radius (in centimeters) of visually explored region
-    been_close_to_radius: 20  # radius (in centimeters) of been close to region
+    been_close_to_radius: 200  # radius (in centimeters) of been close to region
     target_blacklisting_radius: 100 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
-    min_obs_height_cm: 10    # minimum height (in centimeters) of obstacle to be considered as obstacle
+    min_obs_height_cm: 20    # minimum height (in centimeters) of obstacle to be considered as obstacle. Used 10 initially, set to 20 in goat
     goal_filtering: True      # If True, gets the largest connected component of the goal map
 
   PLANNER:
@@ -64,11 +63,3 @@ AGENT:
     score_thresh_lang: 0.24
     match_projection_threshold: 0.2   # confidence must be at least this high to project as goal point.
     goto_past_pose: True
-
-  DETIC:
-    config_file: Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml
-    vocabulary: custom
-    custom_vocabulary: chair,sofa,bed,toilet,potted_plant,tv_monitor
-    confidence_threshold: 0.2
-    weights: Detic/models/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth
-    augment_mask_with_box: True

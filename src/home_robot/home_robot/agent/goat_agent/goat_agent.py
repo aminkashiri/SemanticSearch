@@ -9,6 +9,7 @@ import torch
 import psutil
 import numpy as np
 from ultralytics import YOLOv10
+from ultralytics import YOLOWorld
 import home_robot.utils.pose as pu
 from .goat_matching import GoatMatching
 from scipy.ndimage import binary_erosion
@@ -52,9 +53,10 @@ class GoatAgent(Agent):
 
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
-        self.max_steps = [config.AGENT.max_steps] * 10
+        self.max_steps = config.AGENT.max_steps
         self.task_type = config.habitat.task.type
         self.seq_goals = bool(config.SEQ)
+        self.use_yolo = bool(config.USE_YOLO)
 
         self.record_instance_ids = (
             True  # Code doesn't work with False, I can fix this later
@@ -182,17 +184,15 @@ class GoatAgent(Agent):
                 from home_robot.perception.detection.detic.detic_perception import (
                     DeticPerception,
                 )
-
-                # for i in range(len(vocab)):
-                #     if vocab[i] == "plant":
-                #         # vocab[i] = "flower_pot,flowers,pot,vase,bouqet"
-                #         vocab[i] = "flower_pot"
                 self.segmentation = DeticPerception(
                     vocabulary="custom",
                     custom_vocabulary=","
                     + ",".join(vocabulary),
                     sem_gpu_id=(-1 if config.NO_GPU else 0),
                 )
+                if self.use_yolo:
+                    self.yolo = YOLOWorld('yolov8s-worldv2.pt')  # or 'yolov8m-worldv2.pt' for better accuracy
+                    self.yolo.set_classes(vocabulary)
             else:
                 from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
                     MaskRCNNPerception
@@ -203,10 +203,10 @@ class GoatAgent(Agent):
                     sem_pred_prob_thr=0.8,
                     sem_gpu_id=(-1 if config.NO_GPU else 0),
                 )
+                if self.use_yolo:
+                    self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
         self.match_memory = True
         self.visualization_level = config.VISUALIZATION_LEVEL
-        self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
-        # self.history_scores = []
 
     def get_subtask_timestep(self) -> int:
         """
@@ -293,18 +293,19 @@ class GoatAgent(Agent):
 
     def act(self, **kwargs) -> Tuple[DiscreteNavigationAction, Dict[str, Any], bool]:
         """Act end-to-end."""
+        action, vis_inputs = self._get_best_action(**kwargs)
+        action = self._process_action(action)
+        info = self._get_vis_info(vis_inputs, action)
+
+
+
         stuck = False
-        if (
-            self.get_subtask_timestep() >= self.max_steps[self.current_task_idx]
-        ) or self.stuck_counter > 30:
+        if self.get_subtask_timestep() >= self.max_steps or self.stuck_counter > 30:
             self.log.warning(
                 "Reached max number of steps for subgoal, or stuck somewhere, calling STOP"
             )
             stuck = True
 
-        action, vis_inputs = self._get_best_action(**kwargs)
-        action = self._process_action(action)
-        info = self._get_vis_info(vis_inputs, action)
         if action["action"] == DiscreteNavigationAction.STOP:
             self.handle_stop(action)
 
@@ -330,8 +331,7 @@ class GoatAgent(Agent):
         obs = self._curr_obs
         info = {
             "agent_id": self.agent_id,
-            # "rgb_frame": obs.rgb[:, :, ::-1] if self.ground_truth_semantics else self.frame_yolo,
-            "rgb_frame": obs.rgb[:, :, ::-1],
+            "rgb_frame": self.frame_yolo if self.use_yolo else obs.rgb[:, :, ::-1],
             "depth_frame": obs.depth,
             "semantic_frame": obs.semantic if obs.task_observations.get("semantic_frame") is None else obs.task_observations["semantic_frame"],
             "top_down_map": obs.task_observations.get("top_down_map"),
@@ -399,10 +399,8 @@ class GoatAgent(Agent):
             for inst_id in instance_ids:
                 inst_mask = instance_frame == inst_id
                 inst_mask = binary_erosion(inst_mask, iterations=erosion_iters)
-                # TODO: WHY WARN
-                if inst_mask.size == 0:
+                if inst_mask.sum() == 0:
                     inst_mask = instance_frame == inst_id
-                    continue
 
                 instance_depth = depth_frame[inst_mask]
 
@@ -458,25 +456,22 @@ class GoatAgent(Agent):
             #     )
 
 
-            if not "Goat-v1" in self.task_type :
-                yolo_output = self.yolo(source=obs.rgb,conf=0.2,  verbose=False)
-                category_scores = {i: [] for i in range(7)}
+            if self.use_yolo:
+                yolo_output = self.yolo(source=obs.rgb, conf=0.2, verbose=False)
+                category_scores = {i: [] for i in range(self.num_sem_categories + 1)}  # +1 for 1-based indexing 
                 for box in yolo_output[0].boxes:
-                    cls = int(box.cls[0])
-                    if cls in coco_categories_mapping:
-
+                    cls = int(box.cls[0])  # 0 to num_categories-1
+                    if "Goat-v1" in self.task_type :
+                        category_scores[cls + 1].append(box.conf[0].item())  # Store at 1 to num_categories
+                    else:
                         category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
-                        # class_name = self.yolo.names[cls]
                 self.frame_yolo = cv2.cvtColor(yolo_output[0].plot(), cv2.COLOR_BGR2RGB)
-                        
-                for i in range(7):
-                    if len(category_scores[i])>0:
+
+                for i in range(self.num_sem_categories + 1):
+                    if len(category_scores[i]) > 0:
                         category_scores[i] = np.max(category_scores[i])
                     else:
                         category_scores[i] = 0
-            # category_scores[3] = 1
-            # print(category_scores)
-            # self.history_scores.append(category_scores)
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = (
