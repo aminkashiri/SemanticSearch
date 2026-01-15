@@ -86,9 +86,7 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    # config.habitat.dataset.content_scenes = ["bCPU9suPUw9", "HY1NcmCgn3n", "MHPLjHsuG27", "k1cupFYWXJ6", "XB4GS9ShBRE", "q5QZSEeHe5g"]
-    config.habitat.dataset.content_scenes = all_scenes[:20]
-    # downward_steps = ["7MXmsvcQjpJ", "6s7QHgap2fW", "BAbdmeyTvMZ"]
+    config.habitat.dataset.content_scenes = all_scenes[:3]
 
     return config
 
@@ -106,7 +104,7 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
     ep_results = {}
     all_subtask_metrics = [all_subtask_metrics[key] for key in sorted(all_subtask_metrics.keys())]
     for m in all_subtask_metrics:
-        if np.isnan(m.get("spl", np.nan)):
+        if "spl" in m and np.isnan(m["spl"]):
             m["success"] = np.nan
     ep_results["metrics"] = all_subtask_metrics
     ep_results["total_num_steps"] = ep_step
@@ -128,7 +126,7 @@ def save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent,
     results[f"{env.scene_id}_{env.episode_id}"] = ep_results
     for scene_ep_id in results:
         for m in results[scene_ep_id]["metrics"]:
-            if np.isnan(m.get("spl", np.nan)):
+            if "spl" in m and np.isnan(m["spl"]):
                 m["success"] = np.nan
                 m["distance_to_goal"] = np.nan
     with open(os.path.join(results_dir, "per_episode_metrics.json"), "w") as fp:
@@ -190,7 +188,7 @@ if __name__ == "__main__":
         if f"{env.scene_id}_{env.episode_id}" in list(results.keys()):
             continue
         
-        # if not env.episode_id in ["25"]:
+        # if not env.episode_id in ["20"]:
         #     continue
         env.reset_vis_dir()
         agent.reset(env.scene_id, env.episode_id)
@@ -203,18 +201,15 @@ if __name__ == "__main__":
 
         old_task_idx = -1
         while not env.episode_over:
-            pbar.set_description(
-                f"{env.scene_id}_{env.episode_id}"
-            )
             if config.SEQ:
                 if env.current_task_idx != old_task_idx:
                     logger.info(
                         f"Starting task {env.current_task_idx} in scene {env.scene_id} episode {env.episode_id}"
                     )
                     old_task_idx = env.current_task_idx
-                    pbar.set_description(
-                        f"{env.scene_id}_{env.episode_id}_{env.current_task_idx}"
-                    )
+            pbar.set_description(
+                f"{env.scene_id}_{env.episode_id}{'_' + str(env.current_task_idx) if config.SEQ else ''}"
+            )
             ep_step += 1
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
@@ -227,6 +222,7 @@ if __name__ == "__main__":
             action, info, stuck = agent.act()
             if stuck: 
                 action = agent._process_action(DiscreteNavigationAction.STOP)
+                agent.handle_stop(action)
 
             logger.info(f"Action taken: {action}")
             env.apply_action(action, info)
