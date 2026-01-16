@@ -261,11 +261,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.max_voxel_height = int(360 / self.z_resolution)
         self.min_voxel_height = int(-40 / self.z_resolution)
         self.min_obs_height_cm = min_obs_height_cm
-        self.min_mapped_height = int(
+        self.min_obstacle_height = int(
             self.min_obs_height_cm / self.z_resolution - self.min_voxel_height
         )
 
-        self.max_mapped_height = int(
+        self.max_obstacle_height = int(
             (self.agent_height + 1) / self.z_resolution - self.min_voxel_height
         )
         self.shift_loc = [self.vision_range * self.xy_resolution // 2, 0, np.pi / 2.0]
@@ -486,7 +486,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         visible_ground[80:] = 0
 
         #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
-        x = int(self.min_obs_height_cm / self.z_resolution)
+        x = int(10 / self.z_resolution)
         ground_plane = voxels[
             :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
         ]
@@ -747,7 +747,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         voxels = du.splat_feat_nd(init_grid, feat, XYZ_cm_std).transpose(1, 2)
 
         agent_height_proj = voxels[
-            ..., self.min_mapped_height : self.max_mapped_height
+            ..., self.min_obstacle_height : self.max_obstacle_height
         ].sum(3)
         all_height_proj = voxels.sum(3)
         # * Shape is: [voxech_channels, height, width]
