@@ -25,8 +25,18 @@ from home_robot.agent.goat_agent.goat_agent import GoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
 from home_robot_sim.env.habitat_goat_env.habitat_goat_env import HabitatGoatEnv
 
+DATASET_CONFIGS = {
+    "habitat_objnav_2022": "benchmark/nav/objectnav/objectnav_hm3d_2022_rgbd_with_semantic.yaml",  # V1
+    "habitat_objnav_2023": "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml",  # V2
+    "goat": "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml",
+}
+        
+
 
 def read_args():
+    """
+    These options override default configs.
+    """
     parser = argparse.ArgumentParser()
     project_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
     parser.add_argument(
@@ -36,10 +46,46 @@ def read_args():
         help="Path to config yaml",
     )
     parser.add_argument(
-        "opts",
+        "--name",
+        type=str,
         default=None,
-        nargs=argparse.REMAINDER,
-        help="Modify config options from command line",
+        help="Name of the experiment (overrides EXP_NAME in config)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        choices=["habitat_objnav_2022", "habitat_objnav_2023", "goat"],
+    )
+    parser.add_argument(
+        "--scene",
+        type=int,
+        nargs="*",
+        default=None,
+        metavar=("START", "END"),
+        help="Scenes range: --scene [start] [end]",
+    )
+
+    parser.add_argument(
+        "--yolo",
+        action="store_const",
+        const=1,
+        default=None,
+        help="Enable YOLO (1 if passed, None otherwise)",
+    )
+
+    parser.add_argument(
+        "--gt",
+        action="store_const",
+        const=1,
+        default=None,
+        help="Enable GT (1 if passed, None otherwise)",
+    )
+    parser.add_argument(
+        "--cat_match_threshold",
+        type=float,
+        default=None,
+        help="score threshold for category matching in GOAT",
     )
     args = parser.parse_args()
     return args
@@ -47,21 +93,12 @@ def read_args():
 
 def read_configs(args):
     project_config = OmegaConf.load(args.project_config_path)
-    if project_config.DATASET == "habitat_objnav_2022":
-        habitat_config_path = (
-            "benchmark/nav/objectnav/objectnav_hm3d_2022_rgbd_with_semantic.yaml"  # V1
-        )
-    elif project_config.DATASET == "habitat_objnav_2023":
-        habitat_config_path = (
-            "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml"  # V2
-        )
-    elif project_config.DATASET == "goat":
-        habitat_config_path = "benchmark/nav/goat/goat_hm3d_rgbd_with_semantic.yaml"
-
+    if args.dataset is not None:
+        project_config.DATASET = args.dataset
+    habitat_config_path = DATASET_CONFIGS[project_config.DATASET]
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
     config.NUM_AGENTS = 1
-    config.PRINT_IMAGES = 1
     config.habitat.simulator.agents.agent0 = config.habitat.simulator.agents.pop(
         "main_agent"
     )
@@ -86,7 +123,27 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:3]
+    scenes = slice(None, None)
+    if args.scene is not None:
+        if len(args.scene) == 1:
+            scenes = slice(args.scene[0], None)
+
+        if len(args.scene) == 2:
+            scenes = slice(args.scene[0], args.scene[1])
+
+    config.habitat.dataset.content_scenes = all_scenes[scenes]
+
+    if args.name is not None:
+        config.EXP_NAME = args.name
+    
+    if args.yolo is not None:
+        config.USE_YOLO = 1
+    
+    if args.gt is not None:
+        config.GROUND_TRUTH_SEMANTICS = 1
+    
+    if args.cat_match_threshold is not None:
+        config.AGENT.cat_match_threshold = args.cat_match_threshold
 
     return config
 
@@ -220,7 +277,7 @@ if __name__ == "__main__":
 
             agent.update_state(obs)
             action, info, stuck = agent.act()
-            if stuck: 
+            if stuck and action["action"] != DiscreteNavigationAction.STOP: 
                 action = agent._process_action(DiscreteNavigationAction.STOP)
                 agent.handle_stop(action)
 

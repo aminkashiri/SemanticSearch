@@ -28,24 +28,19 @@ from home_robot_sim.env.habitat_goat_env.habitat_goat_env import (
 
 from eval_episode import read_args, save_results
 
+DATASET_CONFIGS = {
+    "habitat_objnav_2023": "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml",  # V2
+    "goat": "benchmark/nav/goat/multiagent_goat_hm3d_rgbd_with_semantic.yaml",
+}
 
 def read_configs(args):
     project_config = OmegaConf.load(args.project_config_path)
-    if project_config.DATASET == "habitat_objnav_2023":
-        habitat_config_path = (
-            "benchmark/nav/objectnav/objectnav_hm3d_rgbd_with_semantic.yaml"  # V2
-        )
-    elif project_config.DATASET == "goat":
-        habitat_config_path = (
-            "benchmark/nav/goat/multiagent_goat_hm3d_rgbd_with_semantic.yaml"
-        )
-    else:
-        raise NotImplementedError("Support for other datasets is not tested.")
-
+    if args.dataset is not None:
+        project_config.DATASET = args.dataset
+    habitat_config_path = DATASET_CONFIGS[project_config.DATASET]
     habitat_config = get_config(habitat_config_path)
     config = DictConfig({**habitat_config, **project_config})
 
-    config.PRINT_IMAGES = 1
     if project_config.DATASET == "goat":
         config.habitat.dataset.split = "val_seen"
     else:
@@ -77,7 +72,27 @@ def read_configs(args):
     all_scenes = sorted([x.split(".")[0] for x in all_scenes if x.endswith(".json.gz")])
     logger.debug(f"All scenes: {all_scenes}")
 
-    config.habitat.dataset.content_scenes = all_scenes[:]
+    scenes = slice(None, None)
+    if args.scene is not None:
+        if len(args.scene) == 1:
+            scenes = slice(args.scene[0], None)
+
+        if len(args.scene) == 2:
+            scenes = slice(args.scene[0], args.scene[1])
+
+    config.habitat.dataset.content_scenes = all_scenes[scenes]
+
+    if args.name is not None:
+        config.EXP_NAME = args.name
+    
+    if args.yolo is not None:
+        config.USE_YOLO = 1
+    
+    if args.gt is not None:
+        config.GROUND_TRUTH_SEMANTICS = 1
+    
+    if args.cat_match_threshold is not None:
+        config.AGENT.cat_match_threshold = args.cat_match_threshold
 
     return config
 
