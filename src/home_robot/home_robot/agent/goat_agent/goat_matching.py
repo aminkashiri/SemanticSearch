@@ -27,6 +27,7 @@ class GoatMatching(Matching):
         print_images: bool,
         instance_memory: InstanceMemory,
         logger,
+        cat_match_threshold: float,
     ) -> None:
         super().__init__(device, config, default_vis_dir, print_images)
 
@@ -41,7 +42,7 @@ class GoatMatching(Matching):
         self.score_thresh = {
             "languagenav": config.score_thresh_lang,
             "imagenav": config.score_thresh_image,
-            "objectnav": 0.70
+            "objectnav": cat_match_threshold,
         }
         self.log = logger 
 

@@ -77,6 +77,7 @@ class GoatAgent(Agent):
             print_images=config.VISUALIZATION_LEVEL > 1,
             instance_memory=self.instance_memory,
             logger=self.log,
+            cat_match_threshold=config.AGENT.cat_match_threshold,
         )
         if config.NO_GPU:
             self.device = torch.device("cpu")
