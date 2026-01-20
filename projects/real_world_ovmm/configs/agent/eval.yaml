@@ -13,10 +13,10 @@ ENVIRONMENT:
   turn_angle: 30.0        # Keep
   frame_height: 720       # Adjusted to standard sensor +
   frame_width: 1280        # Adjusted to standard sensor resolution
-  camera_height: 0.3556     # Keep
-  hfov: 60.0              # Adjusted: Defaulting to a common, less extreme HFOV for real cameras.
-  min_depth: 0.2          # Adjusted: Ignore unreliable very close-range depth data (e.g., 20cm)
-  max_depth: 5.0          # Adjusted: Real-world depth reliability limit
+  camera_height: 0.55     # Keep
+  hfov: 80.0              # Adjusted: Defaulting to a common, less extreme HFOV for real cameras.
+  min_depth: 0.75          # Adjusted: Ignore unreliable very close-range depth data (Realsense range of 0.6m to 6m)
+  max_depth: 5.5          # Adjusted: Real-world depth reliability limit
   num_receptacles: 21
   category_map_file: projects/real_world_ovmm/configs/example_cat_map.json
   use_detic_viz: True     # Keep
@@ -25,7 +25,7 @@ AGENT:
   max_steps: 1000         # Adjusted: Lowered to prevent endless failure loops in deployment
   panorama_start: 1       # Keep
   exploration_strategy: seen_frontier
-  radius: 0.18           # Keep
+  radius: 0.32           # Keep (Scout length is 60 cm )
   fall_wait_steps: 0
   clip_embeddings_file: data/objects/clip_embeddings.pickle
 
@@ -33,7 +33,7 @@ AGENT:
     semantic_categories: rearrange
     num_sem_categories: 5
     map_size_cm: 4800
-    map_resolution: 2        # Increased from 1 cm/cell to 5 cm/cell for SLAM stability.
+    map_resolution: 5        # Increased from 1 cm/cell to 5 cm/cell for SLAM stability.
     vision_range: 100
     global_downscaling: 2
     du_scale: 4
@@ -177,20 +177,20 @@ AGENT:
     place: False
 
   PLANNER:
-    collision_threshold: 0.20
+    collision_threshold: 0.15
     # FMM Stability Fixes: Reduced to prevent obstacle swelling from eating the goal point
-    obs_dilation_selem_radius: 6   
-    goal_dilation_selem_radius: 6  
+    obs_dilation_selem_radius: 8   
+    goal_dilation_selem_radius: 8  
     step_size: 5
     use_dilation_for_stg: False
-    min_obs_dilation_selem_radius: 1
+    min_obs_dilation_selem_radius: 8
     min_goal_distance_cm: 100
     map_downsample_factor: 1
     map_update_frequency: 1
     discrete_actions: True
     verbose: True
-    explored_area_dilation_radius: 10
-    explored_area_erosion_radius: 10
+    explored_area_dilation_radius: 8
+    explored_area_erosion_radius: 8
 
 EVAL_VECTORIZED:
   simulator_gpu_ids: [0]

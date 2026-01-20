@@ -100,6 +100,7 @@ class ScoutNavigationClient(AbstractControlModule):
         # Publish the velocity command and print the debug statement
         print(f"Setting velocity: linear={v:.2f} m/s, angular={w:.2f} rad/s")
         self._ros_client.velocity_pub.publish(msg)
+        rospy.sleep(0.5) 
 
         rospy.loginfo(f"Navigation to {xyt} requested.")
         rospy.loginfo("Note: ScoutNavigationClient does not block. Agent must handle navigation loop.")
