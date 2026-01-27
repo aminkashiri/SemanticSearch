@@ -148,14 +148,14 @@ if __name__ == "__main__":
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
             )
-            logger.debug(
-                f"Agent0 state: {env.habitat_env.sim.agents[0].get_state().position}"
-            )
-            logger.debug(
-                f"Agent1 state: {env.habitat_env.sim.agents[1].get_state().position}"
-            )
+            for i in range(len(agents)):
+                logger.debug(
+                    f"Agent{i} state: {env.habitat_env.sim.agents[i].get_state().position}"
+                )
             env.timestep = agent.get_subtask_timestep() + 1
             observations = env.get_observation()
+            if len(agents) == 1:
+                observations = [observations]
 
             actions = []
             infos = []

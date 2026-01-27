@@ -239,7 +239,6 @@ class GoatAgent(Agent):
 
         self.stuck_counter = 0
         self.reset_vis_dir(scene_id, episode_id, 0)
-        self.last_communication_time = {}
         # self.history_scores = []
 
     def handle_stop(self, action):
@@ -530,44 +529,27 @@ class GoatAgent(Agent):
         if not action is None:
             return action, vis_input
 
-        self.log.info("No reachable goal/frontier.")
-
-        if self.navigate_to_best:
-            self.log.info("Already tried the best match. Stopping")
-            return DiscreteNavigationAction.STOP, {}
-        self.navigate_to_best = True
-        self.log.info("Forcing a match against memory")
-
-        prev_inst_goal_id = self.inst_goal_id
-        self.inst_goal_id = self.matching.search_for_goal(
-            task,
-            True,
-            self.semantic_map.global_pose,
-            score_thresh=0,
-        )
-        if self.inst_goal_id is None or self.inst_goal_id == prev_inst_goal_id:
-            self.log.info("Best match is the same as the previous one. Stopping")
+        if not self.inst_goal_id is None:
+            self.log.info("Couldn't navigate to goal, stopping")
             return DiscreteNavigationAction.STOP, {}
 
-        action, vis_input = self.planner.plan(
-            self.inst_goal_id,
-            task.goal_semantic_id,
-            fallback_to_frontier=False,
-            postfix="_last_shot",
-        )
+        # Note that here, inst_goal_id is None, otherwise we would have stopped
+        self.log.info("No reachable frontiers, forcing a match against memory")
+        self.match_memory = True
+        self._search_for_goal(select_best=True)
 
-        if action is None:
-            self.log.info("Fully explored and no path to our best match. Stopping")
+        if self.inst_goal_id is None:
+            self.log.info("No match found in memory, stopping.")
             return DiscreteNavigationAction.STOP, {}
 
-        self.log.info("Found a path to the last shot goal. Navigating to it.")
-        return action, vis_input
+        return self._get_best_action(**kwargs)
 
     @torch.no_grad()
-    def _search_for_goal(self):
+    def _search_for_goal(self, select_best=False):
         """
         Searches for goal in current observation, and also in memory if it is the first timestep of the task.
         Set value for self.inst_goal_id.
+        select_best forces matching to the best object, even if it doesn't pass matching threshold
         """
         #! myTODO: Put %10 here, so that we again check with obs every 10 steps, so we might get better matches. Can be more intelligent.
         if not self.inst_goal_id is None and self.get_subtask_timestep() % 10 != 0:
@@ -579,6 +561,7 @@ class GoatAgent(Agent):
                 self.tasks[self.current_task_idx],
                 self.match_memory,
                 self.semantic_map.global_pose,
+                score_thresh=0 if select_best else None
             )
             if not inst_goal_id is None:
                 # Else, we should not replace, maybe we have previously seen a goal and moving toward it.
