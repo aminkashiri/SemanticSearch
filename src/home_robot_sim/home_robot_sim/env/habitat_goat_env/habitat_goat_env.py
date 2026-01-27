@@ -179,6 +179,7 @@ class HabitatGoatEnv(HabitatEnv):
             habitat_semantic[habitat_semantic >= len(instance_id_to_category_id)] = 0 # 0 is unknown
             obs.semantic = instance_id_to_category_id[habitat_semantic]
             obs.task_observations["instance_frame"] = habitat_semantic
+            obs.task_observations["instance_scores"] = np.ones(np.unique(habitat_semantic).shape[0])
             # self.visualize_semantic_with_labels(
             #     semantic_array=obs.semantic + 10,
             #     palette=self.semantic_category_mapping.map_color_palette,
@@ -284,7 +285,7 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
         elif self.task_type == "MultiAgentGoat-v1":
             for agent_id, task_idx in zip(stopped_agents, stopped_tasks):
                 metrics = ep_metrics.copy()
-                if not task_idx is None and all_metrics.get(task_idx) is None: # Only considers the first agent that stops for each task #! myTODO: Maybe success should be considered if any of the agents stop
+                if not task_idx is None and (all_metrics.get(task_idx) is None or all_metrics[task_idx]["multiagent_goat_success"] == 0):
                     metrics["multiagent_goat_success"] = metrics["multiagent_goat_success"][task_idx]
                     metrics["multiagent_goat_distance_to_sub-goal"] = metrics["multiagent_goat_distance_to_sub-goal"][task_idx][agent_id]
                     all_metrics[task_idx] = metrics
@@ -298,6 +299,12 @@ class MultiAgentHabitatGoatEnv(HabitatGoatEnv):
         else:
             raise Exception(f"{self.task_type} Not implemented")
 
+    def init_subepisode_metrics(self):
+        all_subtask_metrics = {}
+        if self.task_type == "MultiAgentGoat-v1":
+            for i in range(len(self.episode.tasks)):
+                all_subtask_metrics[i] = {"multiagent_goat_success": 0, "multiagent_goat_distance_to_sub-goal": 0.0, "multiagent_goat_spl": 0.0} #!myTODO:  dist to sub goal is wrong
+        return all_subtask_metrics
 
     def reset_vis_dir(self):
         if self.visualization_level > 0:

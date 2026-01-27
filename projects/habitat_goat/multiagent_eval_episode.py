@@ -137,7 +137,7 @@ if __name__ == "__main__":
             agent.reset(env.scene_id, env.episode_id)
 
         ep_step = 0
-        all_subtask_metrics = {}
+        all_subtask_metrics = env.init_subepisode_metrics()
         pbar = tqdm(
             total=config.AGENT.max_steps, file=sys.__stdout__, dynamic_ncols=True
         )
@@ -149,10 +149,10 @@ if __name__ == "__main__":
                 f"-------------------- Episode step {ep_step} --------------------"
             )
             logger.debug(
-                f"Agent state: {env.habitat_env.sim.agents[0].get_state().position}"
+                f"Agent0 state: {env.habitat_env.sim.agents[0].get_state().position}"
             )
             logger.debug(
-                f"Agent state: {env.habitat_env.sim.agents[1].get_state().position}"
+                f"Agent1 state: {env.habitat_env.sim.agents[1].get_state().position}"
             )
             env.timestep = agent.get_subtask_timestep() + 1
             observations = env.get_observation()

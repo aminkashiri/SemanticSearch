@@ -188,8 +188,8 @@ class Visualizer:
         rgb_frame: np.ndarray,
         caption: str,
         obstacle_map: np.ndarray,
-        global_pose: np.ndarray,
-        lmb: np.ndarray,
+        robot_loc: np.ndarray,
+        robot_orientation: float,
         explored_map: np.ndarray,
         semantic_map_1D: Tuple[np.ndarray, np.ndarray],
         been_close_map: np.ndarray,
@@ -207,8 +207,6 @@ class Visualizer:
         goal_image: np.ndarray = None,
         is_local=True,
         metrics = None, #TODO
-        blacklisted_targets_map: np.ndarray = None,
-        frontier_map: np.ndarray = None,
         depth_frame: np.ndarray = None,
         **kwargs,
     ):
@@ -231,8 +229,8 @@ class Visualizer:
         semantic_map, no_category_mask = semantic_map_1D
         main_frame[V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X2] = (
             self.make_sem_map(
-                global_pose,
-                lmb,
+                robot_loc,
+                robot_orientation,
                 obstacle_map,
                 explored_map,
                 semantic_map,
@@ -438,8 +436,8 @@ class Visualizer:
 
     def make_sem_map(
         self,
-        global_pose: np.ndarray,
-        lmb: np.ndarray,
+        robot_loc: np.ndarray,
+        robot_orientation: float,
         obstacle_map: np.ndarray,
         explored_map: np.ndarray,
         semantic_map: np.ndarray,
@@ -455,12 +453,6 @@ class Visualizer:
     ) -> np.ndarray:
         if obstacle_map is None:
             return None
-        curr_x, curr_y, curr_o = global_pose.cpu().float().numpy()
-        if is_local:
-            gy1, gy2, gx1, gx2 = lmb
-            gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
-        else:
-            gy1, gy2, gx1, gx2 = 0, obstacle_map.shape[0], 0, obstacle_map.shape[1]
 
         semantic_map += PI.SEM_START
 
@@ -522,20 +514,11 @@ class Visualizer:
         #     semantic_map_vis[blacklisted_targets_map] + color
         # ) / 2
 
-        # Agent arrow
         pos = (
-            (curr_x * 100.0 / self.map_resolution - gx1) * 480 / obstacle_map.shape[0],
-            (obstacle_map.shape[1] - curr_y * 100.0 / self.map_resolution + gy1)
-            * 480
-            / obstacle_map.shape[1],
-            np.deg2rad(-curr_o),
+            robot_loc[1],
+            robot_loc[0],
+            np.deg2rad(-robot_orientation),
         )
-        # pos = (
-        #     pos[0] * V.TOP_DOWN_W / semantic_map.shape[1],
-        #     pos[1] * V.HEIGHT / semantic_map.shape[0],
-        #     pos[2],
-        # )
-        # agent_arrow = vu.get_contour_points(pos, origin=(V.TOP_DOWN_X1, V.Y1))
         agent_arrow = vu.get_contour_points(pos, origin=(0, 0))
         color = self.semantic_category_mapping.map_color_palette[9:12][::-1]
         cv2.drawContours(semantic_map_vis, [agent_arrow], 0, color, -1)

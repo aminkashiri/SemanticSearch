@@ -344,8 +344,8 @@ class GoatAgent(Agent):
             # "frontier_map": self.semantic_map.get_frontier_map(is_local),
             "been_close_map": self.semantic_map.get_been_close_map(is_local),
             "visited_map": self.semantic_map.get_visited_map(is_local),
-            "global_pose": self.semantic_map.global_pose,
-            "lmb": self.semantic_map.lmb,
+            "robot_loc": self.semantic_map.get_loc(is_local),
+            "robot_orientation": self.semantic_map.global_pose.cpu()[2],
             "instance_memory": self.instance_memory,
             **vis_inputs,
         }
@@ -504,9 +504,8 @@ class GoatAgent(Agent):
                 assert 0 not in unique_ids, "Expected no background (0) in unique_ids"
             
 
-            inst_scores = None
-            if not self.ground_truth_semantics:
-                inst_scores = np.concatenate(([0],obs.task_observations["instance_scores"]))[unique_ids][1:]
+            # For ground truth, scores are all 1.0
+            inst_scores = np.concatenate(([0],obs.task_observations["instance_scores"]))[unique_ids][1:]
 
             obs_preprocessed = torch.cat(
                 [obs_preprocessed, instance_frame_onehot], dim=-1

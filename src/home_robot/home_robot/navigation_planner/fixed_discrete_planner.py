@@ -313,7 +313,7 @@ class DiscretePlanner:
     def get_traversible(self, is_local, dilation_raduis):
         obstacles = self.semantic_map.get_obstacle_map(is_local)
         dilated_obstacles = cv2.dilate(obstacles.astype(np.uint8), skimage.morphology.disk(dilation_raduis), iterations=1).astype(bool)
-        dilated_obstacles[self.semantic_map.get_visited_map(is_local) == 1] = 0
+        dilated_obstacles[self.semantic_map.get_visited_map(is_local, full=True) == 1] = 0
 
         if is_local:
             gx1, gx2, gy1, gy2 = self.semantic_map.lmb

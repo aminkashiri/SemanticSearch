@@ -880,24 +880,16 @@ class Categorical2DSemanticMapModule(nn.Module):
                 MC.NON_SEM_CHANNELS + self.num_sem_categories :
             ]
 
-        # Reset current location
-        current_map[MC.CURRENT_LOCATION, :, :].fill_(0.0)
         curr_loc = current_pose[:2].flip(0)
-        curr_loc = (curr_loc * 100.0 / self.xy_resolution).int()
+        curr_loc = (curr_loc * 100.0 / self.xy_resolution).int().tolist()
 
         prev_loc = prev_pose[:2].flip(0)
-        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int()
+        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int().tolist()
 
-        y, x = curr_loc
-        current_map[
-            MC.CURRENT_LOCATION,
-            y - 2 : y + 3,
-            x - 2 : x + 3,
-        ].fill_(1.0)
-
-        current_map[MC.VISITED_MAP] = self._get_update_visited_map(
-            curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP]
+        current_map[MC.AGENT_VISITED_MAP] = self._get_update_visited_map(
+            curr_loc, prev_loc, current_map[MC.AGENT_VISITED_MAP]
         )
+        current_map[MC.VISITED_MAP] = (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
 
         # 1
         # self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
@@ -907,7 +899,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         # 2
         traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
-        visited_np = (current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1) & (traversible_np == 1)
+        visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
         traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
         # traversible_ma[curr_loc[0], curr_loc[1]] = 0
         traversible_ma[visited_np == 1] = 0
@@ -1171,12 +1163,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         global_map: Tensor,
     ):
         # These channels should not be changed with other agents info
-        #! myTODO: Think about GAZE_EXPLORED_MAP and VISITED_MAP. IMPORTANT
         protected_channels = torch.tensor(
             [
-                MC.CURRENT_LOCATION,
-                MC.VISITED_MAP,
-                # MC.BEEN_CLOSE_MAP,
+                MC.AGENT_VISITED_MAP,
                 MC.BLACKLISTED_TARGETS_MAP,
             ],
             device=global_map.device,
