@@ -1,9 +1,9 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: goat_det_yolo_5_end # Should redo the one with yolo. Don't forget det thresh
+EXP_NAME: multi_goat_det_new_2agents
 
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
-SEQ: 1                    # Seq 0 doesn't work with single agents. 
+SEQ: 0                    # Seq 0 doesn't work with single agents. 
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
 DATASET: goat
 VISUALIZATION_LEVEL: 0    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
@@ -44,7 +44,7 @@ AGENT:
 
   PLANNER:
     collision_threshold: 0.10       # forward move distance under which we consider there's a collision (in meters)
-    min_obs_dilation_selem_radius: 1    # radius (in cells) of obstacle dilation structuring element
+    min_obs_dilation_selem_radius: 2    # radius (in cells) of obstacle dilation structuring element
     obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 
