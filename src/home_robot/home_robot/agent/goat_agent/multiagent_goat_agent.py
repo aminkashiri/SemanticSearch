@@ -85,8 +85,7 @@ class MultiAgentGoatAgent(GoatAgent):
             )
             if action is None:
                 self.tasks_failed[self.active_task] = True
-                self.active_task = None
-                return self._get_best_action(neighbors=neighbors)
+                return (self.active_task, DiscreteNavigationAction.STOP), vis_input
             else:
                 return (self.active_task, action), vis_input
 
