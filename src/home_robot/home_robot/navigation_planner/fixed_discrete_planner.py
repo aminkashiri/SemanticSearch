@@ -84,6 +84,7 @@ class DiscretePlanner:
         frontier_metric: str = "distance",
         agent_id=None,
         ground_truth_semantics=None,
+        task_type=None,
     ):
         """
         Similar to old DiscretePlanner, but with changes to:
@@ -135,6 +136,7 @@ class DiscretePlanner:
         self.prefix = ""
         self.visualization_level = visualization_level
         self.ground_truth_semantics = ground_truth_semantics
+        self.stop_distance = 1 if "Goat" in task_type else 0.5
 
 
     def reset(self):

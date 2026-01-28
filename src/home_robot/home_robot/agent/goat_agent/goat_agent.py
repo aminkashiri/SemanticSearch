@@ -168,6 +168,7 @@ class GoatAgent(Agent):
             frontier_metric=config.AGENT.frontier_metric,
             agent_id=self.agent_id,
             ground_truth_semantics=config.GROUND_TRUTH_SEMANTICS,
+            task_type=self.task_type
         )
 
         self.subtask_timesteps = None
