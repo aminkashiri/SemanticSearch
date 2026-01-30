@@ -38,17 +38,14 @@ class ScoutAgent(GoatAgent):
         print(f"[SCOUT AGENT] Reset for scene: {scene_id}, episode: {episode_id}")
 
     def act(self, other_agents=None) -> Tuple[DiscreteNavigationAction, Dict[str, Any], bool]:
-        """
-        Act using GoatAgent's navigation.
-        Note: GoatAgent.act() does NOT take obs as parameter - state is already updated via update_state()
-        Returns: (action, info, stuck)
-        """
-        # Get action from GoatAgent (no obs parameter!)
+        # DEBUG: Check map state
+        if hasattr(self, 'semantic_map') and hasattr(self.semantic_map, 'local_map'):
+            local_map = self.semantic_map.local_map
+            if local_map is not None:
+                # Channel 0 is usually obstacles, Channel 1 is explored
+                obs_channel = local_map[0] if len(local_map.shape) == 3 else local_map
+                print(f"🔧 Obstacle map: min={obs_channel.min():.2f}, max={obs_channel.max():.2f}, mean={obs_channel.mean():.2f}")
+                print(f"🔧 Obstacle pixels (>0.5): {(obs_channel > 0.5).sum()}")
+        
         action, info, stuck = super().act(other_agents=other_agents)
-        
-        if self.verbose:
-            goal_found = info.get('found_goal', False) or getattr(self, 'inst_goal_found', False)
-            print(f"[SCOUT AGENT] Step {self.get_subtask_timestep()}: "
-                  f"Action={action}, GoalFound={goal_found}, Stuck={stuck}")
-        
         return action, info, stuck

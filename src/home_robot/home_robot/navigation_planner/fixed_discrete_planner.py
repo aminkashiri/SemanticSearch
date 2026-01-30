@@ -1024,7 +1024,14 @@ class DiscretePlanner:
         labeled_map, num_features = label(frontier_map, structure=structure)
         frontiers = [np.argwhere(labeled_map == i) for i in range(1, num_features + 1)]
 
-        sem_weights = CO_LOCATION_WEIGHTS[goal_category]
+        if goal_category < len(CO_LOCATION_WEIGHTS):
+            sem_weights = CO_LOCATION_WEIGHTS[goal_category]
+        else:
+            # Fallback: use uniform weights if category not in co-location table
+            print(f"[PLANNER WARNING] goal_category {goal_category} out of bounds "
+                f"(CO_LOCATION_WEIGHTS size: {len(CO_LOCATION_WEIGHTS)}). Using uniform weights.")
+            sem_weights = np.ones(len(CO_LOCATION_WEIGHTS)) / len(CO_LOCATION_WEIGHTS)
+        
         sem_layers = self.semantic_map.get_semantic_map(is_local)
         r = 40
 

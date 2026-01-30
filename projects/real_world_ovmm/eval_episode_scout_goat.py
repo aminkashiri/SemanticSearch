@@ -189,7 +189,7 @@ def compute_cumulative_stats(results: dict, results_dir: Path):
 @click.command()
 @click.option(
     "--config",
-    default="projects/real_world_ovmm/configs/agent/goat_eval.yaml",
+    default="projects/real_world_ovmm/configs/agent/eval.yaml",
     help="Path to configuration YAML file",
 )
 @click.option(
@@ -323,6 +323,7 @@ def main(
         task_start_step = 0
         
         # Episode loop
+        # Episode loop
         while not env.episode_over and not rospy.is_shutdown():
             step_start_time = time.time()
             
@@ -336,15 +337,41 @@ def main(
             obs = env.get_observation()
             
             # CRITICAL: Update agent state with observations
-            if cfg.get('VERBOSE', False):
-                print(f"\n[EVAL] Calling agent.update_state()...")
             agent.update_state(obs)
             
             # Get action from agent
-            if cfg.get('VERBOSE', False):
-                print(f"[EVAL] Calling agent.act()...")
             action, info, stuck = agent.act()
+            # After: action, info, stuck = agent.act()
+
             
+            # =========================================================
+            # GOAL DETECTION FEEDBACK
+            # =========================================================
+            goal_detected = False
+            inst_goal_id = None
+            
+            # Check various goal detection flags
+            if info:
+                goal_detected = info.get('found_goal', False) or info.get('inst_goal_found', False)
+                inst_goal_id = info.get('inst_goal_id')
+            
+            # Also check agent attributes directly
+            if hasattr(agent, 'inst_goal_found') and agent.inst_goal_found:
+                goal_detected = True
+            if hasattr(agent, 'inst_goal_id') and agent.inst_goal_id is not None:
+                inst_goal_id = agent.inst_goal_id
+            
+            # Check if in panorama phase
+            is_panorama = False
+            if hasattr(agent, 'timesteps') and hasattr(agent, 'panorama_start_steps'):
+                current_step = agent.timesteps[0] if hasattr(agent.timesteps, '__getitem__') else agent.timesteps
+                is_panorama = current_step <= getattr(agent, 'panorama_start_steps', 0)
+            elif hasattr(agent, 'total_timesteps'):
+                # GoatAgent uses total_timesteps
+                panorama_steps = cfg.AGENT.get('panorama_start', 12)
+                is_panorama = agent.total_timesteps <= panorama_steps
+            
+            # =========================================================
             # Handle stuck/timeout
             if stuck:
                 print("\n⚠️  Agent stuck or task timeout - forcing STOP")
@@ -355,21 +382,67 @@ def main(
             task_type = current_task["type"].upper()
             task_desc = current_task.get("category", current_task.get("description", ""))
             
-            print(f"\nStep {episode_timesteps + 1} | Task {env.current_task_idx + 1}/{len(obs.task_observations['tasks'])}")
+            # =========================================================
+            # ENHANCED LOGGING
+            # =========================================================
+            print(f"\n{'='*60}")
+            print(f"  🔎 Goal semantic_id={current_task.get('semantic_id')} | inst_goal_found={getattr(agent, 'inst_goal_found', '?')} | inst_goal_id={getattr(agent, 'inst_goal_id', '?')}")
+            print(f"Step {episode_timesteps + 1} | Task {env.current_task_idx + 1}/{len(obs.task_observations['tasks'])}")
             print(f"  Type: {task_type} | Target: {task_desc}")
             print(f"  Action: {action.name}")
-            if info and 'inst_goal_id' in info and info['inst_goal_id'] is not None:
-                print(f"  🎯 Goal instance detected: {info['inst_goal_id']}")
+
+            
+            # Goal detection status
+            if goal_detected:
+                print(f"  🎯 GOAL DETECTED! Instance ID: {inst_goal_id}")
+            else:
+                print(f"  🔍 Goal not yet detected")
+            
+            # Panorama status
+            if is_panorama:
+                print(f"  📷 Panorama scan in progress...")
+            
+            # Show semantic detections from this frame
+            if hasattr(obs, 'semantic') and obs.semantic is not None:
+                unique_ids = np.unique(obs.semantic)
+                detected_categories = []
+                for sem_id in unique_ids:
+                    if sem_id > 0:  # Skip background
+                        # Try to get category name
+                        cat_name = f"id_{sem_id}"
+                        if hasattr(env, 'semantic_category_mapping'):
+                            cat_name = env.semantic_category_mapping.get_category_name(int(sem_id))
+                        pixel_count = (obs.semantic == sem_id).sum()
+                        if pixel_count > 100:  # Only show significant detections
+                            detected_categories.append(f"{cat_name}({pixel_count}px)")
+                
+                if detected_categories:
+                    print(f"  👁️  Detected: {', '.join(detected_categories[:5])}")  # Show top 5
+                else:
+                    print(f"  👁️  No objects detected in frame")
+            
+            # Show exploration info if available
+            if info:
+                if 'closest_goal_pt' in info and info['closest_goal_pt'] is not None:
+                    print(f"  📍 Goal point: {info['closest_goal_pt']}")
+                if 'short_term_goal' in info and info['short_term_goal'] is not None:
+                    print(f"  🎯 Short-term goal: {info['short_term_goal']}")
+            
+            print(f"{'='*60}")
             
             # Execute action
-            if cfg.get('VERBOSE', False):
-                print(f"[EVAL] Calling env.apply_action()...")
             done = env.apply_action(action, info=info, prev_obs=obs)
             
             episode_timesteps += 1
             
             # Task completed
             if action == DiscreteNavigationAction.STOP:
+                print(f"  ⚠️  STOP triggered!")
+                print(f"      - Goal detected: {goal_detected}")
+                print(f"      - Stuck: {stuck}")
+                print(f"      - Total timesteps: {episode_timesteps}")
+                if hasattr(agent, 'sub_task_timesteps'):
+                    print(f"      - Sub-task timesteps: {agent.sub_task_timesteps}")
                 task_timesteps = agent.sub_task_timesteps[env.current_task_idx - 1]
                 task_metrics = {
                     "task_type": current_task["type"],
@@ -446,6 +519,14 @@ def main(
     print("=" * 80)
 
 
+def cleanup_ros():
+    """Gracefully shutdown ROS to prevent 'closed topic' errors."""
+    try:
+        # Give time for final messages
+        rospy.sleep(0.5)
+    except:
+        pass
+
 if __name__ == "__main__":
     try:
         main()
@@ -455,3 +536,6 @@ if __name__ == "__main__":
         print(f"\n\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        cleanup_ros()
+        print("\n✅ ROS shutdown complete. Exiting.")

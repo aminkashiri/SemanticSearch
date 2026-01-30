@@ -346,14 +346,14 @@ class ScoutGoatAgent(Agent):
     # ========================================================================
     
     def _preprocess_obs(self, obs: Observations):
-        """From GoatAgent._preprocess_obs - EXACT COPY with verbose added"""
         if self.verbose:
-            print(f"[PREPROCESS] RGB:{obs.rgb.shape}, Depth:{obs.depth.shape}, Sem:{obs.semantic.shape}")
-        
-        # REMOVED: GT semantics check (always use Detic in real world)
+            print(f"[PREPROCESS] Input depth: min={obs.depth.min():.3f}, max={obs.depth.max():.3f}")
         
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         depth = torch.from_numpy(obs.depth).unsqueeze(-1).to(self.device) * 100.0  # m to cm
+        
+        if self.verbose:
+            print(f"[PREPROCESS] After *100 (cm): min={depth.min():.1f}, max={depth.max():.1f}")
         
         # One-hot encode semantics (EXACT from GoatAgent)
         semantic = torch.eye(self.num_sem_categories + 1, device=self.device)[
@@ -414,15 +414,20 @@ class ScoutGoatAgent(Agent):
             self.semantic_map.lmb,
             self.semantic_map.origins,
         )
-        
         if self.verbose:
-            print(f"[UPDATE_MAPS] AFTER: global={self.semantic_map.global_map.shape}")
-            # Show category pixels in GLOBAL map
-            for cat_id in range(self.num_sem_categories):
-                pixels = (self.semantic_map.global_map[0, 4+cat_id] > 0).sum().item()
-                if pixels > 0:
-                    name = self.semantic_category_mapping.get_category_name(cat_id)
-                    print(f"[UPDATE_MAPS]   Cat {cat_id} ({name}): {pixels} px")
+            local_map = self.semantic_map.local_map[0]  # Remove batch dim
+            print(f"[UPDATE_MAPS] Local map shape: {local_map.shape}")
+            print(f"[UPDATE_MAPS] Channel 0 (obstacles): min={local_map[0].min():.3f}, max={local_map[0].max():.3f}, mean={local_map[0].mean():.3f}")
+            print(f"[UPDATE_MAPS] Channel 1 (explored): min={local_map[1].min():.3f}, max={local_map[1].max():.3f}, mean={local_map[1].mean():.3f}")
+            print(f"[UPDATE_MAPS] Obstacle pixels (>0.5): {(local_map[0] > 0.5).sum().item()}")
+            print(f"[UPDATE_MAPS] Explored pixels (>0.5): {(local_map[1] > 0.5).sum().item()}")
+            print(f"[UPDATE_MAPS] Free space (explored & !obstacle): {((local_map[1] > 0.5) & (local_map[0] < 0.5)).sum().item()}")
+        # DEBUG: Check map channels
+        if self.verbose:
+            local_map = self.semantic_map.local_map[0]  # Remove batch dim -> [109, 480, 480]
+            print(f"[UPDATE_MAPS] Local map shape: {local_map.shape}")
+            print(f"[UPDATE_MAPS] Channel 0 (obstacles): min={local_map[0].min():.3f}, max={local_map[0].max():.3f}, mean={local_map[0].mean():.3f}")
+            print(f"[UPDATE_MAPS] Channel 1 (explored): min={local_map[1].min():.3f}, max={local_map[1].max():.3f}, mean={local_map[1].mean():.3f}")
     
     # ========================================================================
     # Goal Search (from GoatAgent)
