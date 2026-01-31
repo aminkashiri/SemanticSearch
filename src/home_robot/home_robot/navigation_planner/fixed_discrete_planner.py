@@ -167,6 +167,7 @@ class DiscretePlanner:
         self.episode_panorama_start_steps = self.panorama_start_steps
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self.moved_forward = False
+        self.dd = None 
 
     def set_vis_dir(self, scene_id: str, episode_id: str):
         self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
@@ -293,6 +294,19 @@ class DiscretePlanner:
             viewpoint_orientation = best_viewpoint.pose[2]
         angle_agent = pu.normalize_angle(self.curr_global_pose[2])
 
+        # === ADD THIS BLOCK ===
+        # If short-term goal is very close to current location, just move forward
+        # This prevents spinning in place when we're essentially at the goal
+        if stop == False and short_term_goal is not None:
+            stg_x, stg_y = short_term_goal
+            dist_to_stg = math.sqrt(
+                (stg_x - location[0])**2 + (stg_y - location[1])**2
+            )
+            # If STG is within 3 cells (15cm), just move forward
+            if dist_to_stg < 6:
+                self.log.info(f"STG very close ({dist_to_stg:.1f} cells), moving forward")
+                return DiscreteNavigationAction.MOVE_FORWARD
+        # === END ADDED BLOCK ===
         # stop == True, orient towards goal first, then actually stop.
         if stop == False:
             stg_x, stg_y = short_term_goal
@@ -355,7 +369,14 @@ class DiscretePlanner:
             collision_map = self.collision_map == 1
         dilated_obstacles = np.logical_or(dilated_obstacles, collision_map)
         robot_loc = self.semantic_map.get_loc(is_local)
-        dilated_obstacles[robot_loc] = 0
+        y, x = robot_loc
+        H, W = dilated_obstacles.shape
+
+        # Clear area around robot (it's standing there, so must be traversible)
+        clear_radius = 4  # cells = 20cm at 5cm resolution
+        y_min, y_max = max(0, y - clear_radius), min(H, y + clear_radius + 1)
+        x_min, x_max = max(0, x - clear_radius), min(W, x + clear_radius + 1)
+        dilated_obstacles[y_min:y_max, x_min:x_max] = 0
 
         traversible = 1 - dilated_obstacles
         return traversible
@@ -599,7 +620,7 @@ class DiscretePlanner:
             view_pose: Global loc that we can see the goal instance.
             method: "line_to_com" or "line_to_closest" or "closest_to_viewpoint"
         """
-        if np.sum(goal_instance_map) < 50 and not try_best:
+        if np.sum(goal_instance_map) < 25 and not try_best:
             self.log.info(f"Goal instance map too small ({np.sum(goal_instance_map)} cells). Not planning to it.")
             return None
         viewpoint_location = (
@@ -756,7 +777,7 @@ class DiscretePlanner:
 
         # You must move at least 5 cm when doing forward actions
         # Otherwise we assume there has been a collision
-        if abs(x1 - x2) < 0.05 and abs(y1 - y2) < 0.05:
+        if abs(x1 - x2) < 0.08 and abs(y1 - y2) < 0.08:
             self.col_width += 2
             # if self.col_width == 7:
             #     length = 4

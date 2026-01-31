@@ -392,11 +392,19 @@ class ScoutGoatAgent(Agent):
         return obs_preprocessed, pose_delta
     
     def _update_maps(self, obs: torch.Tensor, pose_delta: torch.Tensor):
-        """From GoatAgent._update_maps - EXACT COPY with verbose added"""
-        if self.verbose:
-            print(f"[UPDATE_MAPS] BEFORE: global={self.semantic_map.global_map.shape}")
+        """From GoatAgent._update_maps"""
         
-        # EXACT from GoatAgent
+        # DEBUG: Input to module
+        if self.verbose:
+            print(f"\n[UPDATE_MAPS] ========== DEBUG ==========")
+            print(f"[UPDATE_MAPS] obs shape: {obs.shape}")
+            print(f"[UPDATE_MAPS] obs depth channel (idx 3): min={obs[3].min():.1f}, max={obs[3].max():.1f}, mean={obs[3].mean():.1f}")
+            print(f"[UPDATE_MAPS] obs depth non-zero pixels: {(obs[3] > 0).sum().item()} / {obs[3].numel()}")
+            print(f"[UPDATE_MAPS] obs depth valid (75-550cm): {((obs[3] > 75) & (obs[3] < 550)).sum().item()}")
+            print(f"[UPDATE_MAPS] pose_delta: {pose_delta.cpu().numpy()}")
+            print(f"[UPDATE_MAPS] init_local_map shape: {self.semantic_map.local_map.shape}")
+            print(f"[UPDATE_MAPS] init_global_map shape: {self.semantic_map.global_map.shape}")
+        
         (
             self.semantic_map.local_map,
             self.semantic_map.global_map,
@@ -414,21 +422,24 @@ class ScoutGoatAgent(Agent):
             self.semantic_map.lmb,
             self.semantic_map.origins,
         )
+        
+        # DEBUG: Output from module
         if self.verbose:
-            local_map = self.semantic_map.local_map[0]  # Remove batch dim
-            print(f"[UPDATE_MAPS] Local map shape: {local_map.shape}")
-            print(f"[UPDATE_MAPS] Channel 0 (obstacles): min={local_map[0].min():.3f}, max={local_map[0].max():.3f}, mean={local_map[0].mean():.3f}")
-            print(f"[UPDATE_MAPS] Channel 1 (explored): min={local_map[1].min():.3f}, max={local_map[1].max():.3f}, mean={local_map[1].mean():.3f}")
-            print(f"[UPDATE_MAPS] Obstacle pixels (>0.5): {(local_map[0] > 0.5).sum().item()}")
-            print(f"[UPDATE_MAPS] Explored pixels (>0.5): {(local_map[1] > 0.5).sum().item()}")
-            print(f"[UPDATE_MAPS] Free space (explored & !obstacle): {((local_map[1] > 0.5) & (local_map[0] < 0.5)).sum().item()}")
-        # DEBUG: Check map channels
-        if self.verbose:
-            local_map = self.semantic_map.local_map[0]  # Remove batch dim -> [109, 480, 480]
-            print(f"[UPDATE_MAPS] Local map shape: {local_map.shape}")
-            print(f"[UPDATE_MAPS] Channel 0 (obstacles): min={local_map[0].min():.3f}, max={local_map[0].max():.3f}, mean={local_map[0].mean():.3f}")
-            print(f"[UPDATE_MAPS] Channel 1 (explored): min={local_map[1].min():.3f}, max={local_map[1].max():.3f}, mean={local_map[1].mean():.3f}")
-    
+            local_map = self.semantic_map.local_map
+            global_map = self.semantic_map.global_map
+            print(f"[UPDATE_MAPS] --- OUTPUT ---")
+            print(f"[UPDATE_MAPS] local_map shape: {local_map.shape}")
+            print(f"[UPDATE_MAPS] global_map shape: {global_map.shape}")
+            print(f"[UPDATE_MAPS] local_map[0] (obstacles): sum={local_map[0].sum():.2f}, max={local_map[0].max():.3f}")
+            print(f"[UPDATE_MAPS] local_map[1] (explored): sum={local_map[1].sum():.2f}, max={local_map[1].max():.3f}")
+            print(f"[UPDATE_MAPS] global_map[0] (obstacles): sum={global_map[0].sum():.2f}, max={global_map[0].max():.3f}")
+            print(f"[UPDATE_MAPS] global_map[1] (explored): sum={global_map[1].sum():.2f}, max={global_map[1].max():.3f}")
+            print(f"[UPDATE_MAPS] local_pose: {self.semantic_map.local_pose}")
+            print(f"[UPDATE_MAPS] global_pose: {self.semantic_map.global_pose}")
+            print(f"[UPDATE_MAPS] lmb: {self.semantic_map.lmb}")
+            print(f"[UPDATE_MAPS] origins: {self.semantic_map.origins}")
+            print(f"[UPDATE_MAPS] ========== END DEBUG ==========\n")
+        
     # ========================================================================
     # Goal Search (from GoatAgent)
     # ========================================================================

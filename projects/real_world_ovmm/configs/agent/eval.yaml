@@ -1,23 +1,20 @@
 # =============================================================================
-# Scout GOAT Evaluation Config - Real World
-# Merged from goat_sim (hardware params) + goat_fixed (GoatAgent params)
+# Scout GOAT - Office Navigation Config (No Stairs)
+# Hardware constraints: forward=0.25m, turn=30°, HFOV=80°
 # =============================================================================
 
 NO_GPU: 0
 NUM_ENVIRONMENTS: 1
 DUMP_LOCATION: datadump
-EXP_NAME: scout_goat_real_world
+EXP_NAME: scout_office_nav
 VISUALIZE: 1
 PRINT_IMAGES: 1
 GROUND_TRUTH_SEMANTICS: 0
 seed: 0
-VERBOSE: True  # Set to True for detailed debugging
+VERBOSE: False
 
-# =============================================================================
-# EVAL_SETTINGS - Required by eval_episode_scout.py
-# =============================================================================
 EVAL_SETTINGS:
-  control_frequency: 0.5       # Hz (0.5 = 2 seconds per step)
+  control_frequency: 0.5
   wait_for_action: True
   reset_nav: False
   episode_timeout_minutes: 15
@@ -26,73 +23,68 @@ EVAL_SETTINGS:
   save_semantic_maps: True
   log_verbose: False
 
-# =============================================================================
-# ENVIRONMENT - From goat_sim (your hardware-calibrated values)
-# =============================================================================
 ENVIRONMENT:
-  forward: 0.25                # Forward step distance (meters)
-  turn_angle: 30.0             # Turn angle (degrees)
-  frame_height: 720            # From goat_sim - your camera resolution
-  frame_width: 1280            # From goat_sim - your camera resolution
-  camera_height: 0.55          # From goat_sim - Scout camera height
-  hfov: 80.0                   # From goat_sim - your camera HFOV
-  min_depth: 0.75              # From goat_sim - Realsense min reliable depth
-  max_depth: 5.5               # From goat_sim - Realsense max reliable depth
+  forward: 0.25                # FIXED - Scout hardware
+  turn_angle: 30.0             # FIXED - Scout hardware  
+  frame_height: 720
+  frame_width: 1280
+  camera_height: 0.55
+  hfov: 80.0                   # FIXED - Realsense D435
+  min_depth: 0.20
+  max_depth: 5.0               # REDUCED: Office depths rarely exceed 5m
   category_map_file: projects/real_world_ovmm/configs/example_cat_map.json
   use_detic_viz: True
   max_num_sub_task_episodes: 1
   evaluate_instance_tracking: False
 
-# =============================================================================
-# AGENT - Merged settings
-# =============================================================================
 AGENT:
   max_steps: 500
-  panorama_start: 0               # DISABLED panorama - start exploring immediately
+  panorama_start: 1
   exploration_strategy: frontier
   frontier_metric: distance
   exploration_type: raycast
-  radius: 0.30                    # Scout robot radius (~30cm for safety margin)
+  radius: 0.30
   fall_wait_steps: 0
 
-  # Communication settings (for multi-agent, can keep defaults)
   COMMUNICATION:
     radius: 500
 
-  # ---------------------------------------------------------------------------
-  # SEMANTIC_MAP - Critical for GoatAgent
-  # ---------------------------------------------------------------------------
   SEMANTIC_MAP:
     semantic_categories: dataset
-    # 128 objects (0-127) + 21 receptacles (0-20) = 149 total
-    # But IDs overlap, so max ID is 127. Add 1 for 'unknown' = 128+1 = 129
-    # Will be overridden dynamically by environment anyway
     num_sem_categories: 129
-    map_size_cm: 4800                 # From goat_sim
-    map_resolution: 5                 # From goat_sim - 5cm/cell
-    vision_range: 100
+    map_size_cm: 4800
+    map_resolution: 5            # 5cm/cell
+    vision_range: 100            # 100 cells = 5m vision range
     global_downscaling: 2
     du_scale: 4
-    cat_pred_threshold: 5.0
-    exp_pred_threshold: 1.0
-    map_pred_threshold: 1.0           # From goat_fixed
-    explored_radius: 10
-    been_close_to_radius: 200
-    target_blacklisting_radius: 100
-    min_obs_height_cm: 40             # From goat_fixed (was 150 in goat_sim - too high!)
+    
+    # === TUNED FOR OFFICE ===
+    cat_pred_threshold: 4.0      # REDUCED from 5.0: Detect objects with fewer points
+    exp_pred_threshold: 1.0      # Keep default
+    map_pred_threshold: 2.0      # INCREASED from 1.0: Need more points to mark obstacle
+                                 # Helps reduce spurious obstacles from noise
+    
+    explored_radius: 12          # 12 cells = 60cm around robot marked explored
+    been_close_to_radius: 150    # 150cm = 1.5m 
+    target_blacklisting_radius: 60  # REDUCED from 100: Smaller blacklist zone
+    
+    min_obs_height_cm: 20        # INCREASED from 10: Ignore floor cables, carpet edges
+    
     goal_filtering: True
     record_instance_ids: True
     exploration_type: raycast
-    gaze_width: 40
-    gaze_distance: 5.0
-    # From goat_sim - obstacle dilation
+    
+    # === MUST MATCH REALSENSE ===
+    gaze_width: 75               # Slightly less than HFOV (80°) for reliability
+    gaze_distance: 4.5           # REDUCED from 5.0: Conservative for office clutter
+    
     dilate_obstacles: True
     dilate_size: 1
     dilate_iter: 1
+    
+    # === NEW: Disable stair detection for office ===
+    enable_stair_detection: False
 
-  # ---------------------------------------------------------------------------
-  # SUPERGLUE - For ImageNav matching (from goat_fixed)
-  # ---------------------------------------------------------------------------
   SUPERGLUE:
     max_keypoints: 1024
     keypoint_threshold: 0.005
@@ -106,69 +98,66 @@ AGENT:
     match_projection_threshold: 0.2
     goto_past_pose: True
 
-  # ---------------------------------------------------------------------------
-  # DETIC - Object detection settings
-  # ---------------------------------------------------------------------------
   DETIC:
     config_file: Detic/configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml
     vocabulary: custom
-    custom_vocabulary: apple,backpack,book,bottle,bowl,cup,fork,hammer,handbag,knife,laptop,pen,phone,plate,remote,shoe,spoon,toy,vase,watch,chair,table,bed,couch,cabinet,counter
-    confidence_threshold: 0.2
+    custom_vocabulary: chair,desk,table,monitor,keyboard,mouse,laptop,phone,cup,mug,bottle,book,backpack,bag,pen,notebook,printer,whiteboard,cabinet,shelf,plant,trash_can,door,window,couch,lamp
+    confidence_threshold: 0.25
     weights: Detic/models/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth
     augment_mask_with_box: True
 
-  # ---------------------------------------------------------------------------
-  # PLANNER - Tuned for real-world Scout
-  # ---------------------------------------------------------------------------
   PLANNER:
-    collision_threshold: 0.10
-    # REDUCED dilation - was 8, causing too much obstacle inflation
-    # With map_resolution=5cm: radius 3 = 15cm dilation (reasonable for Scout)
-    obs_dilation_selem_radius: 1
-    goal_dilation_selem_radius: 3
-    min_obs_dilation_selem_radius: 1
-    step_size: 20
+    collision_threshold: 0.12    # INCREASED slightly: 0.25m step, if moved < 12cm = collision
+                                 # More forgiving than 0.10 for odometry noise
+    
+    # Dilation math: robot radius = 30cm, map resolution = 5cm
+    # 30cm / 5cm = 6 cells is robot footprint radius
+    # But obstacles already have some extent, so 2-3 cells dilation is reasonable
+    obs_dilation_selem_radius: 2   # 2 cells = 10cm additional safety margin
+    goal_dilation_selem_radius: 2
+    min_obs_dilation_selem_radius: 1  # Can reduce to 5cm if stuck
+    
+    # step_size is for FMM planner gradient descent, not robot movement
+    step_size: 5                 # REDUCED from 20: Finer path following in cells
+    
     use_dilation_for_stg: False
-    min_goal_distance_cm: 50          # Reduced from 100 - stop closer to goal
+    min_goal_distance_cm: 40     # REDUCED from 50: Stop closer to objects
+    
     map_downsample_factor: 1
     map_update_frequency: 1
     discrete_actions: True
     verbose: True
-    explored_area_dilation_radius: 3
-    explored_area_erosion_radius: 3
+    
+    # goal_tolerance is in cells for FMM planner
+    goal_tolerance: 4            # 4 cells = 20cm (reasonable for 25cm step size)
+    continuous_angle_tolerance: 25.0
+    
+    explored_area_dilation_radius: 2
+    explored_area_erosion_radius: 2
     goal_filtering: True
     frontier_metric: distance
 
-  # ---------------------------------------------------------------------------
-  # SKILLS - From goat_sim (mostly skipped for pure navigation)
-  # ---------------------------------------------------------------------------
   skip_skills:
     nav_to_obj: False
-    nav_to_rec: True                  # Not needed for ObjectNav
-    gaze_at_obj: True                 # Skip RL gaze - use heuristic
+    nav_to_rec: True
+    gaze_at_obj: True
     gaze_at_rec: True
-    pick: True                        # No manipulation on Scout
-    place: True                       # No manipulation on Scout
+    pick: True
+    place: True
 
-# =============================================================================
-# HABITAT SIM SENSOR CONFIG - For compatibility (not used in real world)
-# =============================================================================
 habitat:
   simulator:
     agents:
       agent0:
         sim_sensors:
           depth_sensor:
-            height: 720               # Match ENVIRONMENT.frame_height
-            width: 1280               # Match ENVIRONMENT.frame_width
-            position: [0, 0.55, 0]    # Match ENVIRONMENT.camera_height
-            hfov: 80.0                # Match ENVIRONMENT.hfov
-            max_depth: 5.5            # Match ENVIRONMENT.max_depth
-        turn_angle: 30.0              # Match ENVIRONMENT.turn_angle
+            height: 720
+            width: 1280
+            position: [0, 0.55, 0]
+            hfov: 80.0
+            max_depth: 5.0
+        turn_angle: 30.0
 
-# =============================================================================
-# EVAL_VECTORIZED - For compatibility (not used in real world eval)
-# =============================================================================
 EVAL_VECTORIZED:
   simulator_gpu_ids: [0]
   specific_episodes: 0

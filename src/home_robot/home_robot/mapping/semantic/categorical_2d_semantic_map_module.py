@@ -497,94 +497,100 @@ class Categorical2DSemanticMapModule(nn.Module):
         Heuristic to mark stair-like regions as obstacles
         based on absence of ground in visible region.
         """
-        visible_ground = visible_ground.cpu().numpy()
-        #! myTODO: Hardcoded. Fix this later
-        visible_ground[80:] = 0
-
-        #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
-        x = int(self.min_obs_height_cm / self.z_resolution)
-        ground_plane = voxels[
-            :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
-        ]
-        ground_plane = ground_plane.sum(axis=2).cpu().numpy()
-        ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
-
-        # ground_points = np.column_stack(np.nonzero(ground_plane))
-        # points = ground_points[:, [1, 0]].astype(np.float32)  # (x, y)
-        # polygon = alpha_shape(points, alpha=0.005)
-        # ground_plane = rasterize_polygon(polygon, ground_plane.shape)
-        selem = np.ones((7, 7), dtype=np.uint8)
-        ground_plane = cv2.dilate(ground_plane, selem, iterations=1)
-
-        X, Y = ground_plane.shape
-        robot_x = 0
-        robot_y = Y // 2
-
-        xx, yy = np.meshgrid(np.arange(X), np.arange(Y), indexing="ij")
-        dx = (xx - robot_x) * self.xy_resolution
-        dy = (yy - robot_y) * self.xy_resolution
-
-        dx[dx == 0] = 1e-6  # avoid division by zero
-
-        # Convert FOVs to radians
-        hfov_rad = np.deg2rad(self.hfov)
-        vfov_rad = np.deg2rad(self.vfov)
-
-        horizontal_angle = np.arctan2(dy, dx)
-        within_hfov = np.abs(horizontal_angle) <= (hfov_rad / 2)
-
-        min_visible_dist = (
-            int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 10
+        device = voxels.device
+        H, W = self.vision_range, self.vision_range  # CORRECTED: Use vision_range, not voxels.shape
+        return (
+            torch.zeros(H, W, dtype=torch.uint8, device=device),
+            torch.zeros(H, W, dtype=torch.uint8, device=device)
         )
-        within_vfov = np.zeros_like(within_hfov, dtype=bool)
-        within_vfov[min_visible_dist:, :] = 1
-        # ground_dist = np.sqrt(dx**2 + dy**2)
-        # within_vfov = ground_dist >= min_visible_dist
+        # visible_ground = visible_ground.cpu().numpy()
+        # #! myTODO: Hardcoded. Fix this later
+        # visible_ground[80:] = 0
 
-        within_fov = within_hfov & within_vfov
+        # #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
+        # x = int(self.min_obs_height_cm / self.z_resolution)
+        # ground_plane = voxels[
+        #     :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
+        # ]
+        # ground_plane = ground_plane.sum(axis=2).cpu().numpy()
+        # ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
 
-        stair_mask = (ground_plane == 0) & within_fov & visible_ground
-        stair_mask_vis = stair_mask.copy()
+        # # ground_points = np.column_stack(np.nonzero(ground_plane))
+        # # points = ground_points[:, [1, 0]].astype(np.float32)  # (x, y)
+        # # polygon = alpha_shape(points, alpha=0.005)
+        # # ground_plane = rasterize_polygon(polygon, ground_plane.shape)
+        # selem = np.ones((7, 7), dtype=np.uint8)
+        # ground_plane = cv2.dilate(ground_plane, selem, iterations=1)
 
-        #! myTODO: 10 is hardcoded
-        # Extend to agents location
-        x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
-        rows = np.arange(10, min_visible_dist + 1).reshape(
-            -1, 1
-        )  # shape: (min_visible_dist-10+1, 1)
-        rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
-        stair_mask[rr, cc] = 1
-        if False:
-            import matplotlib
+        # X, Y = ground_plane.shape
+        # robot_x = 0
+        # robot_y = Y // 2
 
-            # matplotlib.use("TkAgg")
-            # matplotlib.use("Agg")
-            plt.clf()
-            plt.subplot(321)
-            plt.title("ground plane")
-            plt.imshow(np.flipud(ground_plane))
-            # plt.subplot(322)
-            # plt.title("hfov")
-            # plt.imshow(np.flipud(within_hfov))
-            # plt.subplot(323)
-            # plt.title("vfov")
-            # plt.imshow(np.flipud(within_vfov))
-            plt.subplot(322)
-            plt.title("withinfov")
-            plt.imshow(np.flipud(within_fov))
-            plt.subplot(323)
-            plt.title("visible_ground")
-            plt.imshow(np.flipud(visible_ground))
-            plt.subplot(324)
-            plt.title("stairs_mask")
-            plt.imshow(np.flipud(stair_mask_vis))
-            plt.subplot(325)
-            plt.title("stairs_mask extended")
-            plt.imshow(np.flipud(stair_mask))
-            plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
-        return torch.tensor(stair_mask, dtype=torch.uint8).to(
-            voxels.device
-        ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
+        # xx, yy = np.meshgrid(np.arange(X), np.arange(Y), indexing="ij")
+        # dx = (xx - robot_x) * self.xy_resolution
+        # dy = (yy - robot_y) * self.xy_resolution
+
+        # dx[dx == 0] = 1e-6  # avoid division by zero
+
+        # # Convert FOVs to radians
+        # hfov_rad = np.deg2rad(self.hfov)
+        # vfov_rad = np.deg2rad(self.vfov)
+
+        # horizontal_angle = np.arctan2(dy, dx)
+        # within_hfov = np.abs(horizontal_angle) <= (hfov_rad / 2)
+
+        # min_visible_dist = (
+        #     int(self.agent_height / np.tan(vfov_rad / 2) / self.z_resolution) + 10
+        # )
+        # within_vfov = np.zeros_like(within_hfov, dtype=bool)
+        # within_vfov[min_visible_dist:, :] = 1
+        # # ground_dist = np.sqrt(dx**2 + dy**2)
+        # # within_vfov = ground_dist >= min_visible_dist
+
+        # within_fov = within_hfov & within_vfov
+
+        # stair_mask = (ground_plane == 0) & within_fov & visible_ground
+        # stair_mask_vis = stair_mask.copy()
+
+        # #! myTODO: 10 is hardcoded
+        # # Extend to agents location
+        # x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
+        # rows = np.arange(10, min_visible_dist + 1).reshape(
+        #     -1, 1
+        # )  # shape: (min_visible_dist-10+1, 1)
+        # rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
+        # stair_mask[rr, cc] = 1
+        # if False:
+        #     import matplotlib
+
+        #     # matplotlib.use("TkAgg")
+        #     # matplotlib.use("Agg")
+        #     plt.clf()
+        #     plt.subplot(321)
+        #     plt.title("ground plane")
+        #     plt.imshow(np.flipud(ground_plane))
+        #     # plt.subplot(322)
+        #     # plt.title("hfov")
+        #     # plt.imshow(np.flipud(within_hfov))
+        #     # plt.subplot(323)
+        #     # plt.title("vfov")
+        #     # plt.imshow(np.flipud(within_vfov))
+        #     plt.subplot(322)
+        #     plt.title("withinfov")
+        #     plt.imshow(np.flipud(within_fov))
+        #     plt.subplot(323)
+        #     plt.title("visible_ground")
+        #     plt.imshow(np.flipud(visible_ground))
+        #     plt.subplot(324)
+        #     plt.title("stairs_mask")
+        #     plt.imshow(np.flipud(stair_mask_vis))
+        #     plt.subplot(325)
+        #     plt.title("stairs_mask extended")
+        #     plt.imshow(np.flipud(stair_mask))
+        #     plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
+        # return torch.tensor(stair_mask, dtype=torch.uint8).to(
+        #     voxels.device
+        # ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -868,9 +874,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.subplot(224)
 
         # Add stairs to obstacle map
-        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0) | (
-            (current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0)
-        )
+        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0).float()
 
         # plt.title("Final obstacle map")
         # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
