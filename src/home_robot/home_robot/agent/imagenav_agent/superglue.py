@@ -59,10 +59,9 @@ class Matching(nn.Module):
         self.default_vis_dir = default_vis_dir
         self.vis_dir = default_vis_dir
 
-    def set_vis_dir(self, episode_id: str) -> None:
+    def set_vis_dir(self, dir_name: str) -> None:
         if self.print_images:
-            self.vis_dir = os.path.join(self.default_vis_dir, str(episode_id))
-            shutil.rmtree(self.vis_dir, ignore_errors=True)
+            self.vis_dir = os.path.join(self.default_vis_dir, str(dir_name))
             os.makedirs(self.vis_dir, exist_ok=True)
 
     @staticmethod
@@ -167,7 +166,7 @@ class Matching(nn.Module):
         self,
         matcher_inputs: Dict[str, Any],
         matcher_outputs: Dict[str, Any],
-        step: int,
+        step: str,
     ) -> None:
         """Visualize the input/output of running SuperPoint and SuperGlue inference"""
         if not self.print_images:
@@ -211,7 +210,7 @@ class Matching(nn.Module):
             mkpts1,
             color,
             text,
-            os.path.join(self.vis_dir, f"superglue_{step+1}.png"),
+            os.path.join(self.vis_dir, f"superglue_{step}.png"),
             small_text=small_text,
         )
 

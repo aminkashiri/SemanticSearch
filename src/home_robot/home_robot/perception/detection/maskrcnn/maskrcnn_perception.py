@@ -93,7 +93,7 @@ class MaskRCNNPerception(PerceptionModule):
         )
 
         pred = predictions[0]
-        obs.task_observations["semantic_frame"] = visualizations[0].get_image()
+        obs.task_observations["semantic_frame"] = cv2.cvtColor(visualizations[0].get_image(), cv2.COLOR_BGR2RGB)
 
         masks = pred["instances"].pred_masks.cpu().numpy()
         class_idcs = pred["instances"].pred_classes.cpu().numpy()
@@ -104,6 +104,15 @@ class MaskRCNNPerception(PerceptionModule):
                 [filter_depth(mask, depth, depth_threshold) for mask in masks]
             )
 
+        coco_categories_mapping = {
+            56: 0,  # chair
+            57: 1,  # couch
+            58: 2,  # plant
+            59: 3,  # bed
+            61: 4,  # toilet
+            62: 5,  # tv
+            75: 2, # vase -> plant
+        }
         # Keep only relevant COCO categories
         relevant_masks = []
         relevant_class_idcs = []
@@ -124,11 +133,14 @@ class MaskRCNNPerception(PerceptionModule):
         else:
             semantic_map = np.zeros((height, width))
             instance_map = -np.ones((height, width))
+            masks = []
+            class_idcs = []
+            scores = []
 
         obs.semantic = semantic_map.astype(int)
-        obs.task_observations["instance_map"] = instance_map
-        obs.task_observations["instance_classes"] = class_idcs
-        obs.task_observations["instance_scores"] = scores
+        obs.task_observations["instance_frame"] = instance_map.astype(int) + 1
+        obs.task_observations["instance_classes"] = np.array(class_idcs)
+        obs.task_observations["instance_scores"] = np.array(scores)
 
         return obs
 

@@ -225,13 +225,16 @@ def visualize_frontiers(
 
     ax.imshow(img)
 
-    top_indices = np.argsort(frontier_scores)[-top_k:]
+    top_indices = np.argsort(frontier_scores)[::-1]
 
-    for i in top_indices:
+    for order, i in enumerate(top_indices):
         center = frontier_centers[i]
         flipped_center = (center[1], traversible.shape[0] - center[0])
 
         ax.plot(flipped_center[0], flipped_center[1], "o", color="red", markersize=5)
+
+        if order >= top_k:
+            continue
 
         # annotation with offset
         ax.annotate(

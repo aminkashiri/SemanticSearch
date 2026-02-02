@@ -6,7 +6,7 @@ import json
 import os
 import shutil
 from collections import defaultdict
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Union
 
 import cv2
 import numpy as np
@@ -16,40 +16,76 @@ from habitat.utils.visualizations import maps
 
 import home_robot.utils.pose as pu
 import home_robot.utils.visualization as vu
+from habitat.utils.visualizations.utils import draw_collision
+from habitat.utils.render_wrapper import append_text_to_image
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.perception.constants import LanguageNavCategories
 from home_robot.perception.constants import PaletteIndices as PI
 from home_robot.perception.constants import RearrangeDETICCategories
 
 from home_robot.utils.logger import get_logger
+
 logger = get_logger()
+
+rgb2bgr = lambda x: cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
 
 
 class VIS_LAYOUT:
     HEIGHT = 480
     FIRST_PERSON_W = 360
     TOP_DOWN_W = HEIGHT
-    THIRD_PERSON_W = HEIGHT
     LEFT_PADDING = 40
     MIDDLE_PADDING = 15
     TOP_PADDING = 50
     LEGEND_TOP_PADDING = 5
     BOTTOM_PADDING = 120
+
     Y1 = TOP_PADDING
     Y2 = TOP_PADDING + HEIGHT
-    FIRST_RGB_X1 = LEFT_PADDING
-    FIRST_RGB_X2 = LEFT_PADDING + FIRST_PERSON_W
-    FIRST_SEM_X1 = MIDDLE_PADDING + FIRST_RGB_X2
-    FIRST_SEM_X2 = FIRST_SEM_X1 + FIRST_PERSON_W
-    TOP_DOWN_X1 = FIRST_SEM_X2 + MIDDLE_PADDING
-    TOP_DOWN_X2 = TOP_DOWN_X1 + TOP_DOWN_W
+    RGB_X1 = LEFT_PADDING
+    RGB_X2 = LEFT_PADDING + FIRST_PERSON_W
+    SEM_X1 = MIDDLE_PADDING + RGB_X2
+    SEM_X2 = SEM_X1 + FIRST_PERSON_W
 
+    TOP_DOWN_Y1 = Y1
+    TOP_DOWN_Y2 = Y2
+    TOP_DOWN_X1 = SEM_X2 + MIDDLE_PADDING
+    TOP_DOWN_X2 = TOP_DOWN_X1 + TOP_DOWN_W
     ORACLE_TOP_DOWN_X1 = TOP_DOWN_X2 + MIDDLE_PADDING
     ORACLE_TOP_DOWN_X2 = ORACLE_TOP_DOWN_X1 + TOP_DOWN_W
-    # THIRD_PERSON_X1 = TOP_DOWN_X2 + MIDDLE_PADDING
-    # THIRD_PERSON_X2 = THIRD_PERSON_X1 + THIRD_PERSON_W
+
     IMAGE_HEIGHT = Y2 + BOTTOM_PADDING
     IMAGE_WIDTH = ORACLE_TOP_DOWN_X2 + LEFT_PADDING
+
+
+class VIS_LAYOUT_IMAGENAV:
+    HEIGHT = 480
+    FIRST_PERSON_W = 360
+    TOP_DOWN_W = HEIGHT
+    LEFT_PADDING = 40
+    MIDDLE_PADDING = 15
+    TOP_PADDING = 50
+    LEGEND_TOP_PADDING = 5
+    BOTTOM_PADDING = 120
+
+    Y1 = TOP_PADDING
+    Y2 = TOP_PADDING + HEIGHT
+    RGB_X1 = LEFT_PADDING
+    RGB_X2 = LEFT_PADDING + FIRST_PERSON_W
+    SEM_X1 = MIDDLE_PADDING + RGB_X2
+    SEM_X2 = SEM_X1 + FIRST_PERSON_W
+    GOAL_X1 = MIDDLE_PADDING + SEM_X2
+    GOAL_X2 = GOAL_X1 + FIRST_PERSON_W
+
+    TOP_DOWN_Y1 = Y2 + MIDDLE_PADDING
+    TOP_DOWN_Y2 = TOP_DOWN_Y1 + HEIGHT
+    TOP_DOWN_X1 = LEFT_PADDING + MIDDLE_PADDING
+    TOP_DOWN_X2 = TOP_DOWN_X1 + TOP_DOWN_W
+    ORACLE_TOP_DOWN_X1 = TOP_DOWN_X2 + MIDDLE_PADDING
+    ORACLE_TOP_DOWN_X2 = ORACLE_TOP_DOWN_X1 + TOP_DOWN_W
+
+    IMAGE_HEIGHT = TOP_DOWN_Y2 + BOTTOM_PADDING
+    IMAGE_WIDTH = GOAL_X2 + LEFT_PADDING
 
 
 V = VIS_LAYOUT
@@ -62,8 +98,6 @@ class Visualizer:
 
     def __init__(self, config, semantic_category_mapping, dataset=None):
         self.semantic_category_mapping = semantic_category_mapping
-        self.show_images = config.VISUALIZE
-        self.print_images = config.PRINT_IMAGES
         self.default_vis_dir = f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}"
         self._dataset = dataset
         os.makedirs(self.default_vis_dir, exist_ok=True)
@@ -83,19 +117,23 @@ class Visualizer:
         self.font_scale = 0.6
         self.text_color = (20, 20, 20)  # BGR
         self.text_thickness = 1
-        self.show_rl_obs = config.SHOW_RL_OBS
         self.ind_frame_height = 480
 
+        self.num_agents = config.NUM_AGENTS
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
         self.image_vis = None
 
-    def set_vis_dir(self, scene_id: str, episode_id: str):
-        self.print_images = True
-        self.vis_dir = os.path.join(self.default_vis_dir, f"{scene_id}_{episode_id}")
+    def set_vis_dir(self, dir_name:str):
+        self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
         shutil.rmtree(self.vis_dir, ignore_errors=True)
         os.makedirs(self.vis_dir, exist_ok=True)
+        if self.num_agents > 1:
+            for i in range(self.num_agents):
+                agent_dir = os.path.join(self.vis_dir, f"agent_{i}")
+                os.makedirs(agent_dir, exist_ok=True)
+
 
     def _add_border(self, frame: np.ndarray, border_size: int) -> np.ndarray:
         """Add a white border to a frame."""
@@ -106,46 +144,14 @@ class Visualizer:
         frame = np.concatenate([top, frame, top], axis=0)
         return frame
 
-    def disable_print_images(self):
-        self.print_images = False
-
-    def get_semantic_vis(self, semantic_map, rgb_frame=None):
-        semantic_map_vis = Image.new(
-            "P", (semantic_map.shape[1], semantic_map.shape[0])
-        )
+    def color_semantic_frame(self, sem_img):
+        semantic_map_vis = Image.new("P", (sem_img.shape[1], sem_img.shape[0]))
         semantic_map_vis.putpalette(self.semantic_category_mapping.map_color_palette)
-        semantic_map_vis.putdata(semantic_map.flatten().astype(np.uint8))
+        semantic_map_vis.putdata(sem_img.flatten().astype(np.uint8))
         semantic_map_vis = semantic_map_vis.convert("RGB")
 
-        semantic_map_vis = np.asarray(semantic_map_vis)[:, :, [2, 1, 0]]
-
+        semantic_map_vis = rgb2bgr(np.asarray(semantic_map_vis))
         return semantic_map_vis
-
-    def flatten_instance_map(self, instance_map):
-        """
-        Flatten the instance map.
-
-        Args:
-            instance_map: np.ndarray of shape [num_sem_categories - 2, H, W] where each channel has instances labeled as 1, 2, ...
-
-        Returns:
-            instance_map_combined: Flattened instance map with globally combined instance labels.
-            instances_per_category: Number of instances per category.
-        """
-        num_channels, height, width = instance_map.shape
-        instance_map_flattened = instance_map.reshape(num_channels, -1)
-        instances_per_category = np.max(instance_map_flattened, axis=1).astype(np.int64)
-
-        instance_map_combined = instance_map[0].copy()
-
-        if num_channels > 1:
-            cumulative_instances = np.cumsum(instances_per_category[:-1])
-            instance_map_combined += np.sum(
-                instance_map[1:] * cumulative_instances[:, np.newaxis, np.newaxis],
-                axis=0,
-            )
-
-        return instance_map_combined, instances_per_category
 
     def update_semantic_map_with_instances(self, semantic_map, instance_map):
         """
@@ -169,283 +175,122 @@ class Visualizer:
             # update semantic map with instance ids
             semantic_map[border_pixels > 0] = PI.INSTANCE_BORDER
 
-    def make_td_map(self, top_down_map: np.ndarray) -> np.ndarray:
-        """
-        In Habitat Simulation, an oracle top-down map may be provided.
-        Visualize that sub-frame.
-        """
-        # border_size = 10
-        # text_bar_height = 50 - border_size
-        new_h = self.ind_frame_height
-
-        td_map = maps.colorize_draw_agent_and_fit_to_height(top_down_map, output_height=top_down_map["map"].shape[0])
-        td_map = cv2.cvtColor(td_map, cv2.COLOR_RGB2BGR)
-
-        # add map outline
-        # color = [100, 100, 100]
-        # h, w = td_map.shape[:2]
-        # td_map[0, 0:] = color
-        # td_map[h - 1, 0:] = color
-        # td_map[0:, 0] = color
-        # td_map[0:, w - 1] = color
-
-        # td_map = self._add_border(td_map, border_size)
-        # w = td_map.shape[1]
-
-        # top_bar = np.ones((text_bar_height, w, 3), dtype=np.uint8) * 255
-        # frame = np.concatenate([top_bar, td_map.astype(np.uint8)], axis=0)
-
-        # font = cv2.FONT_HERSHEY_SIMPLEX
-        # fontScale = 0.8
-        # color = (20, 20, 20)
-        # thickness = 2
-
-        return td_map
+    def get_td_map(self, top_down_map: np.ndarray) -> np.ndarray:
+        td_map = maps.colorize_draw_agent_and_fit_to_height(
+            top_down_map, output_height=top_down_map["map"].shape[0]
+        )
+        return self.prepare_for_vis(rgb2bgr(td_map), "TD Map", (V.TOP_DOWN_W, V.HEIGHT))
 
     def visualize(
         self,
         timestep: int,
         semantic_frame: np.ndarray,
         rgb_frame: np.ndarray,
-        obstacle_map: np.ndarray = None,
-        closest_goal_pt: Optional[np.ndarray] = None,
-        global_pose: np.ndarray = None,
-        lmb: np.ndarray = None,
-        explored_map: np.ndarray = None,
-        semantic_map_1D: Tuple[np.ndarray, np.ndarray] = None,
-        been_close_map: np.ndarray = None,
-        blacklisted_targets_map: np.ndarray = None,
-        frontier_map: np.ndarray = None,
-        goal_name: str = None,
-        third_person_image: np.ndarray = None,
-        curr_skill: str = None,
-        curr_action: str = None,
+        caption: str,
+        obstacle_map: np.ndarray,
+        robot_loc: np.ndarray,
+        robot_orientation: float,
+        explored_map: np.ndarray,
+        semantic_map_1D: Tuple[np.ndarray, np.ndarray],
+        been_close_map: np.ndarray,
+        top_down_map,
+        agent_id: Optional[int],
+        visited_map,
+        is_collision,
+        task_type = None,
         short_term_goal: np.ndarray = None,
+        closest_goal_pt: np.ndarray = None,
         dilated_obstacle_map: np.ndarray = None,
-        rl_obs_frame: Optional[np.ndarray] = None,
-        caption: str = None,
-        landmarks: List = None,
-        instances_map: Optional[np.ndarray] = None,
-        top_down_map = None,
+        instances_map:np.ndarray = None,
+        inst_goal_found: bool = None,
+        goal_instance_map: np.ndarray = None,
+        goal_image: np.ndarray = None,
         is_local=True,
-        inst_goal_found: bool = False,
-        goal_instance_map: Optional[np.ndarray] = None,
-        agent_id: Optional[int] = None,
-        visited_map=None,
+        metrics = None, #TODO
+        depth_frame: np.ndarray = None,
         **kwargs,
     ):
-        """Visualize frame input and semantic map.
+        """Visualize frame input and semantic map."""
+        global V
 
-        Args:
-            obstacle_map: (M, M) binary local obstacle map prediction
-            goal_map: (M, M) binary array denoting goal location
-            closest_goal_map: (M, M) binary array denoting closest goal
-             location in the goal map in geodesic distance
-            global_pose
-            lmb
-            # sensor_pose: (7,) array denoting global pose (x, y, o)
-            #  and local map boundaries planning window (gy1, gy2, gx1, gy2)
-            explored_map: (M, M) binary local explored map prediction
-            semantic_map: (M, M) local semantic map predictions
-            semantic_frame: semantic frame visualization
-            goal_name: semantic goal category
-            timestep: time step within the episode
-            curr_skill: the skill currently being executed
-            curr_action: the action that will be executed in current step
-            short_term_goal: (M, M) map showing the short term goal
-            dilated_obstacle_map: (M, M) obstacle map after dilation
-            semantic_category_mapping: contains category id to category mapping and color palette
-            rl_obs_frame: variable sized image containing all observations passed to RL (useful for debugging)
-        """
-        # Do nothing if visualization is off
-        if not self.show_images and not self.print_images:
-            return
+        if task_type == "imagenav":
+            V = VIS_LAYOUT_IMAGENAV
+        else:
+            V = VIS_LAYOUT
 
-        semantic_map, no_category_mask = semantic_map_1D
 
-        td_map_frame = None if top_down_map is None else self.make_td_map(top_down_map)
-
-        # Initialize
-        if self.image_vis is None or self.show_rl_obs:
-            self.image_vis = self._init_vis_image(
-                goal_name, caption, landmarks, rl_obs_frame
-            )
-
-        image_vis = self.image_vis.copy()
-        image_vis = self._put_text_on_image(
-            image_vis,
-            str(goal_name),
-            0,
-            V.Y2 + V.LEGEND_TOP_PADDING,
-            V.IMAGE_WIDTH,
-            V.TOP_PADDING,
-        )
-
-        # if curr_skill is not None, place the skill name below the third person image
-        text = None
-        if curr_skill is not None and curr_action is not None:
-            text = curr_skill + ": " + curr_action
-        elif curr_skill is not None:
-            text = curr_skill
-        if text is not None:
-            image_vis = self._put_text_on_image(
-                image_vis,
-                text,
-                V.THIRD_PERSON_X1,
-                V.Y2,
-                V.THIRD_PERSON_W,
-                V.BOTTOM_PADDING,
-            )
+        main_frame = self.init_frame(caption)
 
         if dilated_obstacle_map is not None:
             obstacle_map = dilated_obstacle_map
 
         self.instance_dilation_selem = skimage.morphology.disk(1)
 
-        if obstacle_map is not None:
-            curr_x, curr_y, curr_o = global_pose.cpu().float().numpy()
-            if is_local:
-                gy1, gy2, gx1, gx2 = lmb
-                gy1, gy2, gx1, gx2 = int(gy1), int(gy2), int(gx1), int(gx2)
-            else:
-                gy1, gy2, gx1, gx2 = 0, obstacle_map.shape[0], 0, obstacle_map.shape[1]
-
-            semantic_map += PI.SEM_START
-
-            # Obstacles, explored, and visited areas
-            semantic_map[no_category_mask] = PI.EMPTY_SPACE
-            semantic_map[np.logical_and(no_category_mask, explored_map == 1)] = PI.EXPLORED
-            semantic_map[np.logical_and(no_category_mask, obstacle_map == 1)] = PI.OBSTACLES
-            semantic_map[visited_map == 1] = PI.VISITED
-
-            # Goal
-            if inst_goal_found:
-                selem = skimage.morphology.disk(4)
-                semantic_map[goal_instance_map] = PI.REST_OF_GOAL
-                if closest_goal_pt is not None:
-                    closest_goal_map = np.zeros_like(goal_instance_map)
-                    closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
-                    closest_goal_mat = (
-                        1 - skimage.morphology.binary_dilation(closest_goal_map, selem)
-                        != 1
-                    )
-                    closest_goal_mask = closest_goal_mat == 1
-                    semantic_map[closest_goal_mask] = PI.CLOSEST_GOAL
-
-                if short_term_goal is not None:
-                    short_term_goal_mask = np.zeros(goal_instance_map.shape)
-                    short_term_goal_mask[short_term_goal[0], short_term_goal[1]] = 1
-                    short_term_goal_mask = (
-                        1
-                        - skimage.morphology.binary_dilation(
-                            short_term_goal_mask, selem
-                        )
-                        != 1
-                    )
-                    short_term_goal_mask = short_term_goal_mask == 1
-                    semantic_map[short_term_goal_mask] = PI.SHORT_TERM_GOAL
-
-            if instances_map is not None:
-                self.update_semantic_map_with_instances(semantic_map, instances_map)
-
-            # Semantic categories
-            semantic_map_vis = self.get_semantic_vis(semantic_map)
-            semantic_map_vis = np.flipud(semantic_map_vis)
-
-            # overlay the regions the agent has been close to
-            been_close_map = np.flipud(been_close_map == 1)
-            color_index = PI.BEEN_CLOSE * 3
-            color = self.semantic_category_mapping.map_color_palette[
-                color_index : color_index + 3
-            ][::-1]
-            semantic_map_vis[been_close_map] = (
-                semantic_map_vis[been_close_map] + color
-            ) / 2
-
-            # overlay blacklisted targets
-            # blacklisted_targets_map = np.flipud(np.rint(blacklisted_targets_map) == 1)
-            # color_index = PI.BLACKLISTED_TARGETS_MAP * 3
-            # color = self.semantic_category_mapping.map_color_palette[
-            #     color_index : color_index + 3
-            # ][::-1]
-            # semantic_map_vis[blacklisted_targets_map] = (
-            #     semantic_map_vis[blacklisted_targets_map] + color
-            # ) / 2
-
-            semantic_map_vis = cv2.resize(
-                semantic_map_vis,
-                (V.TOP_DOWN_W, V.HEIGHT),
-                interpolation=cv2.INTER_NEAREST,
+        semantic_map, no_category_mask = semantic_map_1D
+        main_frame[V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X2] = (
+            self.make_sem_map(
+                robot_loc,
+                robot_orientation,
+                obstacle_map,
+                explored_map,
+                semantic_map,
+                closest_goal_pt,
+                goal_instance_map,
+                no_category_mask,
+                visited_map,
+                instances_map,
+                been_close_map,
+                short_term_goal,
+                inst_goal_found,
+                is_local,
             )
-            image_vis[V.Y1 : V.Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X2] = semantic_map_vis
-
-            # Agent arrow
-            pos = (
-                (curr_x * 100.0 / self.map_resolution - gx1)
-                * 480
-                / obstacle_map.shape[0],
-                (obstacle_map.shape[1] - curr_y * 100.0 / self.map_resolution + gy1)
-                * 480
-                / obstacle_map.shape[1],
-                np.deg2rad(-curr_o),
-            )
-            agent_arrow = vu.get_contour_points(pos, origin=(V.TOP_DOWN_X1, V.Y1))
-            color = self.semantic_category_mapping.map_color_palette[9:12][::-1]
-            cv2.drawContours(image_vis, [agent_arrow], 0, color, -1)
-
-        # overlay RL observation frame
-        if self.show_rl_obs and rl_obs_frame is not None:
-            # Reshape the height while maintaining aspect ratio to V.HEIGHT
-            rl_obs_frame = rl_obs_frame[:, :, [2, 1, 0]]
-            # find the width of the frame such that height is V.HEIGHT
-            width = int(rl_obs_frame.shape[1] * V.HEIGHT / rl_obs_frame.shape[0])
-            rl_obs_frame = cv2.resize(
-                rl_obs_frame,
-                (width, V.HEIGHT),
-                interpolation=cv2.INTER_NEAREST,
-            )
-            image_vis[V.Y1 : V.Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X1 + width] = rl_obs_frame
-
-        elif third_person_image is not None:
-            image_vis[V.Y1 : V.Y2, V.THIRD_PERSON_W : V.THIRD_PERSON_X2] = cv2.resize(
-                third_person_image[:, :, [2, 1, 0]],
-                (V.THIRD_PERSON_W, V.HEIGHT),
-            )
-
-        if td_map_frame is not None:
-            td_map_frame = cv2.resize(
-                td_map_frame,
-                (V.TOP_DOWN_W, V.HEIGHT),
-                interpolation=cv2.INTER_NEAREST,
-            )
-
-            image_vis[V.Y1 : V.Y2, V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2] = td_map_frame
-
-        # First-person RGB frame
-        image_vis[V.Y1 : V.Y2, V.FIRST_RGB_X1 : V.FIRST_RGB_X2] = cv2.resize(
-            rgb_frame, (V.FIRST_PERSON_W, V.HEIGHT)
         )
-        # Semantic categories
-        first_person_semantic_map_vis = self.get_semantic_vis(
-            semantic_frame + PI.SEM_START, rgb_frame
-        )
-        # First-person semantic frame
-        image_vis[V.Y1 : V.Y2, V.FIRST_SEM_X1 : V.FIRST_SEM_X2] = cv2.resize(
-            first_person_semantic_map_vis,
+
+        if task_type == "imagenav":
+            main_frame[V.Y1 : V.Y2, V.GOAL_X1 : V.GOAL_X2] = self.prepare_for_vis(
+                goal_image, "Goal", (V.FIRST_PERSON_W, V.HEIGHT)
+            )
+
+        if top_down_map:
+            main_frame[
+                V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
+                V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2,
+            ] = self.get_td_map(top_down_map)
+        else:
+            if not depth_frame is None:
+                depth_frame[depth_frame > 5.0] = 0.0
+                main_frame[
+                    V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
+                    V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X1 + V.FIRST_PERSON_W,
+                ] = self.prepare_for_vis(depth_frame / depth_frame.max() * 255.0, "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
+
+        main_frame[V.Y1 : V.Y2, V.RGB_X1 : V.RGB_X2] = self.prepare_for_vis(
+            rgb_frame,
+            "Observation",
             (V.FIRST_PERSON_W, V.HEIGHT),
-            interpolation=cv2.INTER_NEAREST,
+            inst_goal_found,
+            is_collision
         )
+
+        if len(semantic_frame.shape) == 2:
+            semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
+        main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
+            semantic_frame,
+            "Semantics",
+            (V.FIRST_PERSON_W, V.HEIGHT),
+            inst_goal_found,
+            is_collision
+        )
+
         # if instance_memory is not None:
         #     image_vis = self._visualize_instance_counts(image_vis, instance_memory)
-        if self.show_images:
-            cv2.imshow("Visualization", image_vis)
-            cv2.waitKey(1)
-        if self.print_images:
-            agent_text = "" if agent_id is None else f"agent_{agent_id}_"
-            cv2.imwrite(
-                os.path.join(self.vis_dir, f"{agent_text}{timestep}_13.snapshot.png"),
-                image_vis,
-            )
+
+
+        if agent_id is None:
+            path = os.path.join(self.vis_dir, f"{timestep}_13.snapshot.png")
+        else:
+            path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
+        success = cv2.imwrite(path, main_frame)
 
     def _visualize_instance_counts(
         self, image_vis: np.ndarray, instance_memory: InstanceMemory
@@ -485,6 +330,29 @@ class Visualizer:
                 y_pos += offset
         return image_vis
 
+    def _wrap_text(self, text, font_scale, bbox_len):
+        global V
+        words = text.split(" ")
+        lines = []
+        current_line = ""
+
+        for word in words:
+            test_line = word if current_line == "" else current_line + " " + word
+            textsize = cv2.getTextSize(
+                test_line, self.font, font_scale, self.text_thickness
+            )[0]
+
+            if textsize[0] <= bbox_len:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+
+        if current_line:
+            lines.append(current_line)
+        
+        return lines
+
     def _put_text_on_image(
         self,
         vis_image,
@@ -495,93 +363,60 @@ class Visualizer:
         bbox_y_len: int,
         font_scale: int = None,
     ):
-        """
-        Place text at the center of the given bounding box.
-        """
         if font_scale is None:
             font_scale = self.font_scale
 
-        textsize = cv2.getTextSize(text, self.font, font_scale, self.text_thickness)[0]
-        # The x coordinate at which the left edge of text needs to be placed
-        textX = (bbox_x_len - textsize[0]) // 2 + bbox_x_start
-        # The height at which base needs to be placed
-        textY = (bbox_y_len + textsize[1]) // 2 + bbox_y_start
-        return cv2.putText(
-            vis_image,
-            text,
-            (textX, textY),
-            self.font,
-            font_scale,
-            self.text_color,
-            self.text_thickness,
-            cv2.LINE_AA,
-        )
+        lines = self._wrap_text(text, font_scale, bbox_x_len)
 
-    def _init_vis_image(
-        self,
-        goal_name: str,
-        caption: str = None,
-        landmarks: List = None,
-        rl_obs_frame: np.array = None,
-    ):
+        textsize = cv2.getTextSize(
+            lines[0], self.font, font_scale, self.text_thickness
+        )[0]
+
+        textX = (bbox_x_len - textsize[0]) // 2 + bbox_x_start
+        textY = bbox_y_start + (bbox_y_len - textsize[1]) // 2 
+
+        for line in lines:
+            cv2.putText(
+                vis_image,
+                line,
+                (textX, textY),
+                self.font,
+                font_scale,
+                self.text_color,
+                self.text_thickness,
+                cv2.LINE_AA,
+                )
+            textY += 20
+        return vis_image
+
+
+    def init_frame(self, caption):
         width = V.IMAGE_WIDTH
 
-        # if rl_obs_frame is passed, update width
-        if self.show_rl_obs and rl_obs_frame is not None:
-            # find the width of the frame such that height is V.HEIGHT
-            rl_obs_frame_width = int(
-                rl_obs_frame.shape[1] * V.HEIGHT / rl_obs_frame.shape[0]
-            )
-            width = width - V.TOP_DOWN_W - V.THIRD_PERSON_W + rl_obs_frame_width
-        vis_image = np.ones((V.IMAGE_HEIGHT, width, 3)).astype(np.uint8) * 255
+        main_frame = np.ones((V.IMAGE_HEIGHT, width, 3)).astype(np.uint8) * 255
 
-        # vis_image = self._put_text_on_image(
-        #     vis_image, goal_name, V.LEFT_PADDING, 0, 2 * V.FIRST_PERSON_W, V.TOP_PADDING
-        # )
+        # TODO
+        # Draw outlines
+        # color = (100, 100, 100)
+        # for y in [V.Y1 - 1, V.Y2]:
+        #     for x_start, x_len in [
+        #         (V.RGB_X1, V.FIRST_PERSON_W),
+        #         (V.SEM_X1, V.FIRST_PERSON_W),
+        #         (V.TOP_DOWN_X1, V.TOP_DOWN_W),
+        #     ]:
+        #         main_frame[y, x_start - 1 : x_start + x_len] = color
 
-        if caption is not None:
-            vis_image = self._put_text_on_image(
-                vis_image, caption, 10, 0, width, V.TOP_PADDING, font_scale=0.4
-            )
+        # for x in [
+        #     V.RGB_X1 - 1,
+        #     V.RGB_X2,
+        #     V.SEM_X1 - 1,
+        #     V.SEM_X2,
+        #     V.TOP_DOWN_X1 - 1,
+        #     V.TOP_DOWN_X2,
+        # ]:
+        #     main_frame[V.Y1 - 1 : V.Y2, x] = color
 
-        if landmarks is not None:
-            vis_image = self._put_text_on_image(
-                vis_image,
-                f"Landmarks: {landmarks}",
-                0,
-                V.Y2 + V.LEGEND_TOP_PADDING + V.TOP_PADDING,
-                width,
-                V.TOP_PADDING,
-            )
-
-        # the outlines are set for the standard layout (with debug RL frame)
-        if rl_obs_frame is None:
-            # text = "Predicted Semantic Map"
-            # vis_image = self._put_text_on_image(
-            #     vis_image, text, V.TOP_DOWN_X1, 0, V.TOP_DOWN_W, V.TOP_PADDING
-            # )
-
-            # Draw outlines
-            color = (100, 100, 100)
-            for y in [V.Y1 - 1, V.Y2]:
-                for x_start, x_len in [
-                    (V.FIRST_RGB_X1, V.FIRST_PERSON_W),
-                    (V.FIRST_SEM_X1, V.FIRST_PERSON_W),
-                    (V.TOP_DOWN_X1, V.TOP_DOWN_W),
-                ]:
-                    vis_image[y, x_start - 1 : x_start + x_len] = color
-
-            for x in [
-                V.FIRST_RGB_X1 - 1,
-                V.FIRST_RGB_X2,
-                V.FIRST_SEM_X1 - 1,
-                V.FIRST_SEM_X2,
-                V.TOP_DOWN_X1 - 1,
-                V.TOP_DOWN_X2,
-            ]:
-                vis_image[V.Y1 - 1 : V.Y2, x] = color
-
-        # Draw legend
+        # # Draw legend
         # if os.path.exists(self.semantic_category_mapping.categories_legend_path):
         #     legend = cv2.imread(self.semantic_category_mapping.categories_legend_path)
         #     lx, ly, _ = legend.shape
@@ -589,4 +424,154 @@ class Visualizer:
         #         V.Y2 + V.LEGEND_TOP_PADDING : V.Y2 + lx + V.LEGEND_TOP_PADDING, 0:ly, :
         #     ] = legend
 
-        return vis_image
+        main_frame = self._put_text_on_image(
+            main_frame,
+            caption,
+            0,
+            V.TOP_DOWN_Y2 + V.LEGEND_TOP_PADDING,
+            V.IMAGE_WIDTH,
+            V.TOP_PADDING,
+        )
+        return main_frame
+
+    def make_sem_map(
+        self,
+        robot_loc: np.ndarray,
+        robot_orientation: float,
+        obstacle_map: np.ndarray,
+        explored_map: np.ndarray,
+        semantic_map: np.ndarray,
+        closest_goal_pt: np.ndarray,
+        goal_instance_map: np.ndarray,
+        no_category_mask: np.ndarray,
+        visited_map: np.ndarray,
+        instances_map: np.ndarray,
+        been_close_map: np.ndarray,
+        short_term_goal,
+        inst_goal_found=False,
+        is_local=True,
+    ) -> np.ndarray:
+        if obstacle_map is None:
+            return None
+
+        semantic_map += PI.SEM_START
+
+        # Obstacles, explored, and visited areas
+        semantic_map[no_category_mask] = PI.EMPTY_SPACE
+        semantic_map[np.logical_and(no_category_mask, explored_map == 1)] = PI.EXPLORED
+        semantic_map[np.logical_and(no_category_mask, obstacle_map == 1)] = PI.OBSTACLES
+        semantic_map[visited_map == 1] = PI.VISITED
+
+        # Goal
+        if inst_goal_found:
+            selem = skimage.morphology.disk(4)
+            semantic_map[goal_instance_map] = PI.REST_OF_GOAL
+            if closest_goal_pt is not None:
+                closest_goal_map = np.zeros_like(goal_instance_map)
+                closest_goal_map[closest_goal_pt[0], closest_goal_pt[1]] = 1
+                closest_goal_mat = (
+                    1 - skimage.morphology.binary_dilation(closest_goal_map, selem) != 1
+                )
+                closest_goal_mask = closest_goal_mat == 1
+                semantic_map[closest_goal_mask] = PI.CLOSEST_GOAL
+
+            if short_term_goal is not None:
+                short_term_goal_mask = np.zeros(goal_instance_map.shape)
+                short_term_goal_mask[short_term_goal[0], short_term_goal[1]] = 1
+                short_term_goal_mask = (
+                    1 - skimage.morphology.binary_dilation(short_term_goal_mask, selem)
+                    != 1
+                )
+                short_term_goal_mask = short_term_goal_mask == 1
+                semantic_map[short_term_goal_mask] = PI.SHORT_TERM_GOAL
+
+        if instances_map is not None:
+            self.update_semantic_map_with_instances(semantic_map, instances_map)
+
+        # Semantic categories
+        semantic_map_vis = self.color_semantic_frame(semantic_map)
+        semantic_map_vis = np.flipud(semantic_map_vis)
+        semantic_map_vis = np.ascontiguousarray(semantic_map_vis)
+
+
+        # overlay the regions the agent has been close to
+        been_close_map = np.flipud(been_close_map == 1)
+        color_index = PI.BEEN_CLOSE * 3
+        color = self.semantic_category_mapping.map_color_palette[
+            color_index : color_index + 3
+        ][::-1]
+        semantic_map_vis[been_close_map] = (
+            semantic_map_vis[been_close_map] + color
+        ) / 2
+
+        # overlay blacklisted targets
+        # blacklisted_targets_map = np.flipud(np.rint(blacklisted_targets_map) == 1)
+        # color_index = PI.BLACKLISTED_TARGETS_MAP * 3
+        # color = self.semantic_category_mapping.map_color_palette[
+        #     color_index : color_index + 3
+        # ][::-1]
+        # semantic_map_vis[blacklisted_targets_map] = (
+        #     semantic_map_vis[blacklisted_targets_map] + color
+        # ) / 2
+
+        pos = (
+            robot_loc[1],
+            robot_loc[0],
+            np.deg2rad(-robot_orientation),
+        )
+        agent_arrow = vu.get_contour_points(pos, origin=(0, 0))
+        color = self.semantic_category_mapping.map_color_palette[9:12][::-1]
+        cv2.drawContours(semantic_map_vis, [agent_arrow], 0, color, -1)
+        semantic_map_vis = self.prepare_for_vis(semantic_map_vis, "Map", (V.TOP_DOWN_W, V.HEIGHT))
+        return semantic_map_vis
+
+    def _found_goal_detection(self, view: np.ndarray, alpha: float = 0.4) -> np.ndarray:
+        """overlay a green goal detected banner"""
+        strip_width = view.shape[0] // 15
+        mask = np.ones(view.shape)
+        mask[strip_width:-strip_width] = 0
+        mask = mask == 1
+        view[mask] = (alpha * np.array([0, 255, 0]) + (1.0 - alpha) * view)[mask]
+        return append_text_to_image(view, ["Goal Detected"], font_size=0.5)
+
+    def prepare_for_vis(
+        self, frame, text, shape, set_found_goal=False, set_collision=False
+    ):
+        border_size = 0
+        text_bar_height = 50 - border_size
+        new_h = self.ind_frame_height - text_bar_height - 2 * border_size
+        new_w = int(new_h / frame.shape[0] * frame.shape[1])
+        frame = cv2.resize(frame, (new_w, new_h))
+
+        if frame.ndim == 2:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
+        if set_found_goal:
+            frame = self._found_goal_detection(frame)
+
+        # frame = self._write_metrics(frame, metrics)
+
+        if set_collision:
+            frame = draw_collision(frame)
+
+        frame = self._add_border(frame, border_size)
+
+        top_bar = np.ones((text_bar_height, frame.shape[1], 3), dtype=np.uint8) * 255
+        frame = np.concatenate([top_bar, frame.astype(np.uint8)], axis=0)
+
+        textsize = cv2.getTextSize(
+            text, self.font, self.font_scale, self.text_thickness
+        )[0]
+        textX = (frame.shape[1] - textsize[0]) // 2
+        textY = (text_bar_height + border_size + textsize[1]) // 2
+        frame = cv2.putText(
+            frame,
+            text,
+            (textX, textY),
+            self.font,
+            self.font_scale,
+            self.text_color,
+            self.text_thickness,
+            cv2.LINE_AA,
+        )
+        return cv2.resize(frame, shape)

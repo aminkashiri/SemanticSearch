@@ -5,6 +5,7 @@
 
 import cv2
 import torch
+import matplotlib
 import numpy as np
 import torch.nn as nn
 import skimage.morphology
@@ -26,6 +27,7 @@ from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
 # For debugging input and output maps - shows matplotlib visuals
 debug_maps = False
+matplotlib.use("Agg")
 
 logger = get_logger()
 
@@ -189,6 +191,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         gaze_width=30,
         gaze_distance=3,
         agent_cell_radius: int = 1,
+        print_images: bool = False
     ):
         """
         Arguments:
@@ -235,9 +238,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.camera_matrix = du.get_camera_matrix(self.screen_w, self.screen_h, hfov)
         self.num_sem_categories = num_sem_categories
 
-        self.map_size_parameters = mu.MapSizeParameters(
-            map_resolution, map_size_cm, global_downscaling
-        )
         self.resolution = map_resolution
         self.global_map_size_cm = map_size_cm
         self.global_downscaling = global_downscaling
@@ -261,14 +261,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.max_voxel_height = int(360 / self.z_resolution)
         self.min_voxel_height = int(-40 / self.z_resolution)
         self.min_obs_height_cm = min_obs_height_cm
-        self.min_mapped_height = int(
+        self.min_obstacle_height = int(
             self.min_obs_height_cm / self.z_resolution - self.min_voxel_height
         )
 
-        # self.old_x = None
-        # self.old_y = None
-
-        self.max_mapped_height = int(
+        self.max_obstacle_height = int(
             (self.agent_height + 1) / self.z_resolution - self.min_voxel_height
         )
         self.shift_loc = [self.vision_range * self.xy_resolution // 2, 0, np.pi / 2.0]
@@ -288,18 +285,16 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         self.avg_pooling_layer = nn.AvgPool2d(self.du_scale)
         self._disk_masks = {}
+        self.print_images = print_images
 
     @torch.no_grad()
     def forward(
         self,
         obs: Tensor,
         pose_delta: Tensor,
-        init_local_map: Tensor,
-        init_global_map: Tensor,
-        init_local_pose: Tensor,
-        init_global_pose: Tensor,
-        init_lmb: Tensor,
-        init_origins: Tensor,
+        state,
+        instance_scores: Tensor,
+        category_scores,
     ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, IntTensor, Tensor]:
         """Update maps and poses with a sequence of observations and generate map
         features at each time step.
@@ -341,40 +336,29 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
         logger.debug(f"Updating maps and current position")
 
-        global_map, global_pose = init_global_map.clone(), init_global_pose.clone()
-        lmb, origins = init_lmb.clone(), init_origins.clone()
-        local_map, local_pose = self._update_local_map_and_pose(
+        state.local_map, state.local_pose = self._update_local_map_and_pose(
             obs,
             pose_delta,
-            init_local_map.clone(),
-            init_local_pose.clone(),
-            origins,
-            lmb,
+            state.local_map,
+            state.local_pose,
+            state.origins,
+            state.lmb,
+            instance_scores,
+            category_scores,
         )
         # updates in place
-        self._update_global_map_and_pose(
-            local_map, global_map, local_pose, global_pose, lmb, origins
-        )
-        local_map, local_pose, lmb, origins = mu.get_local_parameters_from_global_pose(
-            global_map,
-            global_pose,
-            self.map_size_parameters,
+        self._update_global_map_and_pose(state)
+
+        state.local_map, state.local_pose, state.lmb, state.origins = mu.get_local_parameters_from_global_pose(
+            state.global_map,
+            state.global_pose,
+            state.map_size_parameters,
         )
 
-        #! myTODO: It doesn't look like this is used anywhere, so I'm commenting it out.
-        # map_features = self._get_map_features(local_map, global_map)
-
-        logger.debug(f"Updated global pose is: {global_pose}")
-        logger.debug(f"Updated local pose is: {local_pose}")
-        logger.debug(f"Updated local map boundaries are: {lmb}")
+        logger.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
         return (
             # map_features,
-            local_map,
-            global_map,
-            local_pose,
-            global_pose,
-            lmb,
-            origins,
+            state
         )
 
     def _aggregate_instance_map_channels_per_category(
@@ -507,13 +491,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         # #! myTODO: Hardcoded. Fix this later
         # visible_ground[80:] = 0
 
-        # #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
-        # x = int(self.min_obs_height_cm / self.z_resolution)
-        # ground_plane = voxels[
-        #     :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
-        # ]
-        # ground_plane = ground_plane.sum(axis=2).cpu().numpy()
-        # ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
+        #! myTODO: x is hardcoded. This means if you don't see anything with z between -x to x (which right now is min_obs_height cm) in a location, this means it is a downward stair.
+        x = int(10 / self.z_resolution)
+        ground_plane = voxels[
+            :, :, -4 * x - self.min_voxel_height : x - self.min_voxel_height
+        ]
+        ground_plane = ground_plane.sum(axis=2).cpu().numpy()
+        ground_plane = np.where(ground_plane >= 1, 1, 0).astype(np.uint8)
 
         # # ground_points = np.column_stack(np.nonzero(ground_plane))
         # # points = ground_points[:, [1, 0]].astype(np.float32)  # (x, y)
@@ -552,6 +536,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         # stair_mask = (ground_plane == 0) & within_fov & visible_ground
         # stair_mask_vis = stair_mask.copy()
 
+        stair_mask = cv2.dilate(stair_mask.astype(np.uint8), selem, iterations=2)
         # #! myTODO: 10 is hardcoded
         # # Extend to agents location
         # x_indices = np.where(stair_mask[min_visible_dist] == 1)[0]
@@ -560,37 +545,27 @@ class Categorical2DSemanticMapModule(nn.Module):
         # )  # shape: (min_visible_dist-10+1, 1)
         # rr, cc = np.meshgrid(rows, x_indices, indexing="ij")
         # stair_mask[rr, cc] = 1
-        # if False:
-        #     import matplotlib
-
-        #     # matplotlib.use("TkAgg")
-        #     # matplotlib.use("Agg")
-        #     plt.clf()
-        #     plt.subplot(321)
-        #     plt.title("ground plane")
-        #     plt.imshow(np.flipud(ground_plane))
-        #     # plt.subplot(322)
-        #     # plt.title("hfov")
-        #     # plt.imshow(np.flipud(within_hfov))
-        #     # plt.subplot(323)
-        #     # plt.title("vfov")
-        #     # plt.imshow(np.flipud(within_vfov))
-        #     plt.subplot(322)
-        #     plt.title("withinfov")
-        #     plt.imshow(np.flipud(within_fov))
-        #     plt.subplot(323)
-        #     plt.title("visible_ground")
-        #     plt.imshow(np.flipud(visible_ground))
-        #     plt.subplot(324)
-        #     plt.title("stairs_mask")
-        #     plt.imshow(np.flipud(stair_mask_vis))
-        #     plt.subplot(325)
-        #     plt.title("stairs_mask extended")
-        #     plt.imshow(np.flipud(stair_mask))
-        #     plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
-        # return torch.tensor(stair_mask, dtype=torch.uint8).to(
-        #     voxels.device
-        # ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
+        if self.print_images:
+            plt.clf()
+            plt.subplot(321)
+            plt.title("ground plane")
+            plt.imshow(np.flipud(ground_plane))
+            plt.subplot(322)
+            plt.title("withinfov")
+            plt.imshow(np.flipud(within_fov))
+            plt.subplot(323)
+            plt.title("visible_ground")
+            plt.imshow(np.flipud(visible_ground))
+            plt.subplot(324)
+            plt.title("stairs_mask")
+            plt.imshow(np.flipud(stair_mask_vis))
+            plt.subplot(325)
+            plt.title("stairs_mask extended")
+            plt.imshow(np.flipud(stair_mask))
+            plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs.png")
+        return torch.tensor(stair_mask, dtype=torch.uint8).to(
+            voxels.device
+        ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
 
     def _update_local_map_and_pose(  # noqa: C901
         self,
@@ -600,6 +575,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         prev_pose: Tensor,
         origins: Tensor,
         lmb: Tensor,
+        instance_scores: Tensor,
+        category_scores,
     ) -> Tuple[Tensor, Tensor]:
         """Update local map and sensor pose given a new observation using parameter-free
         differentiable projective geometry.
@@ -642,13 +619,12 @@ class Categorical2DSemanticMapModule(nn.Module):
         #     agent_height = agent_pos[2]
 
         # else:
-        yaw = 0
         tilt = torch.zeros(0)
         agent_height = self.agent_height
 
-        yaw = torch.tensor(yaw)
+        yaw = torch.tensor(0)
         depth = obs[3, :, :].float()
-        depth[depth > self.max_depth] = 0
+        depth[depth > self.max_depth] = 0 # If changed max depth, stairs code should also be changed
 
         # * This point cloud is with respect to cameras location. Is it not converted to world's coords.
         point_cloud_t = du.get_point_cloud_from_z_t(
@@ -741,12 +717,15 @@ class Categorical2DSemanticMapModule(nn.Module):
                 self.instance_memory.process_instances(
                     semantic_channels,
                     instance_channels,
+                    instance_scores,
+                    category_scores,
                     point_cloud_t.squeeze(0),
                     torch.concat([current_pose + origins, lmb], axis=0),
                     image=obs[:3],
                 )
 
-        feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
+        # feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
+        feat[1:, :] = obs[4:, :, :].view(
             obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
 
@@ -774,12 +753,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         voxels = du.splat_feat_nd(init_grid, feat, XYZ_cm_std).transpose(1, 2)
 
         agent_height_proj = voxels[
-            ..., self.min_mapped_height : self.max_mapped_height
+            ..., self.min_obstacle_height : self.max_obstacle_height
         ].sum(3)
         all_height_proj = voxels.sum(3)
         # * Shape is: [voxech_channels, height, width]
 
-        fp_map_pred = agent_height_proj[0, :, :]
+        fp_map_pred = agent_height_proj[0, :, :] > 10
+        # print(f"unique values in fp_map_pred before thresholding: {torch.unique(fp_map_pred)}")
 
         # +rows is away from the camera, with the camra origin at row 0
         # +cols is to the right of the image frame, the camera origin is at num_cols/2
@@ -813,7 +793,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane * 1.0
         agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map
         agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
-        agent_view[MC.EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
+        agent_view[MC.GAZE_EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
 
         agent_view[MC.NON_SEM_CHANNELS :, y1:y2, x1:x2] = (
             all_height_proj[1:] / self.cat_pred_threshold
@@ -874,7 +854,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         # plt.subplot(224)
 
         # Add stairs to obstacle map
-        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0).float()
+        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0.5) | (
+            (current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0)
+        )
 
         # plt.title("Final obstacle map")
         # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
@@ -904,89 +886,73 @@ class Categorical2DSemanticMapModule(nn.Module):
                 MC.NON_SEM_CHANNELS + self.num_sem_categories :
             ]
 
-        # Reset current location
-        current_map[MC.CURRENT_LOCATION, :, :].fill_(0.0)
         curr_loc = current_pose[:2].flip(0)
-        curr_loc = (curr_loc * 100.0 / self.xy_resolution).int()
+        curr_loc = (curr_loc * 100.0 / self.xy_resolution).int().tolist()
 
         prev_loc = prev_pose[:2].flip(0)
-        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int()
+        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int().tolist()
 
-        y, x = curr_loc
-        current_map[
-            MC.CURRENT_LOCATION,
-            y - 2 : y + 3,
-            x - 2 : x + 3,
-        ].fill_(1.0)
-
-        current_map[MC.VISITED_MAP] = self._get_update_visited_map(
-            curr_loc.tolist(), prev_loc.tolist(), current_map[MC.VISITED_MAP]
+        current_map[MC.AGENT_VISITED_MAP] = self._get_update_visited_map(
+            curr_loc, prev_loc, current_map[MC.AGENT_VISITED_MAP]
         )
+        current_map[MC.VISITED_MAP] = (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
 
-        # Set a disk around the agent to explored
-        # This is around the current agent - we just sort of assume we know where we are
-        self._set_disk_to_one(
-            self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc
-        )
+        # 1
+        # self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
+        # # Record the region the agent has been close to using a disc centered at the agent
+        # radius = self.been_close_to_radius // self.resolution
+        # self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
 
-        # Record the region the agent has been close to using a disc centered at the agent
-        radius = self.been_close_to_radius // self.resolution
-        self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
+        # 2
+        traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+        visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
+        traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
+        # traversible_ma[curr_loc[0], curr_loc[1]] = 0
+        traversible_ma[visited_np == 1] = 0
+        import skfmm
+        distances = skfmm.distance(traversible_ma)
+        distances = np.ma.filled(distances, np.max(distances) + 1)
+        distances = torch.from_numpy(distances).to(current_map.device)
 
-        # Record the region the agent has been close to using a disc centered at the agent
+        current_map[MC.BEEN_CLOSE_MAP] = 0
+        current_map[MC.BEEN_CLOSE_MAP][distances <= self.been_close_to_radius // self.resolution] = 1
+        current_map[MC.EXPLORED_MAP] = (current_map[MC.GAZE_EXPLORED_MAP] > 0.5) | (current_map[MC.BEEN_CLOSE_MAP] == 1.0)
+
+
         radius = self.target_blacklisting_radius // self.resolution
         self._set_disk_to_one(radius, current_map, MC.BLACKLISTED_TARGETS_MAP, curr_loc)
 
-        # debug_maps = True
+        # debug_maps = False
         if debug_maps:
             import matplotlib
 
-            matplotlib.use("TkAgg")
+            matplotlib.use("Agg")
             current_map = current_map.cpu()
-            explored = current_map[0, MC.EXPLORED_MAP].numpy()
-            been_close = current_map[0, MC.BEEN_CLOSE_MAP].numpy()
-            obstacles = current_map[0, MC.OBSTACLE_MAP].numpy()
-            plt.subplot(331)
+            gaze_explored = current_map[MC.GAZE_EXPLORED_MAP].numpy()
+            explored = current_map[MC.EXPLORED_MAP].numpy()
+            been_close = current_map[MC.BEEN_CLOSE_MAP].numpy()
+            obstacles = current_map[MC.OBSTACLE_MAP].numpy()
+
+            plt.clf()
+            plt.subplot(221)
             plt.axis("off")
-            plt.title("explored")
-            plt.imshow(explored)
-            plt.subplot(332)
+            plt.title("gaze_explored")
+            # print("unique values in gaze explored map: ", np.unique(gaze_explored))
+            plt.imshow(gaze_explored==1)
+            plt.subplot(222)
             plt.axis("off")
             plt.title("been close")
             plt.imshow(been_close)
-            plt.subplot(333)
+            plt.subplot(223)
             plt.axis("off")
-            plt.imshow(been_close * explored)
-            plt.subplot(334)
+            plt.title("explored")
+            plt.imshow(explored==1)
+            plt.subplot(224)
             plt.axis("off")
             plt.title("obstacles")
             plt.imshow(obstacles)
-            plt.subplot(335)
-            plt.axis("off")
-            plt.title("obstacles_eroded")
-
-            obs_eroded = cv2.erode(obstacles, np.ones((5, 5)), iterations=5)
-            plt.imshow(obs_eroded)
-            plt.subplot(336)
-            plt.axis("off")
-            plt.imshow(been_close * obstacles)
-            plt.subplot(337)
-            plt.axis("off")
-            # rgb = obs[0, :3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
-            rgb = obs[0, :3].permute(1, 2, 0)
-            # print("rgs.shape", rgb.shape)
-            plt.imshow(rgb.cpu().numpy().astype(np.uint8))
-            plt.subplot(338)
-            plt.imshow(depth.cpu().numpy())
-            plt.axis("off")
-            plt.subplot(339)
-            seg = np.zeros_like(depth.cpu().numpy())
-            for i in range(4, obs_channels):
-                seg += (i - 4) * obs[0, i].cpu().numpy()
-            #     print("class =", i, np.sum(obs[0, i].cpu().numpy()), "pts")
-            plt.imshow(seg)
-            plt.axis("off")
-            plt.show()
+            # plt.show()
+            plt.savefig(self.vis_dir + f"/{self.timestep}_0.local_map.png")
 
         return current_map, current_pose
 
@@ -1175,42 +1141,37 @@ class Categorical2DSemanticMapModule(nn.Module):
 
     def _update_global_map_and_pose(
         self,
-        local_map: Tensor,
-        global_map: Tensor,
-        local_pose: Tensor,
-        global_pose: Tensor,
-        lmb: Tensor,
-        origins: Tensor,
+        state,
     ):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
         """
-        assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
+        global_map = state.global_map
+        lmb = state.lmb
 
         if self.record_instance_ids:
-            self._update_global_map_instances(global_map, local_map, lmb)
+            assert global_map.shape[0] == MC.NON_SEM_CHANNELS + self.num_sem_categories * 2
+            self._update_global_map_instances(global_map, state.local_map, lmb)
             global_map[
                 : MC.NON_SEM_CHANNELS + self.num_sem_categories,
                 lmb[0] : lmb[1],
                 lmb[2] : lmb[3],
-            ] = local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
+            ] = state.local_map[: MC.NON_SEM_CHANNELS + self.num_sem_categories]
         else:
-            global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = local_map
+            global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = state.local_map
 
-        local_map[:] = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
-        global_pose[:] = local_pose + origins
+        state.local_map = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
+        state.global_pose = state.local_pose + state.origins
 
     def merge_neighbor_maps(
         self,
-        neighbors,
+        neighbor_global_map: Tensor,
         global_map: Tensor,
     ):
         # These channels should not be changed with other agents info
         protected_channels = torch.tensor(
             [
-                MC.CURRENT_LOCATION,
-                MC.VISITED_MAP,
-                MC.BEEN_CLOSE_MAP,
+                MC.AGENT_VISITED_MAP,
                 MC.BLACKLISTED_TARGETS_MAP,
             ],
             device=global_map.device,
@@ -1221,70 +1182,15 @@ class Categorical2DSemanticMapModule(nn.Module):
             all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
         )
 
-        final_global_map = global_map
-        for neighbor in neighbors:
-            final_global_map[merge_mask] = torch.maximum(
-                final_global_map[merge_mask],
-                neighbor.semantic_map.global_map[merge_mask],
-            )
+        temp_copy = global_map.clone()
+        global_map[merge_mask] = torch.maximum(
+            global_map[merge_mask],
+            neighbor_global_map[merge_mask],
+        )
         assert torch.equal(
-            final_global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
+            temp_copy[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
         )
-        return final_global_map
-
-    def _get_map_features(self, local_map: Tensor, global_map: Tensor) -> Tensor:
-        """Get global and local map features.
-
-        Arguments:
-            local_map: local map of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-            global_map: global map of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M * ds, M * ds)
-
-        Returns:
-            map_features: semantic map features of shape
-             (batch_size, 2 * MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-        """
-        map_features_channels = 2 * MC.NON_SEM_CHANNELS + self.num_sem_categories
-
-        if self.record_instance_ids:
-            map_features_channels += self.num_sem_categories
-
-        map_features = torch.zeros(
-            map_features_channels,
-            self.local_map_size,
-            self.local_map_size,
-            device=local_map.device,
-            dtype=local_map.dtype,
-        )
-
-        # Local obstacles, explored area, and current and past position
-        map_features[0 : MC.NON_SEM_CHANNELS, :, :] = local_map[
-            0 : MC.NON_SEM_CHANNELS, :, :
-        ]
-        # Global obstacles, explored area, and current and past position
-        map_features[MC.NON_SEM_CHANNELS : 2 * MC.NON_SEM_CHANNELS, :, :] = (
-            nn.MaxPool2d(self.global_downscaling)(
-                global_map[0 : MC.NON_SEM_CHANNELS, :, :]
-            )
-        )
-        # Local semantic categories
-        map_features[2 * MC.NON_SEM_CHANNELS :, :, :] = local_map[
-            MC.NON_SEM_CHANNELS :, :, :
-        ]
-
-        if debug_maps:
-            plt.subplot(131)
-            plt.imshow(local_map[0, 7])  # second object = cup
-            plt.subplot(132)
-            plt.imshow(local_map[0, 6])  # first object = chair
-            # This is the channel in MAP FEATURES mode
-            plt.subplot(133)
-            plt.imshow(map_features[0, 12])
-            plt.show()
-
-        return map_features.detach()
 
     def _get_disk_mask(self, radius):
         """Cache disk masks for reuse"""
@@ -1337,3 +1243,129 @@ class Categorical2DSemanticMapModule(nn.Module):
             + 1,
         ] = 1
         return visited_map
+
+    #! myTODO: Not complete
+    # def merge_instances(self, global_map, local_map):
+    #     for i in range(self.num_sem_categories):
+    #         if (
+    #             torch.sum(local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories])
+    #             > 0
+    #         ):
+    #             max_instance_id = (
+    #                 torch.max(
+    #                     global_map[
+    #                         MC.NON_SEM_CHANNELS
+    #                         + self.num_sem_categories : MC.NON_SEM_CHANNELS
+    #                         + 2 * self.num_sem_categories,
+    #                     ]
+    #                 )
+    #                 .int()
+    #                 .item()
+    #             )
+    #             # if the local map has any object instances, update the global map with instance ids
+    #             # logger.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
+    #             instance_channel = self._merge_map_util(
+    #                 global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
+    #                 local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
+    #                 (lmb[0], lmb[1]),
+    #                 (lmb[2], lmb[3]),
+    #                 max_instance_id,
+    #             )
+    #             global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i] = (
+    #                 instance_channel
+    #             )
+
+    # def merge_instance_util(
+    #     self,
+    #     global_instances: Tensor,
+    #     local_map: Tensor,
+    #     x_range: tuple,
+    #     y_range: tuple,
+    #     max_instance_id: int,
+    # ) -> Tensor:
+    #     """
+    #     Update one instance channels in the global map from one instance channels in the local map:
+    #     aggregate local instances with existing global instances or create new global instances.
+
+    #     Args:
+    #         global_instances (Tensor): The global map tensor.
+    #         local_map (Tensor): The local map tensor.
+    #         x_range (tuple): The range of indices in the x-axis for the local map in the global map.
+    #         y_range (tuple): The range of indices in the y-axis for the local map in the global map.
+
+    #     Returns:
+    #         Tensor: The updated global instances tensor.
+
+    #     """
+    #     p = self.padding_for_instance_overlap  # default: 1
+    #     d = self.dilation_for_instances  # default: 0
+
+    #     H = global_instances.shape[0]
+    #     W = global_instances.shape[1]
+
+    #     x1, x2 = x_range
+    #     y1, y2 = y_range
+
+    #     # padding added on each side
+    #     t_p = min(x1, p)
+    #     b_p = min(H - x2, p)
+    #     l_p = min(y1, p)
+    #     r_p = min(W - y2, p)
+
+    #     # the indices of the padded local_map in the global map
+    #     x_start = x1 - t_p
+    #     x_end = x2 + b_p
+    #     y_start = y1 - l_p
+    #     y_end = y2 + r_p
+
+    #     local_map = torch.round(local_map)
+
+    #     # pad the local map
+    #     extended_local_map = F.pad(local_map.float(), (l_p, r_p), mode="replicate")
+    #     extended_local_map = F.pad(
+    #         extended_local_map.transpose(1, 0), (t_p, b_p), mode="replicate"
+    #     ).transpose(1, 0)
+
+    #     self.instance_dilation_selem = skimage.morphology.disk(d)
+    #     # dilate the extended local map
+    #     if d > 0:
+    #         extended_dilated_local_map = torch.round(
+    #             torch.tensor(
+    #                 cv2.dilate(
+    #                     extended_local_map.cpu().numpy(),
+    #                     self.instance_dilation_selem,
+    #                     iterations=1,
+    #                 ),
+    #                 device=local_map.device,
+    #                 dtype=local_map.dtype,
+    #             )
+    #         )
+    #     else:
+    #         extended_dilated_local_map = torch.clone(extended_local_map)
+    #     # Get the instances from the global map within the local map's region
+
+    #     self._create_or_update_global_instances(
+    #         extended_dilated_local_map,
+    #         global_instances[x_start:x_end, y_start:y_end],
+    #         max_instance_id,
+    #         torch.unique(extended_local_map).tolist(),
+    #     )
+
+    #     # Update the global map with the associated instances from the local map
+
+    #     # only to speed up
+    #     max_temp_id = int(max(self.instance_memory.temp_id_to_global_id.keys()))
+    #     temp_id_lookup = np.full(max_temp_id + 1, -1, dtype=np.int16)  # -1 for unmapped
+    #     for temp_id, global_id in self.instance_memory.temp_id_to_global_id.items():
+    #         temp_id_lookup[temp_id] = global_id
+    #     global_instances_in_local = temp_id_lookup[local_map.cpu().numpy().astype(int)]
+
+    #     global_instances[x1:x2, y1:y2] = torch.maximum(
+    #         global_instances[x1:x2, y1:y2],
+    #         torch.tensor(
+    #             global_instances_in_local,
+    #             dtype=torch.int64,
+    #             device=global_instances.device,
+    #         ),
+    #     )
+    #     return global_instances

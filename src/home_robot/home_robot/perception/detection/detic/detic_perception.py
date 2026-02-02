@@ -223,6 +223,7 @@ class DeticPerception(PerceptionModule):
                 predictions=pred["instances"].to(self.cpu_device)
             ).get_image()
             obs.task_observations["semantic_frame"] = visualization
+            obs.task_observations["semantic_frame"] = cv2.cvtColor(visualization, cv2.COLOR_BGR2RGB)
         else:
             obs.task_observations["semantic_frame"] = None
 
@@ -239,7 +240,7 @@ class DeticPerception(PerceptionModule):
         semantic_map, instance_map = overlay_masks(masks, class_idcs, (height, width))
 
         obs.semantic = semantic_map.astype(int)
-        obs.task_observations["instance_map"] = instance_map
+        obs.task_observations["instance_frame"] = instance_map.astype(int) + 1
         obs.task_observations["instance_classes"] = class_idcs
         obs.task_observations["instance_scores"] = scores
 

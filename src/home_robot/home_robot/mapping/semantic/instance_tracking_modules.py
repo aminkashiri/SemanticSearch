@@ -9,6 +9,8 @@ import torch
 from home_robot.utils.logger import get_logger
 logger = get_logger()
 
+MIN_PIXELS = 1000
+MIN_EDGE = 15
 
 class InstanceView:
     """
@@ -35,6 +37,7 @@ class InstanceView:
     pose: np.ndarray = None
     instance_id: Optional[int] = None
     object_coverage: Optional[int] = None
+    score: float = None
 
     def __init__(
         self,
@@ -46,7 +49,8 @@ class InstanceView:
         point_cloud,
         pose,
         object_coverage,
-        category_id=None,
+        score,
+        category_id,
     ):
         """
         Initialize InstanceView
@@ -60,6 +64,7 @@ class InstanceView:
         self.pose = pose
         self.category_id = category_id
         self.object_coverage = object_coverage
+        self.score = score
 
 
 class Instance:
@@ -75,9 +80,42 @@ class Instance:
         category_id: category id of instance
         instance_views: list of InstanceView objects
         """
+        self.id = None
         self.name = None
         self.category_id = None
         self.instance_views = []
+
+    def _get_valid_views(self, all_images, last_view):
+        views = []
+        all_views = [self.instance_views[-1]] if last_view else self.instance_views
+        for inst_view in all_views:
+            # Note: Using bbox shape instead of cropped image shape, because cropped image doesn't always add a fixed padding.
+            bbox_shape =  inst_view.bbox[1] - inst_view.bbox[0]
+            # logger.debug(f"Evaluating instance {self.id}")
+            # logger.debug(f"Total pixels in cropped image: {bbox_shape.prod()} ? {MIN_PIXELS}")
+            # logger.debug(f"Minimum edge size in cropped image: {bbox_shape} ? {MIN_EDGE} : {(bbox_shape < MIN_EDGE).any()}")
+            if bbox_shape.prod() < MIN_PIXELS or (bbox_shape < MIN_EDGE).any():
+                continue
+            if last_view:
+                img = all_images[inst_view.timestep].cpu().numpy()
+                img = np.transpose(img, (1, 2, 0))
+            else:
+                img = inst_view.cropped_image
+
+            views.append(img)
+        return views
+    
+    def _get_score(self, last_k=10, agg="mean"):
+        scores = []
+        for inst_view in self.instance_views:
+            scores.append(inst_view.score)
+        
+
+        # scores = scores[-last_k:]
+        # return np.mean(scores)
+
+        return np.max(scores)
+
 
 
 class InstanceMemory:
@@ -100,16 +138,14 @@ class InstanceMemory:
 
     def __init__(
         self,
-        du_scale: int,
-        debug_visualize: bool = False,
         config=None,
         save_dir="instances",
         mask_cropped_instances=False,
         padding_cropped_instances=0,
         category_id_to_category_name=None,
     ):
-        self.du_scale = du_scale
-        self.debug_visualize = debug_visualize
+        self.du_scale = config.AGENT.SEMANTIC_MAP.du_scale
+        self.print_images = config.VISUALIZATION_LEVEL > 2
         self.mask_cropped_instances = mask_cropped_instances
         self.padding_cropped_instances = padding_cropped_instances
         self.category_id_to_category_name = category_id_to_category_name
@@ -121,7 +157,7 @@ class InstanceMemory:
         else:
             self.save_dir = save_dir
 
-        if self.debug_visualize:
+        if self.print_images:
             shutil.rmtree(self.save_dir, ignore_errors=True)
 
         self.reset()
@@ -148,6 +184,7 @@ class InstanceMemory:
         if global_instance is None:
             # create a new global instance
             global_instance = Instance()
+            global_instance.id = global_instance_id
             global_instance.category_id = instance_view.category_id
             global_instance.instance_views.append(instance_view)
             self.instances[global_instance_id] = global_instance
@@ -155,7 +192,7 @@ class InstanceMemory:
             # add instance view to global instance
             global_instance.instance_views.append(instance_view)
         self.temp_id_to_global_id[int(temp_id)] = global_instance_id
-        if self.debug_visualize:
+        if self.print_images:
             category_name = (
                 f"cat_{instance_view.category_id}"
                 if self.category_id_to_category_name is None
@@ -186,6 +223,8 @@ class InstanceMemory:
         self,
         semantic_frame_onehot: torch.Tensor,
         instance_frame_onehot: torch.Tensor,
+        instance_scores,
+        category_scores,
         point_cloud: torch.Tensor,
         pose: torch.Tensor,
         image: torch.Tensor,
@@ -216,6 +255,7 @@ class InstanceMemory:
             mode="nearest",
         ).squeeze(0).squeeze(0).int()
         
+        # logger.debug(f"In process instances")
         for temp_instance_id in temp_instance_ids:
             assert temp_instance_id != 0
             
@@ -223,6 +263,7 @@ class InstanceMemory:
             
             category_id = semantic_frame[instance_mask].unique()
             category_id = category_id[0].item()
+            # logger.debug(f"Temp instance id: {temp_instance_id}, category id: {category_id}")
             
             if category_id == 0:
                 continue
@@ -284,6 +325,12 @@ class InstanceMemory:
             point_cloud_instance = point_cloud[instance_mask_downsampled.cpu().numpy()]
             
             object_coverage = np.sum(instance_mask_cpu) / instance_mask_cpu.size
+
+            if category_scores is None:
+                score = instance_scores[temp_instance_id-1]
+            else:
+                score = (instance_scores[temp_instance_id-1] + category_scores.get(category_id, 0))/2,
+
             
             instance_view = InstanceView(
                 bbox=bbox,
@@ -295,6 +342,7 @@ class InstanceMemory:
                 category_id=category_id,
                 pose=pose_cpu,
                 object_coverage=object_coverage,
+                score=score,
             )
             
             self.unprocessed_views[temp_instance_id.item()] = instance_view
