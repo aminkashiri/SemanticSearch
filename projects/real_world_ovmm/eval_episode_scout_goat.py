@@ -274,7 +274,7 @@ def main(
     print("\n[4/6] Creating agent...")
     agent = ScoutGoatAgent(
         config=cfg,
-        semantic_category_mapping=env.semantic_category_mapping,
+        vocabulary=env.semantic_category_mapping.vocabulary,
         device_id=0,
     )
     print("  Agent initialized with semantic mapping")

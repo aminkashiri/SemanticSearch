@@ -725,7 +725,8 @@ class Categorical2DSemanticMapModule(nn.Module):
                 )
 
         # feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
-        feat[1:, :] = obs[4:, :, :].view(
+        # ////UPDATED FIX for tensor shape mismatch
+        feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
             obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
 

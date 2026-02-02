@@ -6,10 +6,11 @@
 NO_GPU: 0
 NUM_ENVIRONMENTS: 1
 DUMP_LOCATION: datadump
-EXP_NAME: scout_office_nav
+EXP_NAME: scout_office_nav1
 VISUALIZE: 1
 PRINT_IMAGES: 1
 GROUND_TRUTH_SEMANTICS: 0
+VISUALIZATION_LEVEL: 3
 seed: 0
 VERBOSE: False
 
@@ -113,15 +114,15 @@ AGENT:
     # Dilation math: robot radius = 30cm, map resolution = 5cm
     # 30cm / 5cm = 6 cells is robot footprint radius
     # But obstacles already have some extent, so 2-3 cells dilation is reasonable
-    obs_dilation_selem_radius: 2   # 2 cells = 10cm additional safety margin
+    obs_dilation_selem_radius: 3   # 2 cells = 10cm additional safety margin
     goal_dilation_selem_radius: 2
-    min_obs_dilation_selem_radius: 1  # Can reduce to 5cm if stuck
+    min_obs_dilation_selem_radius: 2  # Can reduce to 5cm if stuck
     
     # step_size is for FMM planner gradient descent, not robot movement
     step_size: 5                 # REDUCED from 20: Finer path following in cells
     
     use_dilation_for_stg: False
-    min_goal_distance_cm: 40     # REDUCED from 50: Stop closer to objects
+    min_goal_distance_cm: 70     # REDUCED from 50: Stop closer to objects
     
     map_downsample_factor: 1
     map_update_frequency: 1
@@ -129,7 +130,7 @@ AGENT:
     verbose: True
     
     # goal_tolerance is in cells for FMM planner
-    goal_tolerance: 4            # 4 cells = 20cm (reasonable for 25cm step size)
+    goal_tolerance: 8            # 4 cells = 20cm (reasonable for 25cm step size)
     continuous_angle_tolerance: 25.0
     
     explored_area_dilation_radius: 2
