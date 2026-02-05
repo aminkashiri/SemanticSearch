@@ -2,6 +2,7 @@ NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
 EXP_NAME: multi_goat_det_new_2agents
 
+REAL_WORLD: False       # True: real-world eval, False: sim eval
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. 
 # datasets: habitat_objnav_2022, habitat_objnav_2023, goat

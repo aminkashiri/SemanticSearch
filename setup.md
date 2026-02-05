@@ -1,10 +1,10 @@
 ## ros pkgs setup
 
-$ source ~/ros_utils/setup.bash
+- If running for the first time after reboot
 
-$ sudo modprobe gs_usb && rosrun scout_bringup bringup_can2usb.bash && roslaunch dm3_pkg dm3.launch
+    $ sudo modprobe gs_usb && rosrun scout_bringup bringup_can2usb.bash && roslaunch dm3_pkg dm3.launch
 
-- If RTNETLINK is busy, run next cmd
+- If RTNETLINK is busy OR NOT first run after reboot, run 
 
     $ roslaunch dm3_pkg dm3.launch
 
@@ -14,13 +14,10 @@ $ sudo modprobe gs_usb && rosrun scout_bringup bringup_can2usb.bash && roslaunch
 
 ## running eval_episode 
 
-$ source ../.venv/bin/activate
-
-$ python '/home/agilex2/projects/search/SemanticSearch/projects/real_world_ovmm/eval_episode_scout_goat.py' --config projects/real_world_ovmm/configs/agent/eval.yaml --task-config projects/real_world_ovmm/configs/example_tasks.json
+$ python ~/projects/search/SemanticSearch/projects/real_world_ovmm/eval_episode_scout_goat.py
 
 
-
-# Debugging
+## Debugging
 
 Rostopic list 
 
