@@ -8,8 +8,7 @@ import cv2
 import torch
 import psutil
 import numpy as np
-from ultralytics import YOLOv10
-from ultralytics import YOLOWorld
+from dataclasses import dataclass
 import home_robot.utils.pose as pu
 from .goat_matching import GoatMatching
 from scipy.ndimage import binary_erosion
@@ -17,17 +16,18 @@ from typing import Any, Dict, List, Tuple
 from home_robot.utils.logger import get_logger
 from home_robot.core.abstract_agent import Agent
 from home_robot.utils.visualization import visualize_semantic_with_labels
-from home_robot.core.interfaces import DiscreteNavigationAction, Observations
 from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
     Categorical2DSemanticMapState,
 )
-from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
-from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
 from home_robot.mapping.semantic.categorical_2d_semantic_map_module import (
     Categorical2DSemanticMapModule,
 )
+from home_robot.core.interfaces import DiscreteNavigationAction, Observations
+from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
+from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
 
 
+@dataclass
 class Task:
     type: str
     goal_semantic_id: int
@@ -46,21 +46,20 @@ class GoatAgent(Agent):
     def __init__(
         self, config, vocabulary, agent_id=None, device_id: int = 0
     ):
-        if agent_id is None:
-            self.is_multiagent = False
-        else:
-            self.is_multiagent = True
-
+        self.real_world = config.REAL_WORLD
+        
+        self.is_multiagent = not agent_id is not None
         self.agent_id = agent_id
         self.log = get_logger(agent_id=agent_id)
         self.max_steps = config.AGENT.max_steps
-        self.task_type = config.habitat.task.type
+        self.task_type = self._get_task_type(config)
         self.seq_goals = bool(config.SEQ)
         self.use_yolo = bool(config.USE_YOLO)
 
         self.record_instance_ids = (
             True  # Code doesn't work with False, I can fix this later
         )
+        self.visualization_level = config.VISUALIZATION_LEVEL
 
         self.instance_memory = None
         if self.record_instance_ids:
@@ -74,7 +73,7 @@ class GoatAgent(Agent):
             device=0,  # config.simulator_gpu_id
             config=config.AGENT.SUPERGLUE,
             default_vis_dir=f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}",
-            print_images=config.VISUALIZATION_LEVEL > 1,
+            print_images=self.visualization_level > 1,
             instance_memory=self.instance_memory,
             logger=self.log,
             cat_match_threshold=config.AGENT.cat_match_threshold,
@@ -86,19 +85,19 @@ class GoatAgent(Agent):
             self.device = torch.device(f"cuda:{self.device_id}")
 
         self.num_sem_categories = len(vocabulary)
+        camera_params = self._get_camera_params(config)
         agent_cell_radius = int(
             np.ceil(config.AGENT.radius * 100.0 / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
-        camera_sensor = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
         self.semantic_map_module = Categorical2DSemanticMapModule(
             device=self.device,
-            frame_height=camera_sensor.height,
-            frame_width=camera_sensor.width,
-            camera_height=camera_sensor.position[1],
-            hfov=camera_sensor.hfov,
+            frame_height=camera_params['height'],
+            frame_width=camera_params['width'],
+            camera_height=camera_params['camera_height'],
+            hfov=camera_params['hfov'],
+            max_depth=camera_params['max_depth'],
             num_sem_categories=self.num_sem_categories,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
-            max_depth=camera_sensor.max_depth,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             vision_range=config.AGENT.SEMANTIC_MAP.vision_range,
             explored_radius=config.AGENT.SEMANTIC_MAP.explored_radius,
@@ -118,12 +117,12 @@ class GoatAgent(Agent):
                 40 if config.AGENT.exploration_type == "raycast" else 30
             ),  #! myTODO: Hardcoded 3
             gaze_distance=(
-                camera_sensor.max_depth
+                camera_params['max_depth']
                 if config.AGENT.exploration_type == "raycast"
                 else 3
             ),  #! myTODO: Hardcoded 3
             agent_cell_radius=agent_cell_radius,
-            print_images=config.VISUALIZATION_LEVEL > 2
+            print_images=self.visualization_level > 2
         )
         self.inst_goal_id = None
 
@@ -135,7 +134,7 @@ class GoatAgent(Agent):
             global_downscaling=config.AGENT.SEMANTIC_MAP.global_downscaling,
             record_instance_ids=self.record_instance_ids,
             instance_memory=self.instance_memory,
-            visualization_level=config.VISUALIZATION_LEVEL,
+            visualization_level=self.visualization_level,
             # close_frontier_radius=10.0,  #! myTODO: Hardcoded 5
             agent_id=agent_id,
         )
@@ -153,7 +152,7 @@ class GoatAgent(Agent):
             obs_dilation_selem_radius=config.AGENT.PLANNER.obs_dilation_selem_radius,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
-            visualization_level=config.VISUALIZATION_LEVEL,
+            visualization_level=self.visualization_level,
             dump_location=config.DUMP_LOCATION,
             exp_name=config.EXP_NAME,
             min_obs_dilation_selem_radius=config.AGENT.PLANNER.min_obs_dilation_selem_radius,
@@ -172,7 +171,7 @@ class GoatAgent(Agent):
         )
 
         self.subtask_timesteps = None
-        self.total_timesteps = None
+        self.total_timesteps = None 
         self.last_pose = None
         self.reject_visited_targets = False
         self.blacklist_target = False
@@ -182,33 +181,65 @@ class GoatAgent(Agent):
         self.communication_radius = config.AGENT.COMMUNICATION.radius
         self.ground_truth_semantics = config.GROUND_TRUTH_SEMANTICS
         if not self.ground_truth_semantics:
-            if "Goat-v1" in self.task_type:
-                from home_robot.perception.detection.detic.detic_perception import (
-                    DeticPerception,
-                )
-                self.segmentation = DeticPerception(
-                    vocabulary="custom",
-                    custom_vocabulary=","
-                    + ",".join(vocabulary),
-                    sem_gpu_id=(-1 if config.NO_GPU else 0),
-                )
-                if self.use_yolo:
-                    self.yolo = YOLOWorld('yolov8s-worldv2.pt')  # or 'yolov8m-worldv2.pt' for better accuracy
-                    self.yolo.set_classes(vocabulary)
-            else:
-                from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
-                    MaskRCNNPerception
-                )
-
-                # MaskRCNN IDs are the same as our semantic category mappoing vocab.
-                self.segmentation = MaskRCNNPerception(
-                    sem_pred_prob_thr=0.8,
-                    sem_gpu_id=(-1 if config.NO_GPU else 0),
-                )
-                if self.use_yolo:
-                    self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
+            self._setup_perception(config, vocabulary)
         self.match_memory = True
-        self.visualization_level = config.VISUALIZATION_LEVEL
+
+    def _get_task_type(self, config) -> str:
+        if self.real_world:
+            return 'Goat-v1'
+        else:
+            return config.habitat.task.type
+
+    def _get_camera_params(self, config) -> dict:
+        """Get camera parameters based on mode (sim vs real)."""
+        if self.real_world:
+            # Real world: use ENVIRONMENT config
+            return {
+                'height': config.ENVIRONMENT.frame_height,
+                'width': config.ENVIRONMENT.frame_width,
+                'camera_height': config.ENVIRONMENT.camera_height,
+                'hfov': config.ENVIRONMENT.hfov,
+                'max_depth': config.ENVIRONMENT.max_depth,
+                'turn_angle': config.ENVIRONMENT.turn_angle,
+            }
+        else:
+            # Simulation: use habitat.simulator config
+            camera = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
+            return {
+                'height': camera.height,
+                'width': camera.width,
+                'camera_height': camera.position[1],
+                'hfov': camera.hfov,
+                'max_depth': camera.max_depth,
+                'turn_angle': config.habitat.simulator.turn_angle,
+            }
+    def _setup_perception(self, config, vocabulary):
+        if "Goat-v1" in self.task_type:
+            from home_robot.perception.detection.detic.detic_perception import (
+                DeticPerception,
+            )
+            self.segmentation = DeticPerception(
+                vocabulary="custom",
+                custom_vocabulary=","
+                + ",".join(vocabulary),
+                sem_gpu_id=(-1 if config.NO_GPU else 0),
+            )
+            if self.use_yolo:
+                from ultralytics import YOLOWorld
+                self.yolo = YOLOWorld('yolov8s-worldv2.pt')  # or 'yolov8m-worldv2.pt' for better accuracy
+                self.yolo.set_classes(vocabulary)
+        else:
+            from home_robot.perception.detection.maskrcnn.maskrcnn_perception import (
+                MaskRCNNPerception
+            )
+            # MaskRCNN IDs are the same as our semantic category mappoing vocab.
+            self.segmentation = MaskRCNNPerception(
+                sem_pred_prob_thr=0.8,
+                sem_gpu_id=(-1 if config.NO_GPU else 0),
+            )
+            if self.use_yolo:
+                from ultralytics import YOLOv10
+                self.yolo = YOLOv10.from_pretrained('jameslahm/yolov10n', verbose=False)
 
     def get_subtask_timestep(self) -> int:
         """
@@ -279,9 +310,10 @@ class GoatAgent(Agent):
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
         for task_obs in tasks_obs:
-            task = Task()
-            task.type = task_obs["type"]
-            task.goal_semantic_id = task_obs["semantic_id"]
+            task = Task(
+                type=task_obs["type"],
+                goal_semantic_id=task_obs["semantic_id"]
+            )
             if task.type == "imagenav":
                 task.goal_image = task_obs["image"]
                 task.goal_image_processed, task.goal_image_keypoints = (
@@ -369,11 +401,10 @@ class GoatAgent(Agent):
     def _update_pose(self):
         obs = self._curr_obs
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
-        pose_delta = torch.tensor(
+        self.pose_delta = torch.tensor(
             pu.get_rel_pose_change(curr_pose, self.last_pose), device=self.device
         )
         self.last_pose = curr_pose
-        self.pose_delta = pose_delta
         if torch.norm(self.pose_delta[:2]).item() < 0.05:
             self.stuck_counter += 1
         else:

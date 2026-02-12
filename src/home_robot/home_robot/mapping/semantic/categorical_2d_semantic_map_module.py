@@ -481,6 +481,12 @@ class Categorical2DSemanticMapModule(nn.Module):
         Heuristic to mark stair-like regions as obstacles
         based on absence of ground in visible region.
         """
+        H, W = voxels.shape[:2]
+        return (
+            torch.zeros(H, W, dtype=torch.uint8, device=voxels.device),
+            torch.zeros(H, W, dtype=torch.uint8, device=voxels.device)
+        )
+
         visible_ground = visible_ground.cpu().numpy()
         #! myTODO: Hardcoded. Fix this later
         visible_ground[80:] = 0

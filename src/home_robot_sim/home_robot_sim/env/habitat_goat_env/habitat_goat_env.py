@@ -126,7 +126,7 @@ class HabitatGoatEnv(HabitatEnv):
             agent_obs = habitat_obs[agent_id]
             depth = self._preprocess_depth(agent_obs[f"depth"])
             obs = home_robot.core.interfaces.Observations(
-                rgb=agent_obs[f"rgb"],
+                rgb=agent_obs["rgb"],
                 depth=depth,
                 compass=habitat_obs["compass"][agent_id],
                 gps=self._preprocess_xy(habitat_obs["gps"][agent_id]),

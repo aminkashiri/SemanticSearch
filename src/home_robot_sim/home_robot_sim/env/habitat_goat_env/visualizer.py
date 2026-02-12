@@ -16,12 +16,8 @@ from habitat.utils.visualizations import maps
 
 import home_robot.utils.pose as pu
 import home_robot.utils.visualization as vu
-from habitat.utils.visualizations.utils import draw_collision
-from habitat.utils.render_wrapper import append_text_to_image
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
-from home_robot.perception.constants import LanguageNavCategories
 from home_robot.perception.constants import PaletteIndices as PI
-from home_robot.perception.constants import RearrangeDETICCategories
 
 from home_robot.utils.logger import get_logger
 
@@ -526,13 +522,19 @@ class Visualizer:
         return semantic_map_vis
 
     def _found_goal_detection(self, view: np.ndarray, alpha: float = 0.4) -> np.ndarray:
-        """overlay a green goal detected banner"""
+        """Overlay a green goal detected banner."""
+
         strip_width = view.shape[0] // 15
-        mask = np.ones(view.shape)
-        mask[strip_width:-strip_width] = 0
-        mask = mask == 1
-        view[mask] = (alpha * np.array([0, 255, 0]) + (1.0 - alpha) * view)[mask]
-        return append_text_to_image(view, ["Goal Detected"], font_size=0.5)
+        mask = np.ones(view.shape, dtype=bool)
+        mask[strip_width:-strip_width] = False
+
+        overlay_color = np.array([0, 255, 0], dtype=np.uint8)
+
+        view = view.copy()
+        view[mask] = (
+            alpha * overlay_color + (1.0 - alpha) * view
+        )[mask].astype(np.uint8)
+        return append_text_to_image_cv2(view, ["Goal Detected"])
 
     def prepare_for_vis(
         self, frame, text, shape, set_found_goal=False, set_collision=False
@@ -551,8 +553,8 @@ class Visualizer:
 
         # frame = self._write_metrics(frame, metrics)
 
-        if set_collision:
-            frame = draw_collision(frame)
+        # if set_collision:
+        #     frame = draw_collision(frame)
 
         frame = self._add_border(frame, border_size)
 
@@ -575,3 +577,47 @@ class Visualizer:
             cv2.LINE_AA,
         )
         return cv2.resize(frame, shape)
+
+def append_text_to_image_cv2(
+    image: np.ndarray,
+    lines,
+    font_scale: float = 0.6,
+    thickness: int = 1,
+    color=(255, 255, 255),
+    bg_color=(0, 128, 0),
+    padding: int = 5,
+):
+    """
+    Append text lines to the top of an image using OpenCV.
+    """
+    img = image.copy()
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    y = padding + 20
+
+    for line in lines:
+        (w, h), _ = cv2.getTextSize(line, font, font_scale, thickness)
+
+        # Draw background rectangle
+        cv2.rectangle(
+            img,
+            (padding - 2, y - h - 5),
+            (padding + w + 2, y + 5),
+            bg_color,
+            -1,
+        )
+
+        # Draw text
+        cv2.putText(
+            img,
+            line,
+            (padding, y),
+            font,
+            font_scale,
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+        y += h + 10
+    return img
