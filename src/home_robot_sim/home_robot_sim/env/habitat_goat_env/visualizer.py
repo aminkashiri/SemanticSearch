@@ -12,7 +12,6 @@ import cv2
 import numpy as np
 import skimage.morphology
 from PIL import Image
-from habitat.utils.visualizations import maps
 
 import home_robot.utils.pose as pu
 import home_robot.utils.visualization as vu
@@ -97,7 +96,6 @@ class Visualizer:
         self.default_vis_dir = f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}"
         self._dataset = dataset
         os.makedirs(self.default_vis_dir, exist_ok=True)
-        self.episodes_data_path = config.habitat.dataset.data_path
 
         self.num_sem_categories = semantic_category_mapping.num_sem_categories + 1
         self.map_resolution = config.AGENT.SEMANTIC_MAP.map_resolution
@@ -108,7 +106,6 @@ class Visualizer:
         )
 
         self.vis_dir = None
-        self.image_vis = None
         self.font = cv2.FONT_HERSHEY_SIMPLEX
         self.font_scale = 0.6
         self.text_color = (20, 20, 20)  # BGR
@@ -119,7 +116,6 @@ class Visualizer:
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
-        self.image_vis = None
 
     def set_vis_dir(self, dir_name:str):
         self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
@@ -172,6 +168,7 @@ class Visualizer:
             semantic_map[border_pixels > 0] = PI.INSTANCE_BORDER
 
     def get_td_map(self, top_down_map: np.ndarray) -> np.ndarray:
+        from habitat.utils.visualizations import maps
         td_map = maps.colorize_draw_agent_and_fit_to_height(
             top_down_map, output_height=top_down_map["map"].shape[0]
         )
@@ -277,9 +274,6 @@ class Visualizer:
             inst_goal_found,
             is_collision
         )
-
-        # if instance_memory is not None:
-        #     image_vis = self._visualize_instance_counts(image_vis, instance_memory)
 
 
         if agent_id is None:

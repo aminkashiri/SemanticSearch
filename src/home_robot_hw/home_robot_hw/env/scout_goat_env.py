@@ -20,7 +20,7 @@ from home_robot.core.interfaces import DiscreteNavigationAction, Observations
 from home_robot.perception.constants import GoatCategories
 from home_robot.utils.geometry import xyt2sophus
 from home_robot.utils.logger import get_logger
-from home_robot_sim.env.habitat_goat_env.visualizer import Visualizer
+from home_robot_hw.env.visualizer import Visualizer
 
 from home_robot_hw.remote import ScoutClient
 
@@ -67,7 +67,7 @@ class ScoutGoatEnv:
         
         # Setup visualizer - FIX: only pass config
         if self.visualization_level > 0:
-            self.visualizer = Visualizer(config)
+            self.visualizer = Visualizer(config, self.semantic_category_mapping)
         
         if self.verbose:
             print(f"[SCOUT_ENV] Connecting to ScoutClient...")
@@ -162,14 +162,13 @@ class ScoutGoatEnv:
     
     
     def reset_vis_dir(self):
-        if self.visualizer is not None:
-            if getattr(self.config, 'SEQ', True):
-                episode_id_str = f"{self.episode_id}_{self.current_task_idx}"
-            else:
-                episode_id_str = str(self.episode_id)
-            self.visualizer.set_vis_dir(self.scene_id, episode_id_str)
-            if self.verbose:
-                print(f"[SCOUT_ENV] Vis dir: {self.scene_id}_{episode_id_str}")
+        if self.visualization_level > 0:
+            dir_name = f"{self.scene_id}_{self.episode_id}"
+            if self.config.SEQ:
+                dir_name = f"{dir_name}_{self.current_task_idx}"
+            self.visualizer.set_vis_dir(
+                dir_name
+            )
     
     def get_observation(self) -> Observations:
         if not self._last_obs is None:

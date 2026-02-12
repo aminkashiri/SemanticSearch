@@ -85,17 +85,17 @@ class GoatAgent(Agent):
             self.device = torch.device(f"cuda:{self.device_id}")
 
         self.num_sem_categories = len(vocabulary)
-        camera_params = self._get_camera_params(config)
+        env_params = self._get_env_params(config)
         agent_cell_radius = int(
             np.ceil(config.AGENT.radius * 100.0 / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
         self.semantic_map_module = Categorical2DSemanticMapModule(
             device=self.device,
-            frame_height=camera_params['height'],
-            frame_width=camera_params['width'],
-            camera_height=camera_params['camera_height'],
-            hfov=camera_params['hfov'],
-            max_depth=camera_params['max_depth'],
+            frame_height=env_params['height'],
+            frame_width=env_params['width'],
+            camera_height=env_params['camera_height'],
+            hfov=env_params['hfov'],
+            max_depth=env_params['max_depth'],
             num_sem_categories=self.num_sem_categories,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
@@ -117,7 +117,7 @@ class GoatAgent(Agent):
                 40 if config.AGENT.exploration_type == "raycast" else 30
             ),  #! myTODO: Hardcoded 3
             gaze_distance=(
-                camera_params['max_depth']
+                env_params['max_depth']
                 if config.AGENT.exploration_type == "raycast"
                 else 3
             ),  #! myTODO: Hardcoded 3
@@ -140,13 +140,14 @@ class GoatAgent(Agent):
         )
         self.max_subtasks_per_episode = config.ENVIRONMENT.max_subtasks_per_episode
 
+
         if config.AGENT.panorama_start:
-            panorama_start_steps = int(360 / config.habitat.simulator.turn_angle)
+            panorama_start_steps = int(360 / env_params["turn_angle"])
         else:
             panorama_start_steps = 0
 
         self.planner = DiscretePlanner(
-            turn_angle=config.habitat.simulator.turn_angle,
+            turn_angle=env_params["turn_angle"],
             collision_threshold=config.AGENT.PLANNER.collision_threshold,
             step_size=config.AGENT.PLANNER.step_size,
             obs_dilation_selem_radius=config.AGENT.PLANNER.obs_dilation_selem_radius,
@@ -190,7 +191,7 @@ class GoatAgent(Agent):
         else:
             return config.habitat.task.type
 
-    def _get_camera_params(self, config) -> dict:
+    def _get_env_params(self, config) -> dict:
         """Get camera parameters based on mode (sim vs real)."""
         if self.real_world:
             # Real world: use ENVIRONMENT config
