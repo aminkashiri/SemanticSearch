@@ -624,7 +624,7 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         yaw = torch.tensor(0)
         depth = obs[3, :, :].float()
-        depth[depth > self.max_depth] = 0 # If changed max depth, stairs code should also be changed
+        # depth[depth > self.max_depth] = 0 # If changed max depth, stairs code should also be changed
 
         # * This point cloud is with respect to cameras location. Is it not converted to world's coords.
         point_cloud_t = du.get_point_cloud_from_z_t(

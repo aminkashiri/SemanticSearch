@@ -695,7 +695,8 @@ class DiscretePlanner:
             goal_cells = np.argwhere(goal_instance_map == 1)
             distances = np.linalg.norm(goal_cells - np.asarray(location), axis=1)
             dist_to_closest = float(distances.min()) * 0.05
-            if dist_to_closest < 0.5:
+            # print("dist to closest goal cell: ", dist_to_closest)
+            if dist_to_closest < self.stop_distance:
                 return True, True, None, None
 
         # goal_map = add_boundary(goal_map, value=0)

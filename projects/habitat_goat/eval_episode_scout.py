@@ -246,7 +246,7 @@ def main():
             env.apply_action(action, info)
             pbar.update(1)
 
-            if action["action"] == 0:
+            if action["action"] == DiscreteNavigationAction.STOP:
                 env.add_subepisode_metrics(all_subtask_metrics, action)
                 if not env.episode_over:
                     agent.reset_vis_dir(

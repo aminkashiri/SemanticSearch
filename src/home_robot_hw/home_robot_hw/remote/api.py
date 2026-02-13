@@ -12,30 +12,6 @@ import rospy
 # from .ros import ScoutRosInterface
 # from home_robot_hw.constants import ControlMode
 
-# The following code block is for placeholder purposes to satisfy class dependency
-# Replace with actual imports/definitions if they are external
-class ScoutNavigationClient:
-    def __init__(self, ros_client, nav_client):
-        pass
-    def enable(self):
-        return True
-    def disable(self):
-        pass
-    def wait(self):
-        pass
-    def home(self):
-        pass
-    def navigate_to(self, target, relative, blocking):
-        pass
-class ScoutRosInterface:
-    def __init__(self, **kwargs):
-        pass
-    def get_images(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        # Placeholder for actual implementation in ros.py
-        # Must return (rgb, depth, xyz)
-        return np.zeros((10, 10, 3)), np.zeros((10, 10)), np.zeros((10, 10, 3))
-    def get_base_pose(self):
-        return np.zeros(3)
     
 class ControlMode:
     NAVIGATION = "navigation"

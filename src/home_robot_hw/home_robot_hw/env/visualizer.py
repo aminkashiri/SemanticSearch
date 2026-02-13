@@ -255,7 +255,7 @@ class Visualizer:
                 main_frame[
                     V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
                     V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X1 + V.FIRST_PERSON_W,
-                ] = self.prepare_for_vis(depth_frame / depth_frame.max() * 255.0, "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
+                ] = self.prepare_for_vis((depth_frame / depth_frame.max() * 255.0).astype(np.uint8), "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
 
         main_frame[V.Y1 : V.Y2, V.RGB_X1 : V.RGB_X2] = self.prepare_for_vis(
             rgb_frame,

@@ -1,0 +1,30 @@
+{
+    "description": "Scout GOAT Navigation Tasks - Real World",
+    "version": "1.0",
+    "episodes": [
+        {
+            "episode_id": 0,
+            "tasks": [
+                {
+                    "type": "objectnav",
+                    "category": "cup"
+                },
+                {
+                    "type": "objectnav",
+                    "category": "chair",
+                    "description": "Navigate to a blue chair"
+                }
+            ]
+        },
+        {
+            "episode_id": 1,
+            "tasks": [
+                {
+                    "type": "objectnav",
+                    "category": "chair",
+                    "description": "Navigate to a blue chair"
+                }
+            ]
+        }
+    ]
+}
