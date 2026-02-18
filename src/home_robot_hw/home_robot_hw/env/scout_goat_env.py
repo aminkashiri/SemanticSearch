@@ -21,6 +21,10 @@ from home_robot.perception.constants import GoatCategories
 from home_robot.utils.geometry import xyt2sophus
 from home_robot.utils.logger import get_logger
 from home_robot_hw.env.visualizer import Visualizer
+from home_robot.utils.constants import (
+    MAX_DEPTH_REPLACEMENT_VALUE,
+    MIN_DEPTH_REPLACEMENT_VALUE,
+)
 
 from home_robot_hw.remote import ScoutClient
 
@@ -34,6 +38,7 @@ class ScoutGoatEnv:
     
     def __init__(self, config, task_config_file):
         self.verbose = getattr(config, 'VERBOSE', False)
+        self.verbose = True
         
         if self.verbose:
             print(f"\n{'='*60}\n[SCOUT_ENV] Initializing ScoutGoatEnv\n{'='*60}")
@@ -45,6 +50,8 @@ class ScoutGoatEnv:
         
         self.min_depth = config.ENVIRONMENT.min_depth
         self.max_depth = config.ENVIRONMENT.max_depth
+        self.height = config.ENVIRONMENT.frame_height
+        self.width = config.ENVIRONMENT.frame_width
         
         if self.verbose:
             print(f"[SCOUT_ENV] Depth range: {self.min_depth}m - {self.max_depth}m")
@@ -58,11 +65,6 @@ class ScoutGoatEnv:
         
         self.semantic_category_mapping = GoatCategories(self.vocabulary)
         
-        if self.verbose:
-            print(f"[SCOUT_ENV] Semantic categories: {self.semantic_category_mapping.num_sem_categories}")
-            for cat in list(self.vocabulary)[:5]:
-                cat_id = self.semantic_category_mapping.get_category_id(cat)
-                print(f"[SCOUT_ENV]   '{cat}' -> ID {cat_id}")
         
         
         # Setup visualizer - FIX: only pass config
@@ -153,11 +155,6 @@ class ScoutGoatEnv:
         if self.verbose:
             print(f"[SCOUT_ENV] Episode {self.episode_id}: {self.current_episode.get('description', 'GOAT Episode')}")
             print(f"[SCOUT_ENV] Tasks ({len(self.current_episode['tasks'])}):")
-            for i, task in enumerate(self.current_episode['tasks']):
-                cat = task.get('category', task.get('description', 'N/A'))
-                task_type = task.get('type', 'objectnav')
-                sem_id = self.semantic_category_mapping.get_category_id(cat)
-                print(f"[SCOUT_ENV]   {i+1}. {task_type.upper()}: '{cat}' (semantic_id={sem_id})")
             print(f"[SCOUT_ENV] ================================\n")
     
     
@@ -199,6 +196,10 @@ class ScoutGoatEnv:
             print(f"[SCOUT_ENV] Relative pose: x={gps[0]:.3f}, y={gps[1]:.3f}, θ={np.degrees(theta):.1f}°")
         
         depth = self._preprocess_depth(depth)
+        rgb = self._preprocess_rgb(rgb)
+        if self.verbose:
+            print(f"[SCOUT_ENV] RGB shape: {rgb.shape}, dtype: {rgb.dtype}")
+            print(f"[SCOUT_ENV] Depth shape: {depth.shape}, range: [{depth.min():.3f}, {depth.max():.3f}]m")
         
         tasks = self._preprocess_goals(self.current_episode["tasks"])
         
@@ -227,17 +228,21 @@ class ScoutGoatEnv:
         
         return obs
     
+    def _preprocess_rgb(self, rgb: np.ndarray) -> np.ndarray:
+        rgb = cv2.resize(rgb, (self.width, self.height), interpolation=cv2.INTER_LINEAR) 
+        return rgb
+
     def _preprocess_depth(self, depth: np.ndarray) -> np.ndarray:
         if depth.ndim == 3:
             depth = depth[:, :, 0]
-        depth = np.where(depth > 10.0, 0.0, depth)
-        depth = np.where(depth < 0.0, 0.0, depth)
-        depth = np.where(np.isnan(depth), 0.0, depth)
-        depth = np.where(np.isinf(depth), 0.0, depth)
-        depth_clean = depth.copy()
-        depth_clean[depth < self.min_depth] = 0.0
-        depth_clean[depth > self.max_depth] = 0.0
-        return depth_clean
+
+        # depth = cv2.resize(depth, (self.width, self.height), interpolation=cv2.INTER_NEAREST) # Not average!
+        depth = depth[::2, ::2] # FIX: simple downsample by 2 to match RGB size (assuming original is 1280x720 and target is 640x360)
+        depth = np.where(depth > self.max_depth, MAX_DEPTH_REPLACEMENT_VALUE, depth)
+        depth = np.where(depth < self.min_depth, MIN_DEPTH_REPLACEMENT_VALUE, depth)
+        depth = np.where(np.isnan(depth), MAX_DEPTH_REPLACEMENT_VALUE, depth)
+        depth = np.where(np.isinf(depth), MAX_DEPTH_REPLACEMENT_VALUE, depth)
+        return depth
     
     
     
@@ -315,7 +320,7 @@ class ScoutGoatEnv:
                     print(f"[SCOUT_ENV] ✗ Navigation error: {e}")
         
         self.timestep += 1
-        rospy.sleep(0.1)
+        rospy.sleep(0.5)
         
         if self.verbose:
             print(f"[SCOUT_ENV] ----- action complete (timestep={self.timestep}) -----\n")
@@ -323,26 +328,11 @@ class ScoutGoatEnv:
         self._last_obs = None
     
     def add_subepisode_metrics(self, all_metrics: Dict, action: Any) -> None:
-        if isinstance(action, dict):
-            task_idx = action.get("action_args", {}).get("task_idx", self.current_task_idx - 1)
-        else:
-            task_idx = self.current_task_idx - 1
-        if task_idx < 0:
-            task_idx = 0
-        
-        task_info = {}
-        if task_idx < len(self.current_episode["tasks"]):
-            task = self.current_episode["tasks"][task_idx]
-            task_info = {"task_type": task.get("type", "objectnav"), "category": task.get("category", "unknown")}
-        
+        task_idx = action["action_args"]["task_idx"]
         all_metrics[task_idx] = {
             "timesteps": self.timestep,
             "success": True,
-            "spl": np.nan,
-            "distance_to_goal": np.nan,
-            **task_info,
         }
-        
         if self.verbose:
             print(f"[SCOUT_ENV] Metrics for task {task_idx}: {all_metrics[task_idx]}")
         logger.info(f"{self.scene_id}_{self.episode_id}_{task_idx} complete")
@@ -367,7 +357,7 @@ class ScoutGoatEnv:
         return EpisodeWrapper(self)
 
     def _preprocess_action(self, action) -> int:
-        action_enum = action.get("action", action)
+        action_enum = action["action"]
         return action_enum
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
