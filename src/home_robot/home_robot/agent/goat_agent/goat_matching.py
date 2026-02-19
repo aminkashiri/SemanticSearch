@@ -3,20 +3,23 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import Any, Dict, List, Optional, Tuple, Union
-
 import clip
+import torch
+import logging
 import matplotlib
 import numpy as np
-import torch
-from torchvision.transforms import ToPILImage
 from tqdm import tqdm
-
+from torchvision.transforms import ToPILImage
+from typing import Any, Dict, List, Optional, Tuple, Union
 from home_robot.agent.imagenav_agent.superglue import Matching
 from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
 matplotlib.use("Agg")
+
+class MatchingLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"[MATCHING] {msg}", kwargs
 
 class GoatMatching(Matching):
     def __init__(
@@ -26,7 +29,7 @@ class GoatMatching(Matching):
         default_vis_dir: str,
         print_images: bool,
         instance_memory: InstanceMemory,
-        logger,
+        log,
         cat_match_threshold: float,
     ) -> None:
         super().__init__(device, config, default_vis_dir, print_images)
@@ -44,7 +47,7 @@ class GoatMatching(Matching):
             "imagenav": config.score_thresh_image,
             "objectnav": cat_match_threshold,
         }
-        self.log = logger 
+        self.log = MatchingLogger(log, None) 
 
 
     def match_to_category(

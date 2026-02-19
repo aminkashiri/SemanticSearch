@@ -11,10 +11,8 @@ from typing import List
 import matplotlib.cm as cm
 from bresenham import bresenham
 from matplotlib.colors import Normalize
-from home_robot.utils.logger import get_logger
 from home_robot.utils.visualization import visualize_map
 
-logger = get_logger()
 
 
 def convert_to_cmap(subset):
@@ -44,6 +42,7 @@ class FMMPlanner:
     def __init__(
         self,
         traversible: np.ndarray,
+        log,
         scale: int = 1,
         step_size: int = 5,
         goal_tolerance: float = 2.0,
@@ -82,6 +81,7 @@ class FMMPlanner:
         self.debug = debug
         # self.goal_map = None
         self.vis_postfix = vis_postfix
+        self.log = log
 
     def set_goal(self, goal):
         """Set planner goal. Goal should be of size 2, containing x and y positions."""
@@ -182,7 +182,6 @@ class FMMPlanner:
         dist_vis[sub_h:, :sub_w] = convert_to_cmap(vis_list[2])
         dist_vis[sub_h:, sub_w:] = convert_to_cmap(vis_list[3])
 
-        # logger.debug(f"SAVING 6.get_stg")
         cv2.imwrite(
             os.path.join(
                 self.vis_dir, f"{prefix}{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
@@ -278,11 +277,11 @@ class FMMPlanner:
         vis_list.append(subset.copy())
 
         stop = subset[self.du, self.du] < self.goal_tolerance and obstacle_mask[self.du, self.du] != True
-        logger.debug(
+        self.log.debug(
             f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}"
         )
-        logger.debug(f"self.goal_tolerance {self.goal_tolerance}")
-        logger.debug(f"stop {stop}")
+        self.log.debug(f"self.goal_tolerance {self.goal_tolerance}")
+        self.log.debug(f"stop {stop}")
 
         subset -= subset[self.du, self.du]
         # ratio1 = subset / dist_mask
@@ -296,7 +295,7 @@ class FMMPlanner:
 
         # #1 First attemp: Choose a safe reachable stg
         stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
-        logger.debug(
+        self.log.debug(
             f"subset[stgx, stgy] = {subset[stg_x, stg_y]}"
         )
         # if stg_x == self.du and stg_y == self.du:
@@ -372,7 +371,7 @@ class FMMPlanner:
         """
         Find the nearest point to a goal which is traversible
         """
-        logger.debug(f"Dilating goal map")
+        self.log.debug(f"Dilating goal map")
 
         planner = FMMPlanner(
             self.traversible,
@@ -395,14 +394,14 @@ class FMMPlanner:
 
         #! set multigoal always sets masked cell to max+1, and it that is 1, it means max is 0, which means we found no possible path to goal.
         if np.max(dist_map) != 1.0:
-            logger.debug(
+            self.log.debug(
                 f"Number of traversible points within distance {distance} (in pixels) is {np.sum(dist_map < distance)}"
             )
-            logger.debug(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
-            logger.debug(f"len unique values: {len(np.unique(dist_map))}")
+            self.log.debug(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
+            self.log.debug(f"len unique values: {len(np.unique(dist_map))}")
             dilated_goal_map = dist_map < distance
         else:
-            logger.error(
+            self.log.error(
                 f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
             )
             raise Exception(

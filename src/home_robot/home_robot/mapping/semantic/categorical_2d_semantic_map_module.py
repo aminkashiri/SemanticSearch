@@ -5,6 +5,7 @@
 
 import cv2
 import torch
+import logging
 import matplotlib
 import numpy as np
 import torch.nn as nn
@@ -20,7 +21,6 @@ from torch.nn import functional as F
 import home_robot.utils.rotation as ru
 from typing import Optional, Tuple, List
 import home_robot.mapping.map_utils as mu
-from home_robot.utils.logger import get_logger
 from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.utils.spot import draw_circle_segment, fill_convex_hull
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
@@ -29,7 +29,10 @@ from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 debug_maps = False
 matplotlib.use("Agg")
 
-logger = get_logger()
+class UpdateStateLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        # modify the message however you want
+        return f"[UPDATE_STATE] {msg}", kwargs
 
 def compute_known_cells_map(
     obstacle_map_tensor, robot_pos, max_range, gaze_width, num_beams=360
@@ -191,7 +194,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         gaze_width=30,
         gaze_distance=3,
         agent_cell_radius: int = 1,
-        print_images: bool = False
+        print_images: bool = False,
+        log=None,
     ):
         """
         Arguments:
@@ -286,6 +290,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.avg_pooling_layer = nn.AvgPool2d(self.du_scale)
         self._disk_masks = {}
         self.print_images = print_images
+        self.log = UpdateStateLogger(log, None)
 
     @torch.no_grad()
     def forward(
@@ -334,7 +339,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             seq_origins: sequence of local map origins of shape
              (3)
         """
-        logger.debug(f"Updating maps and current position")
+        self.log.debug(f"Updating maps and current position")
 
         state.local_map, state.local_pose = self._update_local_map_and_pose(
             obs,
@@ -355,7 +360,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             state.map_size_parameters,
         )
 
-        logger.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
+        self.log.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
         return (
             # map_features,
             state
@@ -419,7 +424,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                 # update the per category instance map
                 #! 1
                 aggregated_temp_instance_map[category_id - 1] = category_instance_map
-                # logger.debug(f"Aggregated category {category_id} with temp instance ids {temp_ids}")
+                # self.log.debug(f"Aggregated category {category_id} with temp instance ids {temp_ids}")
 
         assert not curr_map[
             MC.NON_SEM_CHANNELS + self.num_sem_categories + num_instance_channels :,
@@ -1089,7 +1094,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                 max_instance_id += 1
                 global_instance_id = max_instance_id
             # update the id in instance memory
-            # logger.debug(f"Mapping temp id {temp_id} to global id {global_instance_id}")
+            # self.log.debug(f"Mapping temp id {temp_id} to global id {global_instance_id}")
             self.instance_memory.update_temp_id(temp_id, global_instance_id)
 
     def _update_global_map_instances(
@@ -1109,7 +1114,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             Used to return global map, but if we are updating it in place, we don't need to return anything.
         """
         # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
-        # logger.debug("Updating global map instances.")
+        # self.log.debug("Updating global map instances.")
         for i in range(self.num_sem_categories):
             if (
                 torch.sum(local_map[MC.NON_SEM_CHANNELS + i + self.num_sem_categories])
@@ -1127,7 +1132,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                     .item()
                 )
                 # if the local map has any object instances, update the global map with instance ids
-                # logger.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
+                # self.log.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
                 instance_channel = self._update_global_map_instances_for_one_channel(
                     global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
                     local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
@@ -1263,7 +1268,7 @@ class Categorical2DSemanticMapModule(nn.Module):
     #                 .item()
     #             )
     #             # if the local map has any object instances, update the global map with instance ids
-    #             # logger.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
+    #             # self.log.debug(f"Updating global map instances for category {i}, current max id {max_instance_id}.")
     #             instance_channel = self._merge_map_util(
     #                 global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],
     #                 local_map[MC.NON_SEM_CHANNELS + self.num_sem_categories + i],

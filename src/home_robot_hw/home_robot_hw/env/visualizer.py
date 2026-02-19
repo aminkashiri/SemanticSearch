@@ -18,9 +18,6 @@ import home_robot.utils.visualization as vu
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.perception.constants import PaletteIndices as PI
 
-from home_robot.utils.logger import get_logger
-
-logger = get_logger()
 
 rgb2bgr = lambda x: cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
 

@@ -7,6 +7,7 @@ import os
 import cv2
 import torch
 import psutil
+import logging
 import numpy as np
 from dataclasses import dataclass
 import home_robot.utils.pose as pu
@@ -36,6 +37,10 @@ class Task:
     goal_image_keypoints: np.ndarray = None
     goal_description: str = None
 
+class AgentLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"[AGENT] {msg}", kwargs
+
 
 class GoatAgent(Agent):
     """Simple object nav agent based on a 2D semantic map
@@ -50,7 +55,8 @@ class GoatAgent(Agent):
         
         self.is_multiagent = not agent_id is not None
         self.agent_id = agent_id
-        self.log = get_logger(agent_id=agent_id)
+        self._log = get_logger(agent_id=agent_id)
+        self.log = AgentLogger(self._log, None)
         self.max_steps = config.AGENT.max_steps
         self.task_type = self._get_task_type(config)
         self.seq_goals = bool(config.SEQ)
@@ -75,7 +81,7 @@ class GoatAgent(Agent):
             default_vis_dir=f"{config.DUMP_LOCATION}/images/{config.EXP_NAME}",
             print_images=self.visualization_level > 1,
             instance_memory=self.instance_memory,
-            logger=self.log,
+            log=self._log,
             cat_match_threshold=config.AGENT.cat_match_threshold,
         )
         if config.NO_GPU:
@@ -122,7 +128,8 @@ class GoatAgent(Agent):
                 else 3
             ),  #! myTODO: Hardcoded 3
             agent_cell_radius=agent_cell_radius,
-            print_images=self.visualization_level > 2
+            print_images=self.visualization_level > 2,
+            log=self._log
         )
         self.inst_goal_id = None
 
@@ -214,6 +221,7 @@ class GoatAgent(Agent):
                 'max_depth': camera.max_depth,
                 'turn_angle': config.habitat.simulator.turn_angle,
             }
+
     def _setup_perception(self, config, vocabulary):
         if "Goat-v1" in self.task_type:
             from home_robot.perception.detection.detic.detic_perception import (
@@ -356,6 +364,8 @@ class GoatAgent(Agent):
             instance_scores,
             category_scores
         )
+        # if self.total_timesteps % 10 == 0:
+        #     torch.save(self.semantic_map.global_map, os.path.join(self.planner.vis_dir, f'map_{self.total_timesteps}.pt'))
 
     def _get_vis_info(self, vis_inputs, action):
         if self.visualization_level < 1:

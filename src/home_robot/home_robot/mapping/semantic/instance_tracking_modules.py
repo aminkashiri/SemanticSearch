@@ -6,9 +6,6 @@ import cv2
 import numpy as np
 import torch
 
-from home_robot.utils.logger import get_logger
-logger = get_logger()
-
 # MIN_PIXELS = 1000
 # MIN_EDGE = 15
 print("DONT FORGET THIS CHANGE")

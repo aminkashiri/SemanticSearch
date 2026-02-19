@@ -10,13 +10,10 @@ import numpy as np
 from typing import Optional
 import torch.nn.functional as F
 from scipy.ndimage import label
-from home_robot.utils.logger import get_logger
 from home_robot.mapping.map_utils import MapSizeParameters, init_map_and_pose
 from home_robot.mapping.semantic.constants import MapConstants as MC
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 
-
-logger = get_logger()
 
 
 class Categorical2DSemanticMapState:

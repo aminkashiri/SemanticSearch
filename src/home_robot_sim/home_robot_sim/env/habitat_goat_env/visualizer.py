@@ -18,9 +18,6 @@ import home_robot.utils.visualization as vu
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.perception.constants import PaletteIndices as PI
 
-from home_robot.utils.logger import get_logger
-
-logger = get_logger()
 
 rgb2bgr = lambda x: cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
 
@@ -121,10 +118,9 @@ class Visualizer:
         self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
         shutil.rmtree(self.vis_dir, ignore_errors=True)
         os.makedirs(self.vis_dir, exist_ok=True)
-        if self.num_agents > 1:
-            for i in range(self.num_agents):
-                agent_dir = os.path.join(self.vis_dir, f"agent_{i}")
-                os.makedirs(agent_dir, exist_ok=True)
+        for i in range(self.num_agents):
+            agent_dir = os.path.join(self.vis_dir, f"agent_{i}")
+            os.makedirs(agent_dir, exist_ok=True)
 
 
     def _add_border(self, frame: np.ndarray, border_size: int) -> np.ndarray:

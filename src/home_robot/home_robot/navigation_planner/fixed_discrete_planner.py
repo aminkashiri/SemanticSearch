@@ -6,7 +6,7 @@ import os
 import cv2
 import math
 import skfmm
-import shutil
+import logging
 import numpy as np
 import skimage.morphology
 from typing import List, Tuple
@@ -50,6 +50,11 @@ def add_boundary(mat: np.ndarray, value=1) -> np.ndarray:
 def remove_boundary(mat: np.ndarray, value=1) -> np.ndarray:
     return mat[value:-value, value:-value]
 
+
+class PlannerLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        # modify the message however you want
+        return f"[PLANNER] {msg}", kwargs
 
 class DiscretePlanner:
     """
@@ -132,7 +137,7 @@ class DiscretePlanner:
         self.frontier_metric = frontier_metric
 
         self.agent_id = agent_id
-        self.log = get_logger(agent_id=agent_id)
+        self.log = PlannerLogger(get_logger(agent_id=agent_id), None)
         self.prefix = ""
         self.visualization_level = visualization_level
         self.ground_truth_semantics = ground_truth_semantics
@@ -446,6 +451,7 @@ class DiscretePlanner:
         free_goal_cells = self._get_closest_free_cell(goal_instance_map, traversible)
         planner = FMMPlanner(
             traversible,
+            self.log,
             step_size=self.step_size,
             vis_dir=self.vis_dir,
             print_images=self.visualization_level > 1,
@@ -704,6 +710,7 @@ class DiscretePlanner:
         self.log.debug(f"Getting short-term goal")
         planner = FMMPlanner(
             traversible,
+            self.log,
             step_size=self.step_size,
             vis_dir=self.vis_dir,
             print_images=self.visualization_level > 1,

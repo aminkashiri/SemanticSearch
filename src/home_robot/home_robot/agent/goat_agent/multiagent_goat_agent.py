@@ -8,8 +8,7 @@ from .goat_agent import GoatAgent, Task
 from typing import Any, Dict, List, Tuple
 from home_robot.core.interfaces import DiscreteNavigationAction
 
-
-class MultiAgentGoatAgent(GoatAgent):
+class BaseMultiAgentGoatAgent(GoatAgent):
     def __init__(
         self, config, vocabulary, agent_id=None, device_id: int = 0
     ):
@@ -22,10 +21,6 @@ class MultiAgentGoatAgent(GoatAgent):
         self.communication_cooldown = 5
         self.active_task_cooldown = 20
     
-    def act(self, other_agents=None):
-        neighbors = self._get_neighbors(other_agents)
-        self.communicate(neighbors)
-        return super().act(neighbors=neighbors)
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = super()._preprocess_tasks(tasks_obs)
@@ -156,6 +151,14 @@ class MultiAgentGoatAgent(GoatAgent):
             self.tasks_done[task_idx] = True
         else:
             self.log.debug("IDLE. Waiting for other agents to complete their tasks.")
+
+
+class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
+
+    def act(self, other_agents=None):
+        neighbors = self._get_neighbors(other_agents)
+        self.communicate(neighbors)
+        return super().act(neighbors=neighbors)
 
     def communicate(self, neighbors):
         # for key in self.others_active_task_remaining_time:
