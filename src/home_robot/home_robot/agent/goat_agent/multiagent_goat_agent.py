@@ -5,6 +5,7 @@
 
 import torch
 from .goat_agent import GoatAgent, Task
+from .map_merger import MapMerger
 from typing import Any, Dict, List, Tuple
 from home_robot.core.interfaces import DiscreteNavigationAction
 
@@ -20,7 +21,12 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.others_active_task_remaining_time = None
         self.communication_cooldown = 5
         self.active_task_cooldown = 20
-    
+        self.map_merger = MapMerger(
+            num_sem_categories=self.num_sem_categories,
+            resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
+            ransac_thresh=10.0,
+            iou_threshold=0.2,
+        )
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = super()._preprocess_tasks(tasks_obs)
@@ -120,7 +126,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.last_communication_time = {}
 
     def reset_vis_dir(self, scene_id, episode_id, current_task_idx=None):
-        return super().reset_vis_dir(scene_id, episode_id, None)
+        super().reset_vis_dir(scene_id, episode_id, None)
+        self.map_merger.vis_dir = self.semantic_map.vis_dir
 
     def _get_task_info(self, obs, action, info):
         if not action["action_args"]["task_idx"] is None:
@@ -152,54 +159,69 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         else:
             self.log.debug("IDLE. Waiting for other agents to complete their tasks.")
 
-
-class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
-
-    def act(self, other_agents=None):
-        neighbors = self._get_neighbors(other_agents)
-        self.communicate(neighbors)
-        return super().act(neighbors=neighbors)
-
-    def communicate(self, neighbors):
-        # for key in self.others_active_task_remaining_time:
-        for key in list(self.others_active_task_remaining_time.keys()):
-            self.others_active_task_remaining_time[key] -= 1
-            if self.others_active_task_remaining_time[key] <= 0:
-                del self.others_active_task_remaining_time[key]
-        for neighbor in neighbors:
-            last = self.last_communication_time.get(neighbor.agent_id, -1)
-            if self.total_timesteps - last > 0:
-                self._communicate_with_single_neighbor(neighbor)
-
-        lmb = self.semantic_map.lmb
-        self.semantic_map.local_map[:] = self.semantic_map.global_map[
-            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
-        ]
-
-    def _communicate_with_single_neighbor(self, neighbor):
-        data = self._get_communication_data()
-        neighbor_data = neighbor.receive_communication(self.agent_id, data)
-        self._merge_communication_data(neighbor_data)
-        self.last_communication_time[neighbor_data["agent_id"]] = self.total_timesteps
-
-    def receive_communication(self, sender_id, data):
-        self.last_communication_time[sender_id] = self.total_timesteps
-        self._merge_communication_data(data)
-        return self._get_communication_data()
-
     def _get_communication_data(self):
         return {
             "map": self.semantic_map.global_map,
-            "instances": self.instance_memory.instances,
+            # "instances": self.instance_memory.instances,
             "agent_id": self.agent_id,
             "tasks_done": self.tasks_done,
             "active_task": self.active_task,
+            "location": [
+                int(self.semantic_map.global_loc[0]),
+                int(self.semantic_map.global_loc[1]),
+            ],
         }
 
     def _merge_communication_data(self, data):
-        self.semantic_map_module.merge_neighbor_maps(
-            data["map"], self.semantic_map.global_map
-        )
+        my_loc = torch.tensor(self.semantic_map.global_loc, device=self.device)
+        if data.get("transformed_map") is None and not data.get("map") is None:
+
+            transformed_data = self.map_merger.get_transformed_map(
+                global_map=self.semantic_map.global_map,
+                neighbor_global_map=data["map"].to(self.device),
+                neighbor_loc=data["location"], # in its own frame
+            )
+
+            if not transformed_data["transform"] is None:
+                data["distance"] = (
+                    my_loc - transformed_data["transformed_location"]
+                ).float().norm().item() * self.semantic_map.resolution / 100
+                if data["distance"] < 3.0:
+                    data = {**data, **transformed_data}
+                    self.comm_log.info(
+                        f"Map merged with Agent {data['agent_id']}, "
+                        f"distance: {data['distance']}m"
+                    )
+                else:
+                    self.comm_log.warning(
+                        f"Map alignment with Agent {data['agent_id']} is unreliable, "
+                        f"distance: {data['distance']}m, "
+                        f"skipping merge"
+                    )
+
+
+        if not data.get("transformed_map") is None:
+            merged_map = self.map_merger._merge(
+                self.semantic_map.global_map, data["transformed_map"]
+            )
+            self.semantic_map.global_map[:] = merged_map
+            if self.visualization_level > 0:
+                self.map_merger._visualize(
+                    self.semantic_map.global_map,
+                    data["transformed_map"],
+                    merged_map,
+                    self.semantic_map.global_loc,
+                    data["location"],
+                    data["transformed_location"].cpu().numpy(),
+                    data["transform"],
+                )
+        else:
+            if data.get("map") is not None:
+                self.map_merger._visualize_failed(
+                    self.semantic_map.global_map, data["map"],
+                    self.semantic_map.global_loc,
+                    data["location"])
+
         # self.semantic_map_module.merge_instance_memory(
         #     data["instances"], self.semantic_map.global_map
         # )
@@ -222,6 +244,51 @@ class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
             else:
                 self.others_active_task_remaining_time[neighbor_task] = self.active_task_cooldown
 
+    def _update_steps(self):
+        super()._update_steps()
+        self.map_merger.timestep = self.get_subtask_timestep()
+
+class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
+
+    def act(self, other_agents=None):
+        neighbors = self._get_neighbors(other_agents)
+        self.communicate(neighbors)
+        return super().act(neighbors=neighbors)
+
+    def communicate(self, neighbors):
+        # for key in self.others_active_task_remaining_time:
+        for key in list(self.others_active_task_remaining_time.keys()):
+            self.others_active_task_remaining_time[key] -= 1
+            if self.others_active_task_remaining_time[key] <= 0:
+                del self.others_active_task_remaining_time[key]
+        for neighbor in neighbors:
+            last = self.last_communication_time.get(neighbor.agent_id, -1)
+            if self.total_timesteps - last > self.communication_cooldown:
+                self._communicate_with_single_neighbor(neighbor)
+
+        lmb = self.semantic_map.lmb
+        self.semantic_map.local_map[:] = self.semantic_map.global_map[
+            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
+        ]
+
+    def _communicate_with_single_neighbor(self, neighbor):
+        data = self._get_communication_data()
+        neighbor_data = neighbor.receive_communication(self.agent_id, data)
+        self._merge_communication_data(neighbor_data)
+        self.last_communication_time[neighbor_data["agent_id"]] = self.total_timesteps
+    
+    def _merge_communication_data(self, data):
+        # In simulations, there is no need to find any transformation, maps are already aligned, and global pose is in the same coord system.
+        import numpy as np
+        data["transform"] = np.eye(2,3)
+        data["transformed_map"] = data["map"]
+        data["transformed_location"] = data["location"]
+        return super()._merge_communication_data(data)
+
+    def receive_communication(self, sender_id, data):
+        self.last_communication_time[sender_id] = self.total_timesteps
+        self._merge_communication_data(data)
+        return self._get_communication_data()
 
     def _get_neighbors(self, other_agents):
         neighbors = []
