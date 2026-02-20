@@ -1168,35 +1168,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         state.local_map = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
         state.global_pose = state.local_pose + state.origins
 
-    def merge_neighbor_maps(
-        self,
-        neighbor_global_map: Tensor,
-        global_map: Tensor,
-    ):
-        # These channels should not be changed with other agents info
-        protected_channels = torch.tensor(
-            [
-                MC.AGENT_VISITED_MAP,
-                MC.BLACKLISTED_TARGETS_MAP,
-            ],
-            device=global_map.device,
-        )
-        all_channels = torch.arange(global_map.shape[0], device=global_map.device)
-        #! We should not merge instance map channels too, until we find a way to do it properly
-        merge_mask = ~torch.isin(all_channels, protected_channels) & (
-            all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
-        )
-
-        temp_copy = global_map.clone()
-        global_map[merge_mask] = torch.maximum(
-            global_map[merge_mask],
-            neighbor_global_map[merge_mask],
-        )
-        assert torch.equal(
-            temp_copy[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
-            global_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :],
-        )
-
     def _get_disk_mask(self, radius):
         """Cache disk masks for reuse"""
         if radius not in self._disk_masks:

@@ -21,7 +21,8 @@ from omegaconf import DictConfig, OmegaConf
 from habitat.config.default import get_config
 from home_robot.utils.logger import get_logger
 from home_robot.core.interfaces import DiscreteNavigationAction
-from home_robot.agent.goat_agent.multiagent_goat_agent import MultiAgentGoatAgent
+from home_robot.agent.goat_agent.multiagent_goat_agent import SimulationMultiAgentGoatAgent
+from home_robot.agent.goat_agent.realworld_goat_agent import RealWorldGoatAgent
 from home_robot_sim.env.habitat_goat_env.habitat_goat_env import (
     MultiAgentHabitatGoatEnv,
 )
@@ -113,9 +114,11 @@ if __name__ == "__main__":
 
     habitat_env = Env(config)
     env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
-    agents: List[MultiAgentGoatAgent] = []
+    # agents: List[SimulationMultiAgentGoatAgent] = []
+    agents: List[RealWorldGoatAgent] = []
     for i in range(config.NUM_AGENTS):
-        agents.append(MultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
+        # agents.append(SimulationMultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
+        agents.append(RealWorldGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
@@ -167,7 +170,8 @@ if __name__ == "__main__":
                 other_agents = list(
                     filter(lambda x: x.agent_id != agent.agent_id, agents)
                 )
-                action, info, stuck = agent.act(other_agents)
+                action, info, stuck = agent.act()
+                # action, info, stuck = agent.act(other_agents)
 
                 actions.append(action)
                 infos.append(info)
