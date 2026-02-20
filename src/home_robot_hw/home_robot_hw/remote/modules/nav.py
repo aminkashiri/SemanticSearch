@@ -69,54 +69,62 @@ class ScoutNavigationClient(AbstractControlModule):
         self._ros_client.velocity_pub.publish(msg)
 
     @enforce_enabled
-    def navigate_to(
-        self,
-        xyt: Iterable[float],
-        relative: bool = False,
-        position_only: bool = False,
-        avoid_obstacles: bool = False,
-        blocking: bool = True,
-    ):
-        """
-        FIX: For this simplified velocity-control model, we treat the input XYT 
-        as the immediate (v, w) velocity command to execute.
-
-        UPDATED: The command now "latches" (stays active) for 0.5 seconds with twice the value
-        before a zero-velocity command is sent to stop the robot.
-        """
-        # Parse inputs
-        assert len(xyt) == 3, "Input goal location must be of length 3."
-
-        if avoid_obstacles:
-            raise NotImplementedError("Obstacle avoidance unavailable.")
-
-        # Extract linear velocity (v) from x and angular velocity (w) from theta
-        v = xyt[0]*2  # Linear velocity (x)
-        w = xyt[2]*2  # Angular velocity (theta)
+    def navigate_to(self, xyt, relative=True, blocking=True):
+        # 1. Capture Initial State
+        start_pose = self.get_base_pose()
+        x0, y0, th0 = start_pose[0], start_pose[1], start_pose[2]
         
-        if abs(v) <0.1 and abs(w) <0.1:
-            print("[HELLLLLOOOOOO!!!] Zero velocity command received; no movement executed.")
-            return  # No movement needed
+        target_dist = abs(xyt[0])  # Linear goal (0.25m)
+        target_ang = abs(xyt[2])   # Angular goal (rad)
         
-        # 1. Create the desired Twist message
-        move_msg = Twist()
-        move_msg.linear.x = v
-        move_msg.angular.z = w
+        # 2. PID/P Gains (Tune these based on Scout's responsiveness)
+        Kp_linear = 2.0   
+        Kp_angular = 1.5
         
+        # Velocity Limits 
+        min_v, max_v = 0.08, 0.5  # m/s
+        min_w, max_w = 0.15, 1.0  # rad/s
+        
+        # Tolerance: Stop when within 1cm or 1 degree
+        linear_tol = 0.01 
+        angular_tol = np.radians(1.0)
 
-        # 2. Publish the velocity command to start motion
-        print(f"Setting velocity for 0.5s: linear={v:.2f} m/s, angular={w:.2f} rad/s")
-        self._ros_client.velocity_pub.publish(move_msg)
+        rate = rospy.Rate(50)
+        while not rospy.is_shutdown():
+            curr_pose = self.get_base_pose()
+            curr_x, curr_y, curr_th = curr_pose[0], curr_pose[1], curr_pose[2]
 
-        # --- Wait for 0.5 seconds to "latch" the movement ---
-        # Since 'rospy' is imported, we use its sleep function.
-        rospy.sleep(0.5) 
-        # ---------------------------------------------------
+            # 3. Calculate Error (Distance Remaining)
+            dist_moved = np.sqrt((curr_x - x0)**2 + (curr_y - y0)**2)
+            ang_moved = abs(np.arctan2(np.sin(curr_th - th0), np.cos(curr_th - th0)))
+            
+            error_v = target_dist - dist_moved
+            error_w = target_ang - ang_moved
 
-        # 3. Publish a zero-velocity command to stop the robot
-        stop_msg = Twist() # All fields are 0.0 by default
-        print("Stopping velocity command.")
-        self._ros_client.velocity_pub.publish(stop_msg)
+            cmd = Twist()
+
+            # 4. Control Logic
+            if target_dist > 0 and error_v > linear_tol:
+                # Proportional output
+                v_out = error_v * Kp_linear
+                # Clamp between min (to prevent stall) and max (to prevent jerking)
+                cmd.linear.x = np.clip(v_out, min_v, max_v)
+            
+            elif target_ang > 0 and error_w > angular_tol:
+                w_out = error_w * Kp_angular
+                # Scout turns require more torque, so min_w is higher than min_v
+                cmd.angular.z = np.clip(w_out, min_w, max_w) * np.sign(xyt[2])
+            
+            else:
+                # Goal Reached
+                break
+
+            self._ros_client.velocity_pub.publish(cmd)
+            rate.sleep()
+
+        # 5. Final Stop
+        self._ros_client.velocity_pub.publish(Twist())
+        rospy.loginfo("Navigation goal reached and stopped.")
 
     @enforce_enabled
     def home(self):

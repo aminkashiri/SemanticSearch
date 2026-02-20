@@ -4,7 +4,7 @@ import json
 import rospy
 import argparse
 import numpy as np
-from time import time
+import time 
 from tqdm import tqdm
 from pathlib import Path
 
@@ -211,7 +211,7 @@ def main():
         env.reset_vis_dir()
         agent.reset(env.scene_id, env.episode_id)
 
-        episode_start = time()
+        episode_start = time.time()
         ep_step = 0
         all_subtask_metrics = {}
         pbar = tqdm(

@@ -10,19 +10,33 @@
                     "category": "cup"
                 },
                 {
-                    "type": "objectnav",
+                    "type": "languagenav",
                     "category": "chair",
                     "description": "Navigate to a blue chair"
+                },
+                {
+                    "type": "imagenav",
+                    "category": "april_tag",
+                    "image": "projects/habitat_goat/configs/image_goals/apriltag_grid.jpeg"
                 }
             ]
         },
-        {
+         {
             "episode_id": 1,
             "tasks": [
                 {
                     "type": "objectnav",
-                    "category": "chair",
-                    "description": "Navigate to a blue chair"
+                    "category": "monitor"
+                },
+                {
+                    "type": "languagenav",
+                    "category": "whiteboard",
+                    "description": "Navigate to a whiteboard"
+                },
+                {
+                    "type": "imagenav",
+                    "category": "microwave",
+                    "image": "projects/habitat_goat/configs/image_goals/microwave.jpeg"
                 }
             ]
         }

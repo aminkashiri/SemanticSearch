@@ -11,7 +11,7 @@ from sensor_msgs.msg import CameraInfo, Image
 
 from home_robot.utils.image import Camera
 from home_robot_hw.ros.msg_numpy import image_to_numpy
-
+import cv2
 
 class RosCamera(Camera):
     """compute camera parameters from ROS instead"""
@@ -127,22 +127,56 @@ class RosCamera(Camera):
         """Get time image was received last"""
         return self._t
 
-    def wait_for_image(self) -> None:
-        """Wait for image. Needs to be sort of slow, in order to make sure we give it time
-        to update the image in the backend."""
-        rospy.sleep(0.2)
-        rate = rospy.Rate(2)
+    def get_sharpness(self, img):
+        """
+        Calculates the focus measure using the Laplacian operator.
+        Higher values = Sharper image.
+        """
+        if img is None:
+            return 0
+        
+        # 1. Ensure image is in 8-bit grayscale for OpenCV
+        if img.dtype != np.uint8:
+            # If float (0-1), scale to 255
+            if img.max() <= 1.0:
+                img = (img * 255).astype(np.uint8)
+            else:
+                img = img.astype(np.uint8)
+
+        if len(img.shape) == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img
+
+        # 2. Compute Laplacian variance
+        return cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    def wait_for_image(self, threshold=100.0, timeout=2.0):
+        """
+        Extended API to wait for a non-blurry image.
+        Args:
+            threshold: Laplacian variance limit. 
+                       For 720p, 100 is 'decent', 300 is 'very sharp'.
+            timeout: Max time to wait in seconds.
+        """
+        rospy.loginfo(f"Waiting for sharp image (threshold {threshold})...")
+        start_time = rospy.get_time()
+        rate = rospy.Rate(10)
+
         while not rospy.is_shutdown():
             with self._lock:
-                if self.buffer_size is None:
-                    if self._img is not None:
-                        break
-                else:
-                    # Wait until we have a full buffer
-                    if len(self._buffer) >= self.buffer_size:
-                        break
-            rate.sleep()
+                img_to_check = self._img.copy() if self._img is not None else None
 
+            if img_to_check is not None:
+                score = self.get_sharpness(img_to_check)
+                if score >= threshold:
+                    return True
+                
+            if (rospy.get_time() - start_time) > timeout:
+                rospy.logwarn("Timeout reached: taking the last available image regardless of blur.")
+                return False
+                
+            rate.sleep()
     def get(self, device=None):
         """return the current image associated with this camera"""
         with self._lock:

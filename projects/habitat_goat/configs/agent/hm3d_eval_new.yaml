@@ -1,14 +1,14 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: test2
-REAL_WORLD: False
+EXP_NAME: real_world
+REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.
 DATASET: goat             # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
 # DATASET: habitat_objnav_2023             # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
 VISUALIZATION_LEVEL: 1    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
 GROUND_TRUTH_SEMANTICS: 0 # 1: use ground-truth semantics (for debugging / ablations)
-USE_YOLO: 1               # 1: use YOLO in addition to Detic for object detection
+USE_YOLO: 0               # 1: use YOLO in addition to Detic for object detection
 
 # Used for the real world experiments, and not simulations
 ENVIRONMENT:
