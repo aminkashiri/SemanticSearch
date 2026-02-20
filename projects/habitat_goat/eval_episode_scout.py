@@ -30,7 +30,7 @@ def read_args():
     These options override default configs.
     """
     parser = argparse.ArgumentParser()
-    project_config_default = "projects/habitat_goat/configs/agent/hm3d_eval_new.yaml"
+    project_config_default = "projects/habitat_goat/configs/agent/scout_eval.yaml"
     parser.add_argument(
         "--project_config_path",
         type=str,

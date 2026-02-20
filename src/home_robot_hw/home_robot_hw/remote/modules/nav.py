@@ -14,6 +14,7 @@ from home_robot_hw.constants import T_LOC_STABILIZE
 from home_robot_hw.ros.utils import matrix_to_pose_msg
 
 from .abstract import AbstractControlModule, enforce_enabled
+import numpy as np
 
 class ScoutNavigationClient(AbstractControlModule):
     """
@@ -78,11 +79,11 @@ class ScoutNavigationClient(AbstractControlModule):
         target_ang = abs(xyt[2])   # Angular goal (rad)
         
         # 2. PID/P Gains (Tune these based on Scout's responsiveness)
-        Kp_linear = 2.0   
-        Kp_angular = 1.5
+        Kp_linear = 2.5   
+        Kp_angular = 2.0
         
         # Velocity Limits 
-        min_v, max_v = 0.08, 0.5  # m/s
+        min_v, max_v = 0.1, 0.5  # m/s
         min_w, max_w = 0.15, 1.0  # rad/s
         
         # Tolerance: Stop when within 1cm or 1 degree

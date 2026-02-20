@@ -229,7 +229,7 @@ class ScoutGoatEnv:
         return obs
     
     def _preprocess_rgb(self, rgb: np.ndarray) -> np.ndarray:
-        rgb = cv2.resize(rgb, (self.width, self.height), interpolation=cv2.INTER_LINEAR) 
+        # rgb = cv2.resize(rgb, (self.width, self.height), interpolation=cv2.INTER_LINEAR) 
         return rgb
 
     def _preprocess_depth(self, depth: np.ndarray) -> np.ndarray:
@@ -237,7 +237,7 @@ class ScoutGoatEnv:
             depth = depth[:, :, 0]
 
         # depth = cv2.resize(depth, (self.width, self.height), interpolation=cv2.INTER_NEAREST) # Not average!
-        depth = depth[::2, ::2] # FIX: simple downsample by 2 to match RGB size (assuming original is 1280x720 and target is 640x360)
+        # depth = depth[::2, ::2] # FIX: simple downsample by 2 to match RGB size (assuming original is 1280x720 and target is 640x360)
         depth = np.where(depth > self.max_depth, MAX_DEPTH_REPLACEMENT_VALUE, depth)
         depth = np.where(depth < self.min_depth, MIN_DEPTH_REPLACEMENT_VALUE, depth)
         depth = np.where(np.isnan(depth), MAX_DEPTH_REPLACEMENT_VALUE, depth)
@@ -259,11 +259,15 @@ class ScoutGoatEnv:
                 goal_v["type"] = "objectnav"
 
             if goal_v["type"] == "imagenav":
-                image_path = Path(goal_v["image"])
-                if image_path.exists():
-                    img = cv2.imread(str(image_path))
-                    goal_v["image"] = img
-
+                # The goal_v["image"] somehow already has a numpy ndarray instead of a file path, so we skip loading it again. This is a bit hacky but works for now.
+                try:
+                    image_path = Path(goal_v["image"])
+                    if image_path.exists():
+                        img = cv2.imread(str(image_path))
+                        goal_v["image"] = img
+                except Exception as e:
+                    logger.warning(f"Error occurred while processing image: {e}")
+                    
         return goals
  
     def apply_action(self, action: Any, info: Optional[Dict[str, Any]] = None, prev_obs: Optional[Observations] = None) -> bool:
