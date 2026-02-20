@@ -41,12 +41,17 @@ class MapMerger:
         self.semantic_weight = semantic_weight
         self.vis_dir = vis_dir
         self.timestep = 0
+        self._cached_transforms: Dict[int, np.ndarray] = {}
+
+    def clear_cached_transforms(self):
+        self._cached_transforms.clear()
 
     def get_transformed_map(
         self,
         global_map: Tensor,  # (C, H, W) - this robot's map
         neighbor_global_map: Tensor,  # (C, H, W) - neighbor's map
         neighbor_loc: Tuple,  # (x, y) neighbor location (in its own frame)
+        neighbor_id: int,
     ) -> Dict:
         """
         Align neighbor's map to this robot's frame using feature matching
@@ -61,7 +66,11 @@ class MapMerger:
         """
         device = global_map.device
 
-        transform = self._estimate_transform(global_map, neighbor_global_map)
+        if neighbor_id in self._cached_transforms:
+            transform = self._cached_transforms[neighbor_id]
+            print(f"[MapMerger] Using cached transform for neighbor {neighbor_id}")
+        else:
+            transform = self._estimate_transform(global_map, neighbor_global_map)
 
         if transform is None:
             print(
@@ -79,23 +88,28 @@ class MapMerger:
             neighbor_global_map, transform, global_map.shape
         )
 
-        iou = self._alignment_confidence(global_map, warped_neighbor)
-        print(f"[MapMerger] Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
+        # Only check IoU for newly estimated transforms
+        if neighbor_id not in self._cached_transforms:
+            iou = self._alignment_confidence(global_map, warped_neighbor)
+            print(f"[MapMerger] Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
 
-        if iou < self.iou_threshold:
-            print(
-                "[MapMerger] WARNING: Low alignment confidence. "
-                "Returning original map unchanged."
-            )
-            return {
-                "transformed_map": None,
-                "transform": None,
-                "transformed_location": None,
-            }
+            if iou < self.iou_threshold:
+                print(
+                    "[MapMerger] WARNING: Low alignment confidence. "
+                    "Returning original map unchanged."
+                )
+                return {
+                    "transformed_map": None,
+                    "transform": None,
+                    "transformed_location": None,
+                }
+
+            self._cached_transforms[neighbor_id] = transform
+            print(f"[MapMerger] Transform cached for neighbor {neighbor_id}")
 
         T = torch.from_numpy(transform).to(dtype=torch.float64, device=device)
         p = T @ torch.tensor([neighbor_loc[0], neighbor_loc[1], 1.0], dtype=torch.float64, device=device)
-        neighbor_loc_in_our_frame = torch.stack([p[1], p[0]]).round().long()
+        neighbor_loc_in_our_frame = torch.stack([p[1], p[0]]).round().long().cpu().tolist()
 
         return {
             "transformed_map": warped_neighbor,
