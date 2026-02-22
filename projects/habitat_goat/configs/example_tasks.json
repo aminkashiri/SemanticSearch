@@ -15,28 +15,24 @@
                     "description": "Navigate to a blue chair"
                 },
                 {
-                    "type": "imagenav",
-                    "category": "april_tag",
-                    "image": "projects/habitat_goat/configs/image_goals/apriltag_grid.jpeg"
-                }
-            ]
-        },
-         {
-            "episode_id": 1,
-            "tasks": [
+                    "type": "languagenav",
+                    "category": "umbrella",
+                    "description": "Navigate to a blue umbrella"
+                },
                 {
                     "type": "objectnav",
-                    "category": "monitor"
+                    "category": "plant"
                 },
-                {
-                    "type": "languagenav",
-                    "category": "whiteboard",
-                    "description": "Navigate to a whiteboard"
-                },
+
                 {
                     "type": "imagenav",
                     "category": "microwave",
-                    "image": "projects/habitat_goat/configs/image_goals/microwave.jpeg"
+                    "image": "projects/habitat_goat/configs/image_goals/turtlebot.jpeg"
+                },
+                {
+                    "type": "imagenav",
+                    "category": "april_tag",
+                    "image": "projects/habitat_goat/configs/image_goals/apriltag_grid.jpeg"
                 }
             ]
         }
