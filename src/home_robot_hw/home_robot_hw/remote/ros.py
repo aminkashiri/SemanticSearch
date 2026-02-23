@@ -113,6 +113,41 @@ class ScoutRosInterface:
         else:
             return False
 
+    def transform_lidar_to_base(self, lidar_pose):
+        # 1. Deconstruct the global LiDAR pose
+        l_x, l_y, l_theta = lidar_pose
+        
+        # 2. Define the Static Transform (Base -> Lidar)
+        '''
+        Set x offset to 0.170m from CAD drawings online
+        Tuning Needed
+        '''
+        self.static_base_to_lidar = [0.170, 0. , 0.]
+        s_x, s_y, s_theta = self.static_base_to_lidar 
+
+        # T_world_lidar
+        T_w_l = np.array([
+            [np.cos(l_theta), -np.sin(l_theta), l_x],
+            [np.sin(l_theta),  np.cos(l_theta), l_y],
+            [0,                0,               1]
+        ])
+        # T_base_lidar (Static mount)
+        T_b_l = np.array([
+            [np.cos(s_theta), -np.sin(s_theta), s_x],
+            [np.sin(s_theta),  np.cos(s_theta), s_y],
+            [0,                0,               1]
+        ])
+
+        T_w_b = T_w_l @ np.linalg.inv(T_b_l)
+
+        # 5. Extract x, y, theta
+        base_x = T_w_b[0, 2]
+        base_y = T_w_b[1, 2]
+        base_theta = np.arctan2(T_w_b[1, 0], T_w_b[0, 0])
+
+        return np.array([base_x, base_y, base_theta])
+
+    
     def get_base_pose(self) -> np.ndarray:
         """Get the latest filtered base pose as a 3D numpy array [x, y, yaw]."""
         if self.se3_base_filtered is None:
@@ -123,7 +158,9 @@ class ScoutRosInterface:
         pose_matrix = self.se3_base_filtered.matrix()
         # Extract yaw from the rotation matrix
         theta = np.arctan2(pose_matrix[1, 0], pose_matrix[0, 0])
-        return np.array([pose_matrix[0, 3], pose_matrix[1, 3], theta])
+        lidar_pose =  np.array([pose_matrix[0, 3], pose_matrix[1, 3], theta])
+
+        return self.transform_lidar_to_base(lidar_pose)
 
     # --- FIX APPLIED HERE ---
     def get_images(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
