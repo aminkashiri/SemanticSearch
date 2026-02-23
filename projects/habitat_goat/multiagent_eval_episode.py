@@ -81,7 +81,7 @@ def read_configs(args):
         if len(args.scene) == 2:
             scenes = slice(args.scene[0], args.scene[1])
 
-    config.habitat.dataset.content_scenes = all_scenes[scenes]
+    config.habitat.dataset.content_scenes = all_scenes[scenes][:2]
 
     if args.name is not None:
         config.EXP_NAME = args.name
@@ -114,11 +114,11 @@ if __name__ == "__main__":
 
     habitat_env = Env(config)
     env = MultiAgentHabitatGoatEnv(habitat_env, config=config)
-    # agents: List[SimulationMultiAgentGoatAgent] = []
-    agents: List[RealWorldGoatAgent] = []
+    agents: List[SimulationMultiAgentGoatAgent] = []
+    # agents: List[RealWorldGoatAgent] = []
     for i in range(config.NUM_AGENTS):
-        # agents.append(SimulationMultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
-        agents.append(RealWorldGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
+        agents.append(SimulationMultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
+        # agents.append(RealWorldGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
     os.makedirs(results_dir, exist_ok=True)
@@ -170,8 +170,8 @@ if __name__ == "__main__":
                 other_agents = list(
                     filter(lambda x: x.agent_id != agent.agent_id, agents)
                 )
+                agent.simulate_receive_map(other_agents)
                 action, info, stuck = agent.act()
-                # action, info, stuck = agent.act(other_agents)
 
                 actions.append(action)
                 infos.append(info)

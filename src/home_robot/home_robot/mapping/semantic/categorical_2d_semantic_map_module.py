@@ -196,6 +196,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         agent_cell_radius: int = 1,
         print_images: bool = False,
         log=None,
+        mask_stairs=False,
     ):
         """
         Arguments:
@@ -291,6 +292,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         self._disk_masks = {}
         self.print_images = print_images
         self.log = UpdateStateLogger(log, None)
+        self.mask_stairs = mask_stairs
 
     @torch.no_grad()
     def forward(
@@ -486,11 +488,12 @@ class Categorical2DSemanticMapModule(nn.Module):
         Heuristic to mark stair-like regions as obstacles
         based on absence of ground in visible region.
         """
-        H, W = voxels.shape[:2]
-        return (
-            torch.zeros(H, W, dtype=torch.uint8, device=voxels.device),
-            torch.zeros(H, W, dtype=torch.uint8, device=voxels.device)
-        )
+        if self.mask_stairs:
+            H, W = voxels.shape[:2]
+            return (
+                torch.zeros(H, W, dtype=torch.uint8, device=voxels.device),
+                torch.zeros(H, W, dtype=torch.uint8, device=voxels.device)
+            )
 
         visible_ground = visible_ground.cpu().numpy()
         #! myTODO: Hardcoded. Fix this later

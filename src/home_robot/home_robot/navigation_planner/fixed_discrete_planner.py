@@ -177,7 +177,7 @@ class DiscretePlanner:
         goal_semantic_id: int = None,
         fallback_to_frontier=True,
         postfix="",
-        neighbors=None,
+        neighbor_locs=None,
     ) -> Tuple[DiscreteNavigationAction, np.ndarray]:
         """Plan a low-level action.
 
@@ -237,7 +237,7 @@ class DiscretePlanner:
                     is_local,
                     vis_input,
                 ) = self.plan_to_frontier_goal(
-                    goal_semantic_id, postfix, neighbors=neighbors
+                    goal_semantic_id, postfix, neighbor_locs=neighbor_locs
                 )
 
         if not (stop or reachable):
@@ -940,7 +940,7 @@ class DiscretePlanner:
 
         return None, None, False
 
-    def plan_to_frontier_goal(self, goal_category, postfix, neighbors=None):
+    def plan_to_frontier_goal(self, goal_category, postfix, neighbor_locs=None):
 
         i = 0
         while True:
@@ -964,7 +964,7 @@ class DiscretePlanner:
                 robot_loc,
                 goal_category,
                 is_local,
-                neighbors=neighbors,
+                neighbor_locs=neighbor_locs,
             )
 
             if self.visualization_level > 2:
@@ -1032,7 +1032,7 @@ class DiscretePlanner:
         robot_loc,
         goal_category,
         is_local,
-        neighbors=None,
+        neighbor_locs=None,
     ):
         def distance_to_frontier(frontier, distances, loc):
             # Choose the closest point in the frontier to the robot
@@ -1067,6 +1067,15 @@ class DiscretePlanner:
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
 
+        for key, loc in neighbor_locs.items():
+            neighbor_locs[key] = (
+                self.semantic_map.global_location_to_local_location(
+                    loc
+                )
+                if is_local
+                else loc
+            )
+
         neighbor_distance_cache = {}
         agent_distances, other_distances = [], []
         for k, frontier in enumerate(frontiers):
@@ -1085,38 +1094,31 @@ class DiscretePlanner:
             center = frontier.mean(axis=0).astype(int)
             frontier_centers.append(center)
 
-            if self.frontier_metric== "distance":
+            if self.frontier_metric == "distance":
                 agent_distances.append(distance)
-                if neighbors is None or len(neighbors) == 0:
+                if neighbor_locs is None or len(neighbor_locs) == 0:
                     frontier_scores.append(1 / (distance + 1))
                     top_k_semantic_classes.append([])
                 else:
                     neighbor_distances = []
-                    for neighbor in neighbors:
-                        neighbor_loc = (
-                            self.semantic_map.global_location_to_local_location(
-                                neighbor.semantic_map.global_loc
-                            )
-                            if is_local
-                            else neighbor.semantic_map.global_loc
-                        )
+                    for loc in neighbor_locs.values():
                         traversible_ma = np.ma.masked_values(traversible * 1, 0)
-                        if self.semantic_map.is_location_in_local_map(neighbor_loc):
-                            key = tuple(neighbor_loc)
+                        if self.semantic_map.is_location_in_local_map(loc):
+                            key = tuple(loc)
                             if key not in neighbor_distance_cache:
-                                traversible_ma[neighbor_loc[0], neighbor_loc[1]] = 0
+                                traversible_ma[loc[0], loc[1]] = 0
                                 ndistances = skfmm.distance(traversible_ma)
                                 ndistances = np.ma.filled(
                                     ndistances, np.max(ndistances) + 1
                                 )
                                 neighbor_distance_cache[key] = ndistances
                                 neighbor_distance = distance_to_frontier(
-                                    frontier, ndistances, neighbor_loc
+                                    frontier, ndistances, loc
                                 )
                             else:
                                 ndistances = neighbor_distance_cache[key]
                                 neighbor_distance = distance_to_frontier(
-                                    frontier, ndistances, neighbor_loc
+                                    frontier, ndistances, loc
                                 )
 
                             # self.log.debug(
@@ -1179,6 +1181,7 @@ class DiscretePlanner:
                     other_agents_dists=other_distances,
                     top_k=5,
                     save_path=f"{self.prefix}{self.timestep}_14.frontier_scores{'' if is_local else '_global'}.png",
+                    neighbor_locs=neighbor_locs,
                 )
             else:
                 visualize_semantic_frontiers(
@@ -1197,16 +1200,9 @@ class DiscretePlanner:
         ), "No frontiers found, but frontier_map is not empty."
 
         my_priority = 1
-        if not neighbors is None:
-            for neighbor in neighbors:
-                neighbor_loc = (
-                    self.semantic_map.global_location_to_local_location(
-                        neighbor.semantic_map.global_loc
-                    )
-                    if is_local
-                    else neighbor.semantic_map.global_loc
-                )
-                if neighbor_loc == robot_loc and neighbor.agent_id < self.agent_id:
+        if not neighbor_locs is None:
+            for agent_id, loc in neighbor_locs.items():
+                if loc == robot_loc and agent_id < self.agent_id:
                     my_priority += 1
 
         if my_priority <= len(frontier_scores):

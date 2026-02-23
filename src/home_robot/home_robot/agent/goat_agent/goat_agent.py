@@ -129,7 +129,8 @@ class GoatAgent(Agent):
             ),  #! myTODO: Hardcoded 3
             agent_cell_radius=agent_cell_radius,
             print_images=self.visualization_level > 2,
-            log=self._log
+            log=self._log,
+            mask_stairs=self.real_world
         )
         self.inst_goal_id = None
 
@@ -338,8 +339,6 @@ class GoatAgent(Agent):
         action, vis_inputs = self._get_best_action(**kwargs)
         action = self._process_action(action)
         info = self._get_vis_info(vis_inputs, action)
-
-
 
         stuck = False
         if self.get_subtask_timestep() >= self.max_steps or self.stuck_counter > 30:

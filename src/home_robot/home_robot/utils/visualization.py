@@ -166,6 +166,7 @@ def visualize_frontiers(
     frontier_scores,
     frontier_texts,
     robot_loc=None,
+    neighbor_locs=None,
     top_k=3,
     save_path="frontiers_with_scores.png"
 ):
@@ -218,6 +219,11 @@ def visualize_frontiers(
         flipped_robot = (robot_loc[1], traversible.shape[0] - robot_loc[0])
         ax.plot(flipped_robot[0], flipped_robot[1], "x", color="blue", markersize=8, label="Robot")
 
+    if neighbor_locs is not None:
+        for loc in neighbor_locs.values():
+            flipped_robot = (loc[1], traversible.shape[0] - loc[0])
+            ax.plot(flipped_robot[0], flipped_robot[1], "x", color="green", markersize=8, label="Neighbor")
+
     ax.set_title("Top Frontier Scores")
     ax.axis("off")
     plt.tight_layout()
@@ -267,6 +273,7 @@ def visualize_distance_frontiers(
     agent_dists,
     other_agents_dists,
     robot_loc=None,
+    neighbor_locs=None,
     top_k=3,
     save_path="frontiers_with_agent_dists.png"
 ):
@@ -297,6 +304,7 @@ def visualize_distance_frontiers(
         frontier_scores=frontier_scores,
         frontier_texts=frontier_texts,
         robot_loc=robot_loc,
+        neighbor_locs=neighbor_locs,
         top_k=top_k,
         save_path=save_path,
     )

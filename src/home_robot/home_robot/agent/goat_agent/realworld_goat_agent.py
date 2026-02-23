@@ -2,29 +2,25 @@ import time
 import socket
 import struct
 import threading
+import queue
 import io
 import json
-from typing import Dict, Optional
+from .goat_agent import Task
+from typing import List, Optional
 
 import numpy as np
 import torch
 import zmq
-import logging
 
 from .multiagent_goat_agent import BaseMultiAgentGoatAgent
-
-class CommunicationLogger(logging.LoggerAdapter):
-    def process(self, msg, kwargs):
-        # modify the message however you want
-        return f"[COMM] {msg}", kwargs
-
 class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
     """
     Real-world multi-agent GOAT agent.
     Extends BaseMultiAgentGoat with UDP discovery + ZMQ communication.
 
     - Sender thread = discover neighbors + pairwise communicate
-    - Receiver thread = accept incoming data + merge
+    - Receiver thread = accept incoming data, ACK immediately, push to queue
+    - Main thread = drain queue and merge during act()
     """
 
     BEACON_MAGIC = b"MAGT"
@@ -45,16 +41,19 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         self.data_port = data_port + agent_id
         self.beacon_interval = beacon_interval
 
-        self.neighbors: Dict[int, dict] = {}
-        self._state_lock = threading.Lock()
+        # Queue is thread safe by design
         self._comm_running = False
-        self.comm_log = CommunicationLogger(self._log, {})
 
 
     def reset(self, scene_id, episode_id):
         self.stop_communication()
         super().reset(scene_id, episode_id)
+
+    def _preprocess_tasks(self, tasks_obs) -> List[Task]:
+        tasks = super()._preprocess_tasks(tasks_obs)
+        # Communication starts after we have processed initial tasks, so episodes parameters are set.
         self.start_communication()
+        return tasks
 
     def start_communication(self):
         if self._comm_running:
@@ -71,12 +70,25 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         self.comm_log.info(f"Agent {self.agent_id} comm started on port {self.data_port}")
 
     def stop_communication(self):
+        if not self._comm_running:
+            return
         self._comm_running = False
+        if hasattr(self, '_sender_thread'):
+            self._sender_thread.join()
+        if hasattr(self, '_receiver_thread'):
+            self._receiver_thread.join()
 
-    def act(self):
-        with self._state_lock:
-            return super().act()
 
+
+    def _update_maps(self):
+        obs_preprocessed, instance_scores, category_scores = self._preprocess_obs(self._curr_obs)
+        self.semantic_map_module(
+            obs_preprocessed,
+            self.pose_delta,
+            self.semantic_map,
+            instance_scores,
+            category_scores
+        )
 
     def _sender_loop(self):
         ctx = zmq.Context()
@@ -106,27 +118,34 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                     pass
                 last_beacon = now
 
-            try:
-                self.comm_log.debug(f"Listening for beacon on port {self.broadcast_port}")
-                data, addr = rx_sock.recvfrom(64)
-                if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
-                    aid, port = struct.unpack("IH", data[4:10])
-                    if aid != self.agent_id:
-                        self.neighbors[aid] = {"ip": addr[0], "port": port}
-            except socket.timeout:
-                pass
+            neighbors = {}
+            while True:
+                try:
+                    data, addr = rx_sock.recvfrom(64)
+                    if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
+                        agent_id, port = struct.unpack("IH", data[4:10])
+                        if agent_id != self.agent_id:
+                            self.comm_log.debug(f"Beacond received from {agent_id}")
+                            neighbors[agent_id] = {"ip": addr[0], "port": port}
+                except socket.timeout:
+                    break
 
             # --- Pairwise communication ---
-            for aid, info in self.neighbors.items():
-                with self._state_lock:
-                    last = self.last_communication_time.get(aid, -1)
-                    if self.total_timesteps - last < self.communication_cooldown:
-                        continue
-                    packed = self._pack_comm_data()
+            for agent_id, info in neighbors.items():
+                self.comm_log.debug(f"Sending data to {agent_id}")
 
-                if self._send_to_neighbor(ctx, aid, info, packed):
-                    with self._state_lock:
-                        self.last_communication_time[aid] = self.total_timesteps
+                send_map = False
+                last = self.map_shared_time.get(agent_id, -1)
+                if (time.time() - last > self.communication_cooldown or (agent_id not in self._full_map_sent_to)) and self.total_timesteps > 12:
+                    send_map = True
+
+                packed = self._pack_comm_data(send_map)
+
+                if self._send_to_neighbor(ctx, agent_id, info, packed):
+                    self.comm_log.debug(f"Send to {agent_id} successfull")
+                    if send_map:
+                        self.map_shared_time[agent_id] = time.time()
+                        self._full_map_sent_to.add(agent_id)
 
             time.sleep(0.1)
 
@@ -145,7 +164,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
             sock.connect(f"tcp://{info['ip']}:{info['port']}")
             sock.send(packed)
             self.comm_log.debug("Waiting for ack")
-            ack = sock.recv()  # blocks until receiver confirms
+            ack = sock.recv()
             self.comm_log.debug("Received ack")
             sock.close()
             self.comm_log.debug(
@@ -160,6 +179,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
             return False
 
     def _receiver_loop(self):
+        self.comm_log.debug(f"Started receiver loop")
         ctx = zmq.Context()
         sock = ctx.socket(zmq.REP)
         sock.setsockopt(zmq.RCVTIMEO, 1000)
@@ -167,10 +187,9 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
         while self._comm_running:
             try:
-                self.comm_log.debug(f"Agent {self.agent_id} waiting for data on port {self.data_port}")
+                self.comm_log.debug(f"Receiver: Waiting for data")
                 raw = sock.recv()
 
-                # From here we MUST send a reply no matter what
                 try:
                     data = self._unpack_comm_data(raw)
                     if data is None:
@@ -178,21 +197,20 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         sock.send(b"ERR")
                         continue
 
-                    self.comm_log.debug(f"Received data from Agent {data['agent_id']} at step {self.total_timesteps}")
-                    with self._state_lock:
-                        self.comm_log.info(
-                            f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
-                            f"received map at step {self.total_timesteps}"
-                        )
-                        self._merge_communication_data(data)
-                        self.last_communication_time[data["agent_id"]] = self.total_timesteps
-
+                    # ACK immediately — don't hold the sender waiting for merge
                     sock.send(b"OK")
+
+                    self.comm_log.info(
+                        f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
+                        f"received map at step {self.total_timesteps}"
+                    )
+                    data["time"] = time.time()
+                    self._recv_queue.put(data)
+
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    self.comm_log.error(f"Agent {self.agent_id} merge error: {e}")
-                    print(f"Agent {self.agent_id} merge error: {e}")
+                    self.comm_log.error(f"Agent {self.agent_id} receiver error: {e}")
                     sock.send(b"ERR")
 
             except zmq.Again:
@@ -204,9 +222,11 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         ctx.term()
 
 
-    def _pack_comm_data(self) -> bytes:
+    def _pack_comm_data(self, send_map) -> bytes:
         data = self._get_communication_data()
         global_map = data.pop("map")
+        data["has_map"] = send_map
+
         buf = io.BytesIO()
         buf.write(struct.pack("I", self.agent_id))
 
@@ -214,7 +234,8 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         buf.write(struct.pack("I", len(meta_bytes)))
         buf.write(meta_bytes)
 
-        buf.write(global_map.cpu().numpy().tobytes())
+        if send_map:
+            buf.write(global_map.cpu().numpy().tobytes())
         return buf.getvalue()
 
     def _unpack_comm_data(self, raw: bytes) -> Optional[dict]:
@@ -223,14 +244,26 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
             agent_id = struct.unpack("I", buf.read(4))[0]
             meta_len = struct.unpack("I", buf.read(4))[0]
             meta = json.loads(buf.read(meta_len).decode())
-            map_shape = self.semantic_map.global_map.shape
-            map_np = np.frombuffer(buf.read(), dtype=np.float32).reshape(map_shape)
-            return {
+
+            has_map = meta.pop("has_map", True)
+            data = {
                 "agent_id": agent_id,
-                "map": torch.from_numpy(map_np.copy()),
                 **meta,
             }
+
+            if has_map:
+                map_shape = self.semantic_map.global_map.shape
+                data["map"] = torch.from_numpy(np.frombuffer(buf.read(), dtype=np.float32).reshape(map_shape))
+
+            return data
         except Exception as e:
             self.comm_log.error(f"Unpack failed: {e}")
             return None
 
+    def _get_communication_data(self):
+        data = super()._get_communication_data()
+        data["time"] = time.time()
+        return data
+
+    def _get_communication_time_unit(self):
+        return time.time()

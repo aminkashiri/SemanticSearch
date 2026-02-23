@@ -4,22 +4,31 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
+import time
+import queue
+import logging
+import numpy as np
 from .goat_agent import GoatAgent, Task
 from .map_merger import MapMerger
 from typing import Any, Dict, List, Tuple
 from home_robot.core.interfaces import DiscreteNavigationAction
 
+
+class CommunicationLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return f"[COMM] {msg}", kwargs
+
+
 class BaseMultiAgentGoatAgent(GoatAgent):
-    def __init__(
-        self, config, vocabulary, agent_id=None, device_id: int = 0
-    ):
+    def __init__(self, config, vocabulary, agent_id=None, device_id: int = 0):
         super().__init__(config, vocabulary, agent_id, device_id)
         self.inst_goal_ids = None
         self.tasks_done = None
         self.tasks_failed = None
         self.active_task = None
-        self.others_active_task_remaining_time = None
+        self.others_active_task_expiration = None
         self.communication_cooldown = 5
+        self.location_valid = 3  # for how many steps received locations are valid
         self.active_task_cooldown = 20
         self.map_merger = MapMerger(
             num_sem_categories=self.num_sem_categories,
@@ -27,6 +36,42 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             ransac_thresh=10.0,
             iou_threshold=0.2,
         )
+        self.neighbors = {}
+        self._recv_queue = queue.Queue()
+        self.comm_log = CommunicationLogger(self._log, {})
+        self._full_map_sent_to = set()
+
+    def act(self, **kwargs):
+        #  no lock needed because only the main thread calls act() and modifies state here
+        neighbor_locs = self._get_neighbor_locs()
+        self._drain_recv_queue()
+        for key in list(self.others_active_task_expiration.keys()):
+            if (
+                self._get_communication_time_unit()
+                > self.others_active_task_expiration[key]
+            ):
+                del self.others_active_task_expiration[key]
+        return super().act(neighbor_locs=neighbor_locs)
+
+    def _get_neighbor_locs(self):
+        neighbor_locs = {}
+        for agent_id, data in self.neighbors.items():
+            if self._get_communication_time_unit() - data["time"] < self.location_valid:
+                neighbor_locs[agent_id] = data["loc"]
+        return neighbor_locs
+
+    def _drain_recv_queue(self):
+        """Merge all pending received data into our state."""
+        while not self._recv_queue.empty():
+            try:
+                data = self._recv_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.comm_log.info(
+                f"Agent {self.agent_id} merging data from Agent {data['agent_id']} "
+                f"at step {self.total_timesteps}"
+            )
+            self._merge_communication_data(data)
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = super()._preprocess_tasks(tasks_obs)
@@ -34,7 +79,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             self.inst_goal_ids = [None] * len(tasks)
             self.tasks_done = [False] * len(tasks)
             self.tasks_failed = [False] * len(tasks)
-            self.others_active_task_remaining_time = {}
+            self.others_active_task_expiration = {}
         return tasks
 
     @torch.no_grad()
@@ -48,7 +93,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                     task,
                     self.match_memory,
                     self.semantic_map.global_pose,
-                    score_thresh=0 if self.navigate_to_best else None
+                    score_thresh=0 if self.navigate_to_best else None,
                 )
                 if not inst_goal_id is None:
                     self.inst_goal_ids[i] = inst_goal_id
@@ -60,28 +105,33 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.match_memory = False
 
     def _get_best_action(self, **kwargs):
-        if all([self.tasks_done[i] or self.tasks_failed[i] for i in range(len(self.tasks_done))]):
+        if all(
+            [
+                self.tasks_done[i] or self.tasks_failed[i]
+                for i in range(len(self.tasks_done))
+            ]
+        ):
             self.log.info("All tasks done or failed, stopping")
             return (None, DiscreteNavigationAction.STOP), {}
 
         if self.active_task is None:
             for i in range(len(self.tasks)):
                 if (
-                    self.tasks_done[i] 
-                    or self.tasks_failed[i] 
+                    self.tasks_done[i]
+                    or self.tasks_failed[i]
                     or self.inst_goal_ids[i] is None
-                    or self.others_active_task_remaining_time.get(i,0) > 0
+                    or i in self.others_active_task_expiration
                 ):
                     continue
                 self.active_task = i
                 break
 
-        neighbors = kwargs.get("neighbors", [])
+        neighbor_locs = kwargs.get("neighbor_locs", [])
         if not self.active_task is None:
             action, vis_input = self.planner.plan(
                 self.inst_goal_ids[self.active_task],
                 self.tasks[self.active_task].goal_semantic_id,
-                neighbors=neighbors,
+                neighbor_locs=neighbor_locs,
                 fallback_to_frontier=False,
             )
             if action is None:
@@ -92,20 +142,25 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
         # If the code reaches here, active task is None.
         action, vis_input = self.planner.plan(
-            neighbors=neighbors,
+            neighbor_locs=neighbor_locs,
         )
         if not action is None:
             return (None, action), vis_input
 
         if self.navigate_to_best:
-            self.log.warning("No reachable goal/frontier, and tried all possible goals. Stopping")
-            return (None, DiscreteNavigationAction.STOP), {} # Stop with None, means idle
+            self.log.warning(
+                "No reachable goal/frontier, and tried all possible goals. Stopping"
+            )
+            return (
+                None,
+                DiscreteNavigationAction.STOP,
+            ), {}  # Stop with None, means idle
         self.log.warning("Reducing threshold to 0 for all goals from now on.")
         self.navigate_to_best = True
         self.match_memory = True
         self._search_for_goal()
 
-        return self._get_best_action(neighbors=neighbors) 
+        return self._get_best_action(neighbor_locs=neighbor_locs)
 
     def _process_action(self, action):
         return {
@@ -122,8 +177,14 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.tasks_done = None
         self.tasks_failed = None
         self.active_task = None
-        self.others_active_task_remaining_time = None
-        self.last_communication_time = {}
+        self.others_active_task_expiration = None
+        self.map_shared_time = {}
+        while not self._recv_queue.empty():
+            try:
+                self._recv_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._full_map_sent_to = set()
 
     def reset_vis_dir(self, scene_id, episode_id, current_task_idx=None):
         super().reset_vis_dir(scene_id, episode_id, None)
@@ -170,61 +231,110 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 int(self.semantic_map.global_loc[0]),
                 int(self.semantic_map.global_loc[1]),
             ],
+            "time": self._get_communication_time_unit()
         }
 
     def _merge_communication_data(self, data):
-        my_loc = torch.tensor(self.semantic_map.global_loc, device=self.device)
-        if data.get("transformed_map") is None and not data.get("map") is None:
+        neighbor_id = data["agent_id"]
 
-            transformed_data = self.map_merger.get_transformed_map(
-                global_map=self.semantic_map.global_map,
-                neighbor_global_map=data["map"].to(self.device),
-                neighbor_loc=data["location"], # in its own frame
-            )
-
-            if not transformed_data["transform"] is None:
-                data["distance"] = (
-                    my_loc - transformed_data["transformed_location"]
-                ).float().norm().item() * self.semantic_map.resolution / 100
-                if data["distance"] < 3.0:
-                    data = {**data, **transformed_data}
-                    self.comm_log.info(
-                        f"Map merged with Agent {data['agent_id']}, "
-                        f"distance: {data['distance']}m"
-                    )
-                else:
-                    self.comm_log.warning(
-                        f"Map alignment with Agent {data['agent_id']} is unreliable, "
-                        f"distance: {data['distance']}m, "
-                        f"skipping merge"
-                    )
-
-
-        if not data.get("transformed_map") is None:
-            merged_map = self.map_merger._merge(
-                self.semantic_map.global_map, data["transformed_map"]
-            )
-            self.semantic_map.global_map[:] = merged_map
-            if self.visualization_level > 0:
-                self.map_merger._visualize(
-                    self.semantic_map.global_map,
-                    data["transformed_map"],
-                    merged_map,
-                    self.semantic_map.global_loc,
-                    data["location"],
-                    data["transformed_location"].cpu().numpy(),
-                    data["transform"],
-                )
+        if data.get("map") is not None:
+            self._merge_map(data)
         else:
-            if data.get("map") is not None:
-                self.map_merger._visualize_failed(
-                    self.semantic_map.global_map, data["map"],
-                    self.semantic_map.global_loc,
-                    data["location"])
+            data["transformed_loc"] = self.map_merger.transform_location(
+                neighbor_id, data["location"]
+            )
 
-        # self.semantic_map_module.merge_instance_memory(
-        #     data["instances"], self.semantic_map.global_map
-        # )
+        if data.get("transformed_loc") is not None:
+            self.neighbors[neighbor_id] = {
+                "time": data["time"],
+                "loc": data["transformed_loc"],
+            }
+
+        self._merge_task_info(data)
+
+    def _merge_map(self, data):
+        """Align and merge neighbor's map into ours."""
+        neighbor_id = data["agent_id"]
+
+        transfomed_map = self.map_merger.get_transformed_map(
+            global_map=self.semantic_map.global_map,
+            neighbor_global_map=data["map"],
+            neighbor_id=data["agent_id"],
+        )
+
+        # Get the transformed map (may come pre-computed from simulation)
+        if transfomed_map is None:
+            self._vis_merge_failed(data)
+            return
+
+        # Apply merge
+        merged = self.map_merger._merge(
+            # self.semantic_map.global_map, data["transformed_map"]
+            self.semantic_map.global_map,
+            transfomed_map,
+        )
+
+        transformed_loc = self.map_merger.transform_location(
+            data["agent_id"], data["location"]
+        )
+        distance = (
+            (torch.tensor(self.semantic_map.global_loc) - torch.tensor(transformed_loc))
+            .float()
+            .norm()
+            .item()
+            * self.semantic_map.resolution
+            / 100
+        )
+
+        data["transformed_map"] = transfomed_map
+        data["transformed_loc"] = transformed_loc
+
+        self.comm_log.info(
+            f"Map aligned with Agent {neighbor_id}, distance: {distance:.2f}m, neighor_loc: {transformed_loc}"
+        )
+        if distance > 5.0:
+            self.comm_log.warning(
+                f"Map alignment with Agent {neighbor_id} unreliable skipping merge"
+            )
+            self.map_merger._visualize(
+                self.semantic_map.global_map,
+                self.semantic_map.global_loc,
+                merged,
+                data,
+            )
+            self._vis_merge_failed(data, reason="dist")
+            data.pop("transformed_map")
+            data.pop("transformed_loc")
+            return
+
+        data["transformed_map"] = transfomed_map
+        data["transformed_loc"] = transformed_loc
+
+        if self.visualization_level > 0:
+            self.map_merger._visualize(
+                self.semantic_map.global_map,
+                self.semantic_map.global_loc,
+                merged,
+                data,
+            )
+        self.semantic_map.global_map[:] = merged
+        lmb = self.semantic_map.lmb
+        self.semantic_map.local_map[:] = self.semantic_map.global_map[
+            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
+        ]
+
+    def _vis_merge_failed(self, data, reason=None):
+        if self.visualization_level > 0 and data.get("map") is not None:
+            self.map_merger._visualize_failed(
+                self.semantic_map.global_map,
+                data["map"],
+                self.semantic_map.global_loc,
+                data["location"],
+                reason=reason,
+            )
+
+    def _merge_task_info(self, data):
+        """Merge task completion and active task deconfliction."""
         if self.tasks_done is None:
             self.tasks_done = data["tasks_done"]
         else:
@@ -232,68 +342,41 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 a or b for a, b in zip(self.tasks_done, data["tasks_done"])
             ]
 
-        neighbor_task = data["active_task"]
-        if neighbor_task is not None:
-            same_task = neighbor_task == self.active_task
-            has_priority = data["agent_id"] < self.agent_id
+        self._handle_neighbor_active_task(data["agent_id"], data["active_task"])
 
-            if same_task:
-                if has_priority:
-                    self.others_active_task_remaining_time[neighbor_task] = self.active_task_cooldown
-                    self.active_task = None
-            else:
-                self.others_active_task_remaining_time[neighbor_task] = self.active_task_cooldown
+    def _handle_neighbor_active_task(self, agent_id, active_task):
+        if active_task is None:
+            return
+
+        same_task = active_task == self.active_task
+        has_priority = agent_id < self.agent_id
+        if not same_task:
+            self.others_active_task_expiration[active_task] = (
+                self._get_communication_time_unit() + self.active_task_cooldown
+            )
+        elif same_task and has_priority:
+            self.others_active_task_expiration[active_task] = (
+                self._get_communication_time_unit() + self.active_task_cooldown
+            )
+            self.active_task = None
 
     def _update_steps(self):
         super()._update_steps()
         self.map_merger.timestep = self.get_subtask_timestep()
 
+
 class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
+    def __init__(self, config, vocabulary, agent_id=None, device_id=0):
+        super().__init__(config, vocabulary, agent_id, device_id)
+        for i in range(config.NUM_AGENTS):
 
-    def act(self, other_agents=None):
-        neighbors = self._get_neighbors(other_agents)
-        self.communicate(neighbors)
-        return super().act(neighbors=neighbors)
+            self.map_merger._cached_transforms[i] = np.eye(2, 3)
 
-    def communicate(self, neighbors):
-        # for key in self.others_active_task_remaining_time:
-        for key in list(self.others_active_task_remaining_time.keys()):
-            self.others_active_task_remaining_time[key] -= 1
-            if self.others_active_task_remaining_time[key] <= 0:
-                del self.others_active_task_remaining_time[key]
-        for neighbor in neighbors:
-            last = self.last_communication_time.get(neighbor.agent_id, -1)
-            if self.total_timesteps - last > self.communication_cooldown:
-                self._communicate_with_single_neighbor(neighbor)
+    def _transform_map(self, data):
+        return data["map"]
 
-        lmb = self.semantic_map.lmb
-        self.semantic_map.local_map[:] = self.semantic_map.global_map[
-            :, lmb[0] : lmb[1], lmb[2] : lmb[3]
-        ]
-
-    def _communicate_with_single_neighbor(self, neighbor):
-        data = self._get_communication_data()
-        neighbor_data = neighbor.receive_communication(self.agent_id, data)
-        self._merge_communication_data(neighbor_data)
-        self.last_communication_time[neighbor_data["agent_id"]] = self.total_timesteps
-    
-    def _merge_communication_data(self, data):
-        # In simulations, there is no need to find any transformation, maps are already aligned, and global pose is in the same coord system.
-        import numpy as np
-        data["transform"] = np.eye(2,3)
-        data["transformed_map"] = data["map"]
-        data["transformed_location"] = data["location"]
-        return super()._merge_communication_data(data)
-
-    def receive_communication(self, sender_id, data):
-        self.last_communication_time[sender_id] = self.total_timesteps
-        self._merge_communication_data(data)
-        return self._get_communication_data()
-
-    def _get_neighbors(self, other_agents):
+    def simulate_receive_map(self, other_agents):
         neighbors = []
-        if other_agents is None:
-            return neighbors
         for agent in other_agents:
             dist = (
                 agent.semantic_map.global_pose[:2] - self.semantic_map.global_pose[:2]
@@ -303,4 +386,25 @@ class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
                 self.log.debug(
                     f"Communicating with agent: {agent.agent_id} with distance {dist}"
                 )
-        return neighbors
+        for neighbor in neighbors:
+            data = neighbor._get_communication_data()
+
+            self.comm_log.info(
+                f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
+                f"received map at step {self.total_timesteps}"
+            )
+            last = self.map_shared_time.get(neighbor.agent_id, 0)
+            if self.total_timesteps - last > self.communication_cooldown or (
+                neighbor.agent_id not in self._full_map_sent_to
+            ):
+                self.map_shared_time[data["agent_id"]] = (
+                    self.total_timesteps
+                )  # In realworld agent, this happens in sender thread, and real time is used.
+                self._full_map_sent_to.add(neighbor.agent_id)
+            else:
+                data.pop("map")
+
+            self._recv_queue.put(data)
+
+    def _get_communication_time_unit(self):
+        return self.total_timesteps

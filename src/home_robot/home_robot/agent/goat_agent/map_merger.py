@@ -46,11 +46,22 @@ class MapMerger:
     def clear_cached_transforms(self):
         self._cached_transforms.clear()
 
+    def has_cached_transform(self, neighbor_id: int) -> bool:
+        return neighbor_id in self._cached_transforms
+
+    def transform_location(self, neighbor_id: int, location) -> Optional[torch.Tensor]:
+        if neighbor_id not in self._cached_transforms:
+            return None
+
+        transform = self._cached_transforms[neighbor_id]
+        T = torch.from_numpy(transform).to(dtype=torch.float64)
+        p = (T @ torch.tensor([location[1], location[0], 1.0], dtype=torch.float64)).round()
+        return (int(p[1]), int(p[0]))
+
     def get_transformed_map(
         self,
         global_map: Tensor,  # (C, H, W) - this robot's map
         neighbor_global_map: Tensor,  # (C, H, W) - neighbor's map
-        neighbor_loc: Tuple,  # (x, y) neighbor location (in its own frame)
         neighbor_id: int,
     ) -> Dict:
         """
@@ -65,23 +76,22 @@ class MapMerger:
             - distance_meters: float or None
         """
         device = global_map.device
+        if not neighbor_global_map is None:
+            neighbor_global_map = neighbor_global_map.to(device)
 
-        if neighbor_id in self._cached_transforms:
+        if self.has_cached_transform(neighbor_id):
             transform = self._cached_transforms[neighbor_id]
-            print(f"[MapMerger] Using cached transform for neighbor {neighbor_id}")
-        else:
+        elif not neighbor_global_map is None:
             transform = self._estimate_transform(global_map, neighbor_global_map)
+        else:
+            transform = None
 
         if transform is None:
             print(
                 "[MapMerger] WARNING: Could not estimate transform. "
                 "Returning original map unchanged."
             )
-            return {
-                "transformed_map": None,
-                "transform": None,
-                "transformed_location": None,
-            }
+            return None
 
         # Warp neighbor map to our frame
         warped_neighbor = self._warp_map(
@@ -98,24 +108,12 @@ class MapMerger:
                     "[MapMerger] WARNING: Low alignment confidence. "
                     "Returning original map unchanged."
                 )
-                return {
-                    "transformed_map": None,
-                    "transform": None,
-                    "transformed_location": None,
-                }
+                return None
 
             self._cached_transforms[neighbor_id] = transform
             print(f"[MapMerger] Transform cached for neighbor {neighbor_id}")
 
-        T = torch.from_numpy(transform).to(dtype=torch.float64, device=device)
-        p = T @ torch.tensor([neighbor_loc[0], neighbor_loc[1], 1.0], dtype=torch.float64, device=device)
-        neighbor_loc_in_our_frame = torch.stack([p[1], p[0]]).round().long().cpu().tolist()
-
-        return {
-            "transformed_map": warped_neighbor,
-            "transform": transform,
-            "transformed_location": neighbor_loc_in_our_frame,
-        }
+        return warped_neighbor
 
     def _alignment_confidence(self, map_A: Tensor, warped_B: Tensor) -> float:
         exp_A = map_A[MC.EXPLORED_MAP].cpu().numpy() > 0
@@ -400,6 +398,7 @@ class MapMerger:
         map_B: Tensor,
         loc_A: np.ndarray,
         loc_B: np.ndarray,
+        reason=None,
     ):
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
@@ -418,7 +417,10 @@ class MapMerger:
         axes[1].legend()
         axes[1].axis("off")
 
-        plt.suptitle("Map Merge FAILED - Alignment could not be estimated", color="red")
+        if reason == "dist":
+            plt.suptitle("Map Merge FAILED - Distance too far", color="red")
+        else:
+            plt.suptitle("Map Merge FAILED - Alignment could not be estimated", color="red")
         plt.tight_layout()
         path = os.path.join(self.vis_dir, f"{self.timestep}.15.map_merge_FAILED.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
@@ -426,13 +428,14 @@ class MapMerger:
     def _visualize(
         self,
         map_A: Tensor,
-        map_B: Tensor,
-        merged: Tensor,
         loc_A: np.ndarray,
-        loc_B_original: np.ndarray,
-        loc_B_transformed: np.ndarray,
-        transform: np.ndarray,
+        merged: Tensor,
+        data,
     ):
+        map_B = data["transformed_map"]
+        loc_B_original = data["location"]
+        loc_B_transformed = data["transformed_loc"]
+        transform = self._cached_transforms[data["agent_id"]]
         fig, axes = plt.subplots(1, 4, figsize=(24, 6))
 
         obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy()

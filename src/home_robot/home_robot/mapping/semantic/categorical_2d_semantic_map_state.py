@@ -330,9 +330,8 @@ class Categorical2DSemanticMapState:
         vis_map[:,2*W:3*W,:][frontier_map3 == 1] = [255, 0, 0]
         vis_map[:,3*W:4*W,:][frontier_map4 == 1] = [255, 0, 0]
 
-        agent_text = f"agent{self.agent_id}_" if self.agent_id is not None else ""
         cv2.imwrite(
-            os.path.join(self.vis_dir, f"{agent_text}{timestep}_2.frontiers{'' if local else '_global'}.png"),
+            os.path.join(self.vis_dir, f"{timestep}_2.frontiers{'' if local else '_global'}.png"),
             np.flipud(vis_map)
         )
 
