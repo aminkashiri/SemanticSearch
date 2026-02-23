@@ -87,8 +87,8 @@ class ScoutNavigationClient(AbstractControlModule):
         min_w, max_w = 0.15, 1.0  # rad/s
         
         # Tolerance: Stop when within 1cm or 1 degree
-        linear_tol = 0.01 
-        angular_tol = np.radians(1.0)
+        linear_tol = 0.0025 
+        angular_tol = np.radians(0.3)
 
         rate = rospy.Rate(50)
         while not rospy.is_shutdown():
