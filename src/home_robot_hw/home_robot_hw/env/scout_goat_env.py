@@ -367,5 +367,4 @@ class ScoutGoatEnv:
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
         if self.visualization_level > 0:
-            print("------------------------ VIS -----------------")
             self.visualizer.visualize(**info)

@@ -288,7 +288,7 @@ class FMMPlanner:
         # subset[ratio1 < -1.5] = 1
 
         reachable_subset = self.filter_unreachable_goals(
-            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
+            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=2
         )
         vis_list.append(reachable_subset.copy())
 
