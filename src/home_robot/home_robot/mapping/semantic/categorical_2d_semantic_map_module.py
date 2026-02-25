@@ -174,7 +174,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         map_size_cm: int,
         map_resolution: int,
         vision_range: int,
-        explored_radius: int,
         been_close_to_radius: int,
         global_downscaling: int,
         du_scale: int,
@@ -210,8 +209,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             vision_range: diameter of the circular region of the local map
              that is visible by the agent located in its center (unit is
              the number of local map cells)
-            explored_radius: radius (in centimeters) of region of the visual cone
-             that will be marked as explored
             been_close_to_radius: radius (in centimeters) of been close to region
             target_blacklisting_radius: radius (in centimeters) of region
              around target that will be blacklisted (if invalid target)
@@ -251,7 +248,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.local_map_size = self.local_map_size_cm // self.resolution
         self.xy_resolution = self.z_resolution = map_resolution
         self.vision_range = vision_range
-        self.explored_radius = explored_radius
         self.been_close_to_radius = been_close_to_radius
         if target_blacklisting_radius is not None:
             self.target_blacklisting_radius = target_blacklisting_radius
@@ -904,12 +900,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             curr_loc, prev_loc, current_map[MC.AGENT_VISITED_MAP]
         )
         current_map[MC.VISITED_MAP] = (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
-
-        # 1
-        # self._set_disk_to_one(self.explored_radius, current_map, MC.EXPLORED_MAP, curr_loc)
-        # # Record the region the agent has been close to using a disc centered at the agent
-        # radius = self.been_close_to_radius // self.resolution
-        # self._set_disk_to_one(radius, current_map, MC.BEEN_CLOSE_MAP, curr_loc)
 
         # 2
         traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()

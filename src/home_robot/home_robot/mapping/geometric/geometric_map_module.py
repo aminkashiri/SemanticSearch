@@ -67,8 +67,6 @@ class GeometricMapModule(nn.Module):
             vision_range: diameter of the circular region of the local map
              that is visible by the agent located in its center (unit is
              the number of local map cells)
-            explored_radius: radius (in centimeters) of region of the visual cone
-             that will be marked as explored
             been_close_to_radius: radius (in centimeters) of been close to region
             global_downscaling: ratio of global over local map
             du_scale: frame downscaling before projecting to point cloud

@@ -1,12 +1,12 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: real_world_0221_20
+EXP_NAME: comm1
 REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.
 DATASET: goat             # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
 # DATASET: habitat_objnav_2023             # datasets: habitat_objnav_2022, habitat_objnav_2023, goat
-VISUALIZATION_LEVEL: 2    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
+VISUALIZATION_LEVEL: 3    # 0: None, 1: Only Snapshots ans stg, 2: Most usefull images 3: All
 GROUND_TRUTH_SEMANTICS: 0 # 1: use ground-truth semantics (for debugging / ablations)
 USE_YOLO: 0               # 1: use YOLO in addition to Detic for object detection
 
@@ -26,12 +26,12 @@ ENVIRONMENT:
 
 AGENT:
   max_steps: 500          # maximum number of steps before stopping an episode
-  panorama_start: 0       # 1: turn around 360 degrees when starting an episode, 0: don't
+  panorama_start: 1       # 1: turn around 360 degrees when starting an episode, 0: don't
   exploration_strategy: frontier
   frontier_metric: distance  # metric to use for frontier selection ("distance", "semantics")
   exploration_type: raycast
-  radius: 0.35               # robot radius (in meters) Scout change to 30cm
-  cat_match_threshold: 0.4    # Used 0.4 for GOAT and Yolo, 0.7 without yolo
+  radius: 0.15               # robot radius (in meters) Scout change to 30cm
+  cat_match_threshold: 0.7    # Used 0.4 for GOAT and Yolo, 0.7 without yolo
 
   COMMUNICATION:
     radius: 5           # m
@@ -47,21 +47,20 @@ AGENT:
     cat_pred_threshold: 4.0  # number of depth points to be in bin to classify it as a certain semantic category
     exp_pred_threshold: 1.0  # number of depth points to be in bin to consider it as explored
     map_pred_threshold: 100.0  # number of depth points to be in bin to consider it as obstacle
-    explored_radius: 50     # radius (in centimeters) of visually explored region
     been_close_to_radius: 200  # radius (in centimeters) of been close to region
     target_blacklisting_radius: 80 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
-    min_obs_height_cm: 15    # minimum height (in centimeters) of obstacle to be considered as obstacle. Used 10 initially, set to 20 in goat
+    min_obs_height_cm: 20    # minimum height (in centimeters) of obstacle to be considered as obstacle. Used 10 initially, set to 20 in goat
     goal_filtering: True      # If True, gets the largest connected component of the goal map
 
   PLANNER:
     collision_threshold: 0.20       # forward move distance under which we consider there's a collision (in meters)
     min_obs_dilation_selem_radius: 2    # radius (in cells) of obstacle dilation structuring element
-    obs_dilation_selem_radius: 4    # radius (in cells) of obstacle dilation structuring element
+    obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 10                    # maximum distance of the short-term goal selected by the planner
     discrete_actions: True         # discrete motion planner output space or not
-    min_goal_distance_cm: 80
+    stop_distance: 100              # cm - semantic_map.explored_radius should be bigger than this
 
   SUPERGLUE:
     max_keypoints: 1024

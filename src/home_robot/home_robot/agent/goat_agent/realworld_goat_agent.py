@@ -34,6 +34,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         broadcast_port: int = 9900,
         data_port: int = 9901,
         beacon_interval: float = 1.0,
+        adhoc_ip=None
     ):
         super().__init__(config, vocabulary, agent_id, device_id)
 
@@ -43,6 +44,10 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
         # Queue is thread safe by design
         self._comm_running = False
+
+        assert not adhoc_ip is None
+        self.adhoc_ip = adhoc_ip
+        self.broadcast_addr = self.adhoc_ip.rsplit('.', 1)[0] + '.255'
 
 
     def reset(self, scene_id, episode_id):
@@ -113,7 +118,8 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                     "IH", self.agent_id, self.data_port
                 )
                 try:
-                    tx_sock.sendto(msg, ("<broadcast>", self.broadcast_port))
+                    # tx_sock.sendto(msg, ("<broadcast>", self.broadcast_port))
+                    tx_sock.sendto(msg, (self.broadcast_addr, self.broadcast_port))
                 except OSError:
                     pass
                 last_beacon = now
@@ -183,7 +189,9 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         ctx = zmq.Context()
         sock = ctx.socket(zmq.REP)
         sock.setsockopt(zmq.RCVTIMEO, 1000)
-        sock.bind(f"tcp://*:{self.data_port}")
+        # sock.bind(f"tcp://*:{self.data_port}")
+        sock.bind(f"tcp://{self.adhoc_ip}:{self.data_port}")
+
 
         while self._comm_running:
             try:

@@ -43,9 +43,9 @@ class FMMPlanner:
         self,
         traversible: np.ndarray,
         log,
+        stop_distance,
         scale: int = 1,
         step_size: int = 5,
-        goal_tolerance: float = 2.0,
         vis_dir: str = "data/images/planner",
         print_images=True,
         debug=False,
@@ -65,7 +65,7 @@ class FMMPlanner:
 
         self.scale = scale
         self.step_size = step_size
-        self.goal_tolerance = goal_tolerance
+        self.stop_distance = stop_distance
         if scale != 1.0:
             self.traversible = cv2.resize(
                 traversible,
@@ -276,11 +276,11 @@ class FMMPlanner:
         vis_list.append(np.flipud(mask[..., None].copy() * 255))
         vis_list.append(subset.copy())
 
-        stop = subset[self.du, self.du] < self.goal_tolerance and obstacle_mask[self.du, self.du] != True
+        stop = subset[self.du, self.du] < self.stop_distance and obstacle_mask[self.du, self.du] != True
         self.log.debug(
             f"[FMM] Distance to fmm navigable goal pt (subset[self.du, self.du]) = {subset[self.du, self.du]}"
         )
-        self.log.debug(f"self.goal_tolerance {self.goal_tolerance}")
+        self.log.debug(f"self.stop_distance {self.stop_distance}")
         self.log.debug(f"stop {stop}")
 
         subset -= subset[self.du, self.du]

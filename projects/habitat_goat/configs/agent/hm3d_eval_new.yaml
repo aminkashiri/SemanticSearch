@@ -47,7 +47,6 @@ AGENT:
     cat_pred_threshold: 5.0  # number of depth points to be in bin to classify it as a certain semantic category
     exp_pred_threshold: 1.0  # number of depth points to be in bin to consider it as explored
     map_pred_threshold: 1.0  # number of depth points to be in bin to consider it as obstacle
-    explored_radius: 20     # radius (in centimeters) of visually explored region
     been_close_to_radius: 200  # radius (in centimeters) of been close to region
     target_blacklisting_radius: 100 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
     min_obs_height_cm: 20    # minimum height (in centimeters) of obstacle to be considered as obstacle. Used 10 initially, set to 20 in goat
@@ -61,7 +60,7 @@ AGENT:
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 5                    # maximum distance of the short-term goal selected by the planner
     discrete_actions: True         # discrete motion planner output space or not
-    min_goal_distance_cm: 25
+    stop_distance: 100              # cm - semantic_map.explored_radius should be bigger than this
 
   SUPERGLUE:
     max_keypoints: 1024

@@ -12,17 +12,18 @@ from pathlib import Path
 base_path = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(
     0,
-    base_path / "src/home_robot",
+    str(base_path / "src/home_robot"),
 )
 sys.path.insert(
     0,
-    base_path / "src/home_robot_hw",
+    str(base_path / "src/home_robot_hw"),
 )
 
 from omegaconf import DictConfig, OmegaConf
 from home_robot.utils.logger import get_logger
 from home_robot_hw.env.scout_goat_env import ScoutGoatEnv
-from home_robot.agent.goat_agent.goat_agent import GoatAgent
+# from home_robot.agent.goat_agent.goat_agent import GoatAgent
+from home_robot.agent.goat_agent.realworld_goat_agent import RealWorldGoatAgent
 from home_robot.core.interfaces import DiscreteNavigationAction
 
 def read_args():
@@ -104,7 +105,6 @@ def read_configs(args):
         config.AGENT.cat_match_threshold = args.cat_match_threshold
 
     config.REAL_WORLD = True
-    config.SEQ = 1
     return config
 
 
@@ -188,8 +188,11 @@ def main():
         config=config,
         task_config_file=args.task_config,
     )
-    agent: GoatAgent = GoatAgent(
-        config, env.semantic_category_mapping.vocabulary
+    # agent: GoatAgent = GoatAgent(
+    #     config, env.semantic_category_mapping.vocabulary
+    # )
+    agent: GoatAgent = RealWorldGoatAgent(
+        config, env.semantic_category_mapping.vocabulary, agent_id=0, adhoc_ip="10.0.0.1"
     )
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
@@ -248,17 +251,12 @@ def main():
 
             if action["action"] == DiscreteNavigationAction.STOP:
                 env.add_subepisode_metrics(all_subtask_metrics, action)
-                if not env.episode_over:
-                    agent.reset_vis_dir(
-                        env.scene_id, env.episode_id, env.current_task_idx
-                    )
-                    env.reset_vis_dir()
-                    pbar.reset()
             try:
                 rate.sleep()
             except rospy.ROSInterruptException:
                 break
 
+        pbar.reset()
         logger.info(
             f"------------------------ Episode {env.scene_id} {env.episode.episode_id} over ------------------------"
         )

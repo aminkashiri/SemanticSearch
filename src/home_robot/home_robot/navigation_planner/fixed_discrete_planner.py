@@ -75,11 +75,10 @@ class DiscretePlanner:
         dump_location: str,
         exp_name: str,
         visualization_level: int,
-        min_goal_distance_cm: float = 50.0,
+        stop_distance: float,
         min_obs_dilation_selem_radius: int = 1,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
-        goal_tolerance: float = 5,  # for sim
         discrete_actions: bool = True,
         continuous_angle_tolerance: float = 30.0,
         panorama_start_steps: int = 0,
@@ -122,10 +121,7 @@ class DiscretePlanner:
         self.start_obs_dilation_selem_radius = obs_dilation_selem_radius
         self.min_obs_dilation_selem_radius = min_obs_dilation_selem_radius
         #! myTODO: I think the unit of goal tolerance is in pixels, so I should do some conversions here. Right now this is hardcoded.
-        self.goal_tolerance = goal_tolerance
         self.continuous_angle_tolerance = continuous_angle_tolerance
-
-        self.min_goal_distance_cm = min_goal_distance_cm
 
         self.map_downsample_factor = map_downsample_factor
         self.map_update_frequency = map_update_frequency
@@ -141,7 +137,7 @@ class DiscretePlanner:
         self.prefix = ""
         self.visualization_level = visualization_level
         self.ground_truth_semantics = ground_truth_semantics
-        self.stop_distance = 1 if "Goat" in task_type else 0.5
+        self.stop_distance = int(stop_distance / self.map_resolution)
 
 
     def reset(self):
@@ -273,15 +269,19 @@ class DiscretePlanner:
         angle_agent = pu.normalize_angle(self.curr_global_pose[2])
 
         if stop == False:
+            # self.log.debug(f"angle: {self.curr_global_pose[2]}, {angle_agent}")
             stg_x, stg_y = short_term_goal
             relative_stg_x, relative_stg_y = stg_x - location[0], stg_y - location[1]
+            # self.log.debug(f"rel x and y: {relative_stg_x} {relative_stg_y}")
             angle_st_goal = math.degrees(math.atan2(relative_stg_x, relative_stg_y))
+            # self.log.debug(f"angle st gl: {angle_st_goal}")
             relative_angle_to_stg = pu.normalize_angle(angle_agent - angle_st_goal)
+            # self.log.debug(f"relative angle to stg: {relative_angle_to_stg.item()}")
 
             if self.discrete_actions:
-                if relative_angle_to_stg > self.turn_angle / 2.0:
+                if relative_angle_to_stg > (self.turn_angle / 2.0) + 2:
                     action = DiscreteNavigationAction.TURN_RIGHT
-                elif relative_angle_to_stg < -self.turn_angle / 2.0:
+                elif relative_angle_to_stg < -(self.turn_angle / 2.0) - 2:
                     action = DiscreteNavigationAction.TURN_LEFT
                 else:
                     action = DiscreteNavigationAction.MOVE_FORWARD
@@ -455,7 +455,7 @@ class DiscretePlanner:
             step_size=self.step_size,
             vis_dir=self.vis_dir,
             print_images=self.visualization_level > 1,
-            goal_tolerance=self.goal_tolerance,
+            stop_distance=self.stop_distance,
             # vis_postfix="_closest_to_viewpoint",
         )
         viewpoint_map = np.zeros_like(goal_instance_map)
@@ -700,7 +700,7 @@ class DiscretePlanner:
         if goal_instance_map is not None:
             goal_cells = np.argwhere(goal_instance_map == 1)
             distances = np.linalg.norm(goal_cells - np.asarray(location), axis=1)
-            dist_to_closest = float(distances.min()) * 0.05
+            dist_to_closest = float(distances.min())
             # print("dist to closest goal cell: ", dist_to_closest)
             if dist_to_closest < self.stop_distance:
                 return True, True, None, None
@@ -714,7 +714,7 @@ class DiscretePlanner:
             step_size=self.step_size,
             vis_dir=self.vis_dir,
             print_images=self.visualization_level > 1,
-            goal_tolerance=self.goal_tolerance,
+            stop_distance=self.stop_distance,
             vis_postfix=postfix,
         )
 
@@ -1067,14 +1067,15 @@ class DiscretePlanner:
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
 
-        for key, loc in neighbor_locs.items():
-            neighbor_locs[key] = (
-                self.semantic_map.global_location_to_local_location(
-                    loc
+        if not neighbor_locs is None:
+            for key, loc in neighbor_locs.items():
+                neighbor_locs[key] = (
+                    self.semantic_map.global_location_to_local_location(
+                        loc
+                    )
+                    if is_local
+                    else loc
                 )
-                if is_local
-                else loc
-            )
 
         neighbor_distance_cache = {}
         agent_distances, other_distances = [], []

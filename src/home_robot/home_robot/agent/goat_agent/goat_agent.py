@@ -106,7 +106,6 @@ class GoatAgent(Agent):
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             vision_range=config.AGENT.SEMANTIC_MAP.vision_range,
-            explored_radius=config.AGENT.SEMANTIC_MAP.explored_radius,
             been_close_to_radius=config.AGENT.SEMANTIC_MAP.been_close_to_radius,
             target_blacklisting_radius=config.AGENT.SEMANTIC_MAP.target_blacklisting_radius,
             global_downscaling=config.AGENT.SEMANTIC_MAP.global_downscaling,
@@ -168,7 +167,6 @@ class GoatAgent(Agent):
             map_downsample_factor=config.AGENT.PLANNER.map_downsample_factor,
             map_update_frequency=config.AGENT.PLANNER.map_update_frequency,
             discrete_actions=config.AGENT.PLANNER.discrete_actions,
-            min_goal_distance_cm=config.AGENT.PLANNER.min_goal_distance_cm,
             panorama_start_steps=panorama_start_steps,
             instance_memory=self.instance_memory,
             goal_filtering=config.AGENT.SEMANTIC_MAP.goal_filtering,
@@ -176,7 +174,8 @@ class GoatAgent(Agent):
             frontier_metric=config.AGENT.frontier_metric,
             agent_id=self.agent_id,
             ground_truth_semantics=config.GROUND_TRUTH_SEMANTICS,
-            task_type=self.task_type
+            task_type=self.task_type,
+            stop_distance=config.AGENT.PLANNER.stop_distance
         )
 
         self.subtask_timesteps = None
@@ -349,6 +348,8 @@ class GoatAgent(Agent):
 
         if action["action"] == DiscreteNavigationAction.STOP:
             self.handle_stop(action)
+        
+        self.log.debug(f"Action: {str(action['action'])}")
 
         return action, info, stuck
 

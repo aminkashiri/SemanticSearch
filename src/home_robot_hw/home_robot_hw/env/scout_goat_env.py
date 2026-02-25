@@ -294,7 +294,7 @@ class ScoutGoatEnv:
                 if self.verbose:
                     next_task = self.current_episode["tasks"][self.current_task_idx]
                     print(f"[SCOUT_ENV] Starting task {self.current_task_idx + 1}: {next_task.get('category', 'unknown')}")
-                self.reset_vis_dir()
+                # self.reset_vis_dir()
         
         continuous_action = np.zeros(3)
         if action_enum == DiscreteNavigationAction.MOVE_FORWARD:
