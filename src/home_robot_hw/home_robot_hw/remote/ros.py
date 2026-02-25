@@ -147,6 +147,8 @@ class ScoutRosInterface:
 
         return np.array([base_x, base_y, base_theta])
 
+    def get_robot_center_pose(self) -> np.ndarray:
+        return self.transform_lidar_to_base(self.get_base_pose())
     
     def get_base_pose(self) -> np.ndarray:
         """Get the latest filtered base pose as a 3D numpy array [x, y, yaw]."""
@@ -160,7 +162,8 @@ class ScoutRosInterface:
         theta = np.arctan2(pose_matrix[1, 0], pose_matrix[0, 0])
         lidar_pose =  np.array([pose_matrix[0, 3], pose_matrix[1, 3], theta])
 
-        return self.transform_lidar_to_base(lidar_pose)
+        # return self.transform_lidar_to_base(lidar_pose)
+        return lidar_pose
 
     # --- FIX APPLIED HERE ---
     def get_images(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

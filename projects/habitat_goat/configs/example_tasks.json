@@ -6,33 +6,9 @@
             "episode_id": 0,
             "tasks": [
                 {
-                    "type": "objectnav",
-                    "category": "cup"
-                },
-                {
-                    "type": "languagenav",
-                    "category": "chair",
-                    "description": "Navigate to a blue chair"
-                },
-                {
-                    "type": "languagenav",
-                    "category": "umbrella",
-                    "description": "Navigate to a blue umbrella"
-                },
-                {
-                    "type": "objectnav",
-                    "category": "plant"
-                },
-
-                {
                     "type": "imagenav",
-                    "category": "microwave",
-                    "image": "projects/habitat_goat/configs/image_goals/turtlebot.jpeg"
-                },
-                {
-                    "type": "imagenav",
-                    "category": "april_tag",
-                    "image": "projects/habitat_goat/configs/image_goals/apriltag_grid.jpeg"
+                    "category": "poster",
+                    "image": "projects/habitat_goat/configs/image_goals/poster.jpeg"
                 }
             ]
         }

@@ -1,6 +1,6 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: comm1
+EXP_NAME: scout_eval8
 REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.

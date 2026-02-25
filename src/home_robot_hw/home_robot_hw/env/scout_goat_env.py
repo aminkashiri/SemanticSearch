@@ -264,6 +264,7 @@ class ScoutGoatEnv:
                     image_path = Path(goal_v["image"])
                     if image_path.exists():
                         img = cv2.imread(str(image_path))
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         goal_v["image"] = img
                 except Exception as e:
                     logger.warning(f"Error occurred while processing image: {e}")
@@ -366,4 +367,5 @@ class ScoutGoatEnv:
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
         if self.visualization_level > 0:
+            print("------------------------ VIS -----------------")
             self.visualizer.visualize(**info)

@@ -44,7 +44,8 @@ class ScoutNavigationClient(AbstractControlModule):
     # Interface methods
     def get_base_pose(self):
         """get the latest base pose from sensors"""
-        return self._ros_client.get_base_pose()
+        # return self._ros_client.get_base_pose()
+        return self._ros_client.get_robot_center_pose()
 
     def at_goal(self) -> bool:
         """
