@@ -89,7 +89,8 @@ class ScoutNavigationClient(AbstractControlModule):
         
         # Tolerance: Stop when within 1cm or 1 degree
         linear_tol = 0.0005 
-
+        angular_tol = np.deg2rad(0.3)
+        
         rate = rospy.Rate(50)
         while not rospy.is_shutdown():
             curr_pose = self.get_base_pose()
