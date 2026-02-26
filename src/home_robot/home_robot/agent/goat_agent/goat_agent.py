@@ -32,9 +32,9 @@ ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 ARUCO_PARAMS = cv2.aruco.DetectorParameters()
 ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
 MARKER_EXPAND = {
-    0: (2.5, 2.5, 1.5, 2.5),
+    0: (2.5, 2.5, 2.5, 2.),
     1: (2.5, 2.5, 1.5, 2.5),
-    2: (2.5, 2.5, 1.5, 2.5),
+    2: (2.5, 2.5, 2., 2.5),
     3: (2.5, 2.5, 1.5, 2.5),
 }
 
