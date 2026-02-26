@@ -16,7 +16,7 @@ from scipy.ndimage import binary_erosion
 from typing import Any, Dict, List, Tuple
 from home_robot.utils.logger import get_logger
 from home_robot.core.abstract_agent import Agent
-from home_robot.utils.visualization import visualize_semantic_with_labels
+from home_robot.utils.visualization import visualize_semantic_with_labels, visualize_depth_filter
 from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
     Categorical2DSemanticMapState,
 )
@@ -26,7 +26,17 @@ from home_robot.mapping.semantic.categorical_2d_semantic_map_module import (
 from home_robot.core.interfaces import DiscreteNavigationAction, Observations
 from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
+from home_robot.utils.constants import MAX_DEPTH_REPLACEMENT_VALUE
 
+ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+ARUCO_PARAMS = cv2.aruco.DetectorParameters()
+ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
+MARKER_EXPAND = {
+    0: (2.5, 2.5, 1.5, 2.5),
+    1: (2.5, 2.5, 1.5, 2.5),
+    2: (2.5, 2.5, 1.5, 2.5),
+    3: (2.5, 2.5, 1.5, 2.5),
+}
 
 @dataclass
 class Task:
@@ -462,6 +472,77 @@ class GoatAgent(Agent):
             obs.semantic = obs.semantic * mask_union
             obs.task_observations["instance_frame"] = obs.task_observations["instance_frame"] * mask_union
 
+
+        def mask_other_robots(
+            rgb: np.ndarray,
+            depth: np.ndarray,
+            depth_margin_behind: float = 0.80,  # m behind marker
+            depth_margin_front: float = 0.40,   # m in front of marker
+        ) -> np.ndarray:
+            """
+            Detect ArUco markers on other robots and invalidate their depth
+            so they don't appear as obstacles.
+
+            Args:
+                rgb: (H, W, 3) uint8 RGB image
+                depth: (H, W) float depth in cm
+                depth_margin_behind: m tolerance behind marker depth
+                depth_margin_front: m tolerance in front of marker depth
+                marker_ids_to_mask: set of marker IDs to mask; None masks all
+
+            Returns:
+                depth: (H, W) depth with robot pixels set to invalid value
+            """
+            depth = depth.copy()
+            h, w = depth.shape[:2]
+
+            corners, ids, _ = ARUCO_DETECTOR.detectMarkers(rgb)
+
+            if ids is None:
+                return depth
+
+            for i, marker_id in enumerate(ids.flatten()):
+                if marker_id not in MARKER_EXPAND:
+                    continue
+
+                c = corners[i][0]
+
+                side_lengths = [
+                    np.linalg.norm(c[j] - c[(j + 1) % 4]) for j in range(4)
+                ]
+                marker_size_px = max(side_lengths)
+
+                cx, cy = np.mean(c[:, 0]), np.mean(c[:, 1])
+                marker_region = depth[
+                    max(0, int(cy - marker_size_px // 4)):min(h, int(cy + marker_size_px // 4)),
+                    max(0, int(cx - marker_size_px // 4)):min(w, int(cx + marker_size_px // 4)),
+                ]
+                valid_marker_depths = marker_region[
+                    (marker_region > 0) & (marker_region < MAX_DEPTH_REPLACEMENT_VALUE-10)
+                ]
+
+                if len(valid_marker_depths) == 0:
+                    continue
+                marker_depth = np.median(valid_marker_depths)
+
+                up, down, left, right = MARKER_EXPAND[marker_id]
+                x_min = max(0, int(cx - left * marker_size_px))
+                x_max = min(w, int(cx + right * marker_size_px))
+                y_min = max(0, int(cy - up * marker_size_px))
+                y_max = min(h, int(cy + down * marker_size_px))
+
+
+                roi_depth = depth[y_min:y_max, x_min:x_max]
+                depth_match = (
+                    (roi_depth > marker_depth - depth_margin_behind) &
+                    (roi_depth < marker_depth + depth_margin_front) &
+                    (roi_depth > 0) 
+                )
+                roi_depth[depth_match] = MAX_DEPTH_REPLACEMENT_VALUE
+                depth[y_min:y_max, x_min:x_max] = roi_depth
+
+            return depth
+
         category_scores = None
         if not self.ground_truth_semantics:
             if "Goat-v1" in self.task_type :
@@ -517,6 +598,15 @@ class GoatAgent(Agent):
                         category_scores[i] = 0
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
+        depth = mask_other_robots(obs.rgb, obs.depth)
+        save_depth_comparison(
+            rgb=obs.rgb,
+            depth_before=obs.depth,
+            depth_after=depth,
+            save_dir=self.planner.vis_dir,
+            timestep=self.total_timesteps,
+        )
+        obs.depth = depth
         depth = (
             torch.from_numpy(obs.depth).unsqueeze(-1).to(self.device) * 100.0
         )  # m to cm

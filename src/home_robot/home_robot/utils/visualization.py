@@ -366,3 +366,39 @@ def visualize_semantic_with_labels(
         )
 
     cv2.imwrite(save_path, semantic_map_cv)
+
+def visualize_depth_filter(
+    rgb: np.ndarray,
+    depth_before: np.ndarray,
+    depth_after: np.ndarray,
+    save_dir: str,
+    timestep: int,
+    max_depth: float = 5.0,
+):
+    os.makedirs(save_dir, exist_ok=True)
+
+    def depth_to_vis(depth):
+        vis = depth.copy()
+        vis[vis > max_depth] = 0.0
+        dmax = vis.max()
+        if dmax > 0:
+            vis = vis / dmax * 255.0
+        return vis.astype(np.uint8)
+
+    before_vis = depth_to_vis(depth_before)
+    after_vis = depth_to_vis(depth_after)
+
+    masked_pixels = (depth_after >= max_depth) & (depth_before < max_depth)
+    rgb_vis = cv2.cvtColor(rgb.copy(), cv2.COLOR_RGB2BGR)
+    rgb_vis[masked_pixels] = [0, 0, 255]
+
+    combined = np.hstack([
+        rgb_vis,
+        cv2.cvtColor(before_vis, cv2.COLOR_GRAY2BGR),
+        cv2.cvtColor(after_vis, cv2.COLOR_GRAY2BGR),
+    ])
+
+    cv2.imwrite(
+        os.path.join(save_dir, f"{timestep}_depth_robot_mask.png"),
+        combined,
+    )
