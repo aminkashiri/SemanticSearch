@@ -28,7 +28,7 @@ class MapMerger:
     def __init__(
         self,
         num_sem_categories: int,
-        resolution: float = 0.05,
+        resolution,
         ransac_thresh: float = 10.0,
         iou_threshold: float = 0.3,
         semantic_weight: float = 1.0,

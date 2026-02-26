@@ -138,7 +138,6 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
             # --- Pairwise communication ---
             for agent_id, info in neighbors.items():
-                self.comm_log.debug(f"Sending data to {agent_id}")
 
                 send_map = False
                 last = self.map_shared_time.get(agent_id, -1)
@@ -147,6 +146,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
                 packed = self._pack_comm_data(send_map)
 
+                self.comm_log.debug(f"Sending data to {agent_id}, map: {send_map}")
                 if self._send_to_neighbor(ctx, agent_id, info, packed):
                     self.comm_log.debug(f"Send to {agent_id} successfull")
                     if send_map:
@@ -164,8 +164,10 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
     ) -> bool:
         try:
             sock = ctx.socket(zmq.REQ)
-            sock.setsockopt(zmq.SNDTIMEO, 5000)
-            sock.setsockopt(zmq.RCVTIMEO, 10000)
+            sock.setsockopt(zmq.SNDTIMEO, 300000)
+            sock.setsockopt(zmq.RCVTIMEO, 300000)
+            # sock.setsockopt(zmq.SNDTIMEO, 5000)
+            # sock.setsockopt(zmq.RCVTIMEO, 10000)
             sock.setsockopt(zmq.LINGER, 0)
             sock.connect(f"tcp://{info['ip']}:{info['port']}")
             sock.send(packed)
@@ -188,14 +190,14 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         self.comm_log.debug(f"Started receiver loop")
         ctx = zmq.Context()
         sock = ctx.socket(zmq.REP)
-        sock.setsockopt(zmq.RCVTIMEO, 1000)
+        sock.setsockopt(zmq.RCVTIMEO, 300000)
         # sock.bind(f"tcp://*:{self.data_port}")
         sock.bind(f"tcp://{self.adhoc_ip}:{self.data_port}")
 
 
         while self._comm_running:
             try:
-                self.comm_log.debug(f"Receiver: Waiting for data")
+                self.comm_log.debug(f"Receiver: Waiting for data t: {time.time()}")
                 raw = sock.recv()
 
                 try:
@@ -210,15 +212,17 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
                     self.comm_log.info(
                         f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
-                        f"received map at step {self.total_timesteps}"
+                        f"received data at step {self.total_timesteps}, t: {time.time()}"
                     )
+                    if not data.get("map") is None:
+                        self.comm_log.debug(f"data contains map")
                     data["time"] = time.time()
                     self._recv_queue.put(data)
 
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    self.comm_log.error(f"Agent {self.agent_id} receiver error: {e}")
+                    self.comm_log.error(f"Agent {self.agent_id} receiver error: {e}, t: {time.time()}")
                     sock.send(b"ERR")
 
             except zmq.Again:

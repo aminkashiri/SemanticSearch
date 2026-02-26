@@ -359,10 +359,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         self.log.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
-        return (
-            # map_features,
-            state
-        )
+        self.log.debug(f"Updated loc: global={state.global_loc}")
+        return state
+        
 
     def _aggregate_instance_map_channels_per_category(
         self, curr_map, num_instance_channels
@@ -656,9 +655,13 @@ class Categorical2DSemanticMapModule(nn.Module):
             )
 
         tilt_deg = torch.rad2deg(tilt).item() if tilt.numel() > 0 else 0.0
+        # tilt_deg = 0.73
         point_cloud_base_coords = du.transform_camera_view_t(
             point_cloud_t, agent_height, tilt_deg, device
         )
+        camera_forward_offset_cm  = 17.5
+        point_cloud_base_coords[..., 1] += camera_forward_offset_cm
+
 
         # Show the point cloud in base coordinates for debugging
         if self.debug_mode:
@@ -891,10 +894,10 @@ class Categorical2DSemanticMapModule(nn.Module):
             ]
 
         curr_loc = current_pose[:2].flip(0)
-        curr_loc = (curr_loc * 100.0 / self.xy_resolution).int().tolist()
+        curr_loc = (curr_loc * 100.0 / self.xy_resolution).round().int().tolist()
 
         prev_loc = prev_pose[:2].flip(0)
-        prev_loc = (prev_loc * 100.0 / self.xy_resolution).int().tolist()
+        prev_loc = (prev_loc * 100.0 / self.xy_resolution).round().int().tolist()
 
         current_map[MC.AGENT_VISITED_MAP] = self._get_update_visited_map(
             curr_loc, prev_loc, current_map[MC.AGENT_VISITED_MAP]

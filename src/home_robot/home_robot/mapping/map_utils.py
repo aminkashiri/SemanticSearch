@@ -31,7 +31,7 @@ def init_map_and_pose(
     global_pose[:2] = p.global_map_size_cm / 100.0 / 2.0
 
     # Initialize starting agent locations
-    x, y = (global_pose[:2] * 100 / p.resolution).int()
+    x, y = (global_pose[:2] * 100 / p.resolution).round().int()
     global_map = torch.zeros(
         num_channels,
         p.global_map_size,
@@ -57,7 +57,7 @@ def get_local_parameters_from_global_pose(
     Using a global pose, finds lmb, origins, local_map, and local_pose.
     """
     p = map_size_parameters
-    global_loc = (global_pose[:2] * 100 / p.resolution).int()
+    global_loc = (global_pose[:2] * 100 / p.resolution).round().int()
     lmb = get_local_map_boundaries(global_loc, map_size_parameters)
     origins = torch.tensor(
         [

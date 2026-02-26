@@ -201,13 +201,13 @@ class Categorical2DSemanticMapState:
     def local_loc(self):
         """local_loc is the index in local map as it is (don't need to flip)"""
         location = self.local_pose[:2]
-        location = (location * 100.0 / self.resolution).int().tolist()
+        location = (location * 100.0 / self.resolution).round().int().tolist()
         return location[1], location[0]
 
     @property
     def global_loc(self):
         location = self.global_pose[:2]
-        location = (location * 100.0 / self.resolution).int().tolist()
+        location = (location * 100.0 / self.resolution).round().int().tolist()
         return location[1], location[0]
     
     def get_loc(self, local=True):

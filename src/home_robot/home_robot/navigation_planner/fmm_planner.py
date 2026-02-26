@@ -286,10 +286,14 @@ class FMMPlanner:
         subset -= subset[self.du, self.du]
         # ratio1 = subset / dist_mask
         # subset[ratio1 < -1.5] = 1
+        movement_threshold = -radius/2
 
-        reachable_subset = self.filter_unreachable_goals(
-            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=2
-        )
+        for thickness in range(5)[::-1]:
+            reachable_subset = self.filter_unreachable_goals(
+                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=thickness
+            )
+            if np.min(reachable_subset) < movement_threshold:
+                break
         vis_list.append(reachable_subset.copy())
 
 
@@ -308,7 +312,8 @@ class FMMPlanner:
 
 
         # Rechable if stg distance is less than current location (negative).
-        reachable = (subset[stg_x, stg_y] < -0.0001) or stop
+        # reachable = (subset[stg_x, stg_y] < -0.0001) or stop
+        reachable = (subset[stg_x, stg_y] < movement_threshold) or stop
 
         if self.print_images:
             self.visualize_get_short_term_goal(vis_list, timestep, prefix, postfix)
