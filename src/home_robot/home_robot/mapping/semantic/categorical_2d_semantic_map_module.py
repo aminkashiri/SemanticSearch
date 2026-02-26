@@ -659,6 +659,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         point_cloud_base_coords = du.transform_camera_view_t(
             point_cloud_t, agent_height, tilt_deg, device
         )
+        print("DON'T FORGET THIS")
         camera_forward_offset_cm  = 17.5
         point_cloud_base_coords[..., 1] += camera_forward_offset_cm
 
@@ -766,6 +767,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         # * Shape is: [voxech_channels, height, width]
 
         fp_map_pred = agent_height_proj[0, :, :] > 10
+        robot_channel_idx = self.num_sem_categories  # 1-indexed in all_height_proj since [0] is occupancy
+        robot_projected = all_height_proj[robot_channel_idx] > 1
+        fp_map_pred[robot_projected] = 0
+
         # print(f"unique values in fp_map_pred before thresholding: {torch.unique(fp_map_pred)}")
 
         # +rows is away from the camera, with the camra origin at row 0
@@ -847,6 +852,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         # Aggregate by taking the max of the previous map and current map — this is robust
         # to false negatives in one frame but makes it impossible to remove false positives
         current_map = torch.maximum(prev_map, translated)
+        robot_sem_idx = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
+        current_map[robot_sem_idx] = translated[robot_sem_idx]
+
+        # Also clean obstacles where robot currently is
+        robot_present = current_map[robot_sem_idx] > 0.5
+        current_map[MC.OBSTACLE_MAP][robot_present] = 0 # This is also needed, and helps us with steps that the other robot is not detected.
+
 
         # plt.clf()
         # plt.subplot(221)
@@ -1147,7 +1159,10 @@ class Categorical2DSemanticMapModule(nn.Module):
         """Update global map and pose and re-center local map and pose for a
         particular environment.
         """
+
         global_map = state.global_map
+        robot_sem_idx = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
+        global_map[robot_sem_idx] = 0
         lmb = state.lmb
 
         if self.record_instance_ids:

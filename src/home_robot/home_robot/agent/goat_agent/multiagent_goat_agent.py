@@ -27,8 +27,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.tasks_failed = None
         self.active_task = None
         self.others_active_task_expiration = None
-        self.communication_cooldown = 5
-        self.location_valid = 3  # for how many steps received locations are valid
+        self.communication_cooldown = config.AGENT.COMMUNICATION.cooldown
+        self.location_valid = config.AGENT.COMMUNICATION.location_valid  # for how many steps received locations are valid
         self.active_task_cooldown = 20
         self.map_merger = MapMerger(
             num_sem_categories=self.num_sem_categories,
@@ -88,7 +88,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             if self.tasks_done[i] or self.tasks_failed[i]:
                 continue
 
-            if self.inst_goal_ids[i] is None or self.total_timesteps % 10 == 0:
+            if self.inst_goal_ids[i] is None or self.total_timesteps % self.search_found_goal_freq == 0:
                 inst_goal_id = self.matching.search_for_goal(
                     task,
                     self.match_memory,

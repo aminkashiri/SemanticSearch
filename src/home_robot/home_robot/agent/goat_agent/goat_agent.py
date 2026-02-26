@@ -100,7 +100,7 @@ class GoatAgent(Agent):
             self.device_id = device_id
             self.device = torch.device(f"cuda:{self.device_id}")
 
-        self.num_sem_categories = len(vocabulary)
+        self.num_sem_categories = len(vocabulary) + 1 # For other robots.
         env_params = self._get_env_params(config)
         agent_cell_radius = int(
             np.ceil(config.AGENT.radius * 100.0 / config.AGENT.SEMANTIC_MAP.map_resolution)
@@ -201,6 +201,7 @@ class GoatAgent(Agent):
         if not self.ground_truth_semantics:
             self._setup_perception(config, vocabulary)
         self.match_memory = True
+        self.search_found_goal_freq = config.AGENT.search_found_goal_freq
 
     def _get_task_type(self, config) -> str:
         if self.real_world:
@@ -472,41 +473,32 @@ class GoatAgent(Agent):
             obs.semantic = obs.semantic * mask_union
             obs.task_observations["instance_frame"] = obs.task_observations["instance_frame"] * mask_union
 
-
         def mask_other_robots(
             rgb: np.ndarray,
             depth: np.ndarray,
-            depth_margin_behind: float = 0.80,  # m behind marker
-            depth_margin_front: float = 0.40,   # m in front of marker
+            depth_margin_behind: float = 0.80,
+            depth_margin_front: float = 0.40,
         ) -> np.ndarray:
             """
-            Detect ArUco markers on other robots and invalidate their depth
-            so they don't appear as obstacles.
-
-            Args:
-                rgb: (H, W, 3) uint8 RGB image
-                depth: (H, W) float depth in cm
-                depth_margin_behind: m tolerance behind marker depth
-                depth_margin_front: m tolerance in front of marker depth
-                marker_ids_to_mask: set of marker IDs to mask; None masks all
+            Detect ArUco markers on other robots and return a binary mask
+            of pixels belonging to other robots.
 
             Returns:
-                depth: (H, W) depth with robot pixels set to invalid value
+                robot_mask: (H, W) bool mask, True where other robot is detected
             """
-            depth = depth.copy()
+            robot_mask = np.zeros(depth.shape[:2], dtype=bool)
             h, w = depth.shape[:2]
 
             corners, ids, _ = ARUCO_DETECTOR.detectMarkers(rgb)
 
             if ids is None:
-                return depth
+                return robot_mask
 
             for i, marker_id in enumerate(ids.flatten()):
                 if marker_id not in MARKER_EXPAND:
                     continue
 
                 c = corners[i][0]
-
                 side_lengths = [
                     np.linalg.norm(c[j] - c[(j + 1) % 4]) for j in range(4)
                 ]
@@ -518,7 +510,7 @@ class GoatAgent(Agent):
                     max(0, int(cx - marker_size_px // 4)):min(w, int(cx + marker_size_px // 4)),
                 ]
                 valid_marker_depths = marker_region[
-                    (marker_region > 0) & (marker_region < MAX_DEPTH_REPLACEMENT_VALUE-10)
+                    (marker_region > 0) & (marker_region < MAX_DEPTH_REPLACEMENT_VALUE - 10)
                 ]
 
                 if len(valid_marker_depths) == 0:
@@ -531,17 +523,15 @@ class GoatAgent(Agent):
                 y_min = max(0, int(cy - up * marker_size_px))
                 y_max = min(h, int(cy + down * marker_size_px))
 
-
                 roi_depth = depth[y_min:y_max, x_min:x_max]
                 depth_match = (
                     (roi_depth > marker_depth - depth_margin_behind) &
                     (roi_depth < marker_depth + depth_margin_front) &
-                    (roi_depth > 0) 
+                    (roi_depth > 0)
                 )
-                roi_depth[depth_match] = MAX_DEPTH_REPLACEMENT_VALUE
-                depth[y_min:y_max, x_min:x_max] = roi_depth
+                robot_mask[y_min:y_max, x_min:x_max] |= depth_match
 
-            return depth
+            return robot_mask
 
         category_scores = None
         if not self.ground_truth_semantics:
@@ -598,19 +588,19 @@ class GoatAgent(Agent):
                         category_scores[i] = 0
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
-        depth = mask_other_robots(obs.rgb, obs.depth)
-        save_depth_comparison(
+        other_robots_mask = mask_other_robots(obs.rgb, obs.depth)
+        visualize_depth_filter(
             rgb=obs.rgb,
-            depth_before=obs.depth,
-            depth_after=depth,
+            robot_mask=other_robots_mask,
+            depth=obs.depth,
             save_dir=self.planner.vis_dir,
             timestep=self.total_timesteps,
         )
-        obs.depth = depth
         depth = (
             torch.from_numpy(obs.depth).unsqueeze(-1).to(self.device) * 100.0
         )  # m to cm
 
+        obs.semantic[other_robots_mask] = self.num_sem_categories # Add other robots to semantics
         semantic = torch.eye(self.num_sem_categories + 1, device=self.device)[
             torch.from_numpy(obs.semantic).to(self.device)
         ][
@@ -685,7 +675,7 @@ class GoatAgent(Agent):
         select_best forces matching to the best object, even if it doesn't pass matching threshold
         """
         #! myTODO: Put %10 here, so that we again check with obs every 10 steps, so we might get better matches. Can be more intelligent.
-        if not self.inst_goal_id is None and self.get_subtask_timestep() % 10 != 0:
+        if not self.inst_goal_id is None and self.get_subtask_timestep() % self.search_found_goal_freq != 0:
             self.log.info(f"Already found instance goal, not searching anymore.")
         else:
             # Match a goal against every instance in memory the moment the subtask starts.

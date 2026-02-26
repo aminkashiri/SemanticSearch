@@ -319,9 +319,15 @@ class DiscretePlanner:
 
     def get_traversible(self, is_local, dilation_raduis):
         obstacles = self.semantic_map.get_obstacle_map(is_local)
+
+        # Add other robot as temporary obstacle before dilation
+        robot_sem_idx = MC.NON_SEM_CHANNELS + self.semantic_map.num_sem_categories - 1
+        m = self.semantic_map.local_map if is_local else self.semantic_map.global_map
+        other_robot = m[robot_sem_idx].cpu().numpy() > 0.5
+        obstacles = obstacles | other_robot
+
         dilated_obstacles = cv2.dilate(obstacles.astype(np.uint8), skimage.morphology.disk(dilation_raduis), iterations=1).astype(bool)
         dilated_obstacles[self.semantic_map.get_visited_map(is_local, full=True) == 1] = 0
-
         if is_local:
             gx1, gx2, gy1, gy2 = self.semantic_map.lmb
             collision_map = self.collision_map[gx1:gx2, gy1:gy2] == 1
@@ -330,7 +336,6 @@ class DiscretePlanner:
         dilated_obstacles = dilated_obstacles | collision_map
         robot_loc = self.semantic_map.get_loc(is_local)
         dilated_obstacles[robot_loc] = 0
-
         traversible = ~dilated_obstacles
         return traversible
     
