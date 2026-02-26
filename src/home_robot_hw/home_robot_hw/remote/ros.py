@@ -122,7 +122,7 @@ class ScoutRosInterface:
         Set x offset to 0.170m from CAD drawings online
         Tuning Needed
         '''
-        self.static_base_to_lidar = [0.170, 0. , 0.]
+        self.static_base_to_lidar = [0.175, 0. , 0.]
         s_x, s_y, s_theta = self.static_base_to_lidar 
 
         # T_world_lidar

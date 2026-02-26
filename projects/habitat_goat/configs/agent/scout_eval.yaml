@@ -16,8 +16,8 @@ ENVIRONMENT:
   episode_timeout_minutes: 15
   forward: 0.25
   turn_angle: 30.0        # agent turn angle (in degrees)
-  frame_height: 720       # first-person frame height (in pixels)
-  frame_width: 1280       # first-person frame width (in pixels)
+  frame_height: 480       # first-person frame height (in pixels)
+  frame_width: 848       # first-person frame width (in pixels)
   camera_height: 0.5     # camera sensor height (in metres)
   hfov: 80                # horizontal field of view (in degrees)
   min_depth: 0.2          # minimum depth for depth sensor (in metres)
@@ -40,7 +40,7 @@ AGENT:
     semantic_categories: dataset # map semantic channel categories ("coco_indoor", "longtail_indoor", "mukul_indoor")
     # num_sem_categories: 380           # number of map semantic channel categories (16, 257, 35)
     map_size_cm: 4800        # global map size (in centimeters)
-    map_resolution: 5        # size of map bins (in centimeters)
+    map_resolution: 10        # size of map bins (in centimeters)
     vision_range: 100        # diameter of local map region visible by the agent (in cells)
     global_downscaling: 2    # ratio of global over local map
     du_scale: 1              # frame downscaling before projecting to point cloud

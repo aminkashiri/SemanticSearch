@@ -89,7 +89,8 @@ class ScoutClient:
     # Observation interfaces
     def get_base_pose(self):
         """Get the current base pose of the robot from ROS TF."""
-        return self._ros_client.get_base_pose()
+        # return self._ros_client.get_base_pose()
+        return self._ros_client.get_robot_center_pose()
 
     # --- FIX APPLIED HERE ---
     def get_images(self, compute_xyz: bool, rotate_images: bool) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:

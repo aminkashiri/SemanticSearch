@@ -80,16 +80,15 @@ class ScoutNavigationClient(AbstractControlModule):
         target_ang = abs(xyt[2])   # Angular goal (rad)
         
         # 2. PID/P Gains (Tune these based on Scout's responsiveness)
-        Kp_linear = 2.5   
+        Kp_linear = 2   
         Kp_angular = 2.0
         
         # Velocity Limits 
-        min_v, max_v = 0.1, 0.5  # m/s
-        min_w, max_w = 0.15, 1.0  # rad/s
+        min_v, max_v = 0.025, 0.5  # m/s
+        min_w, max_w = 0.025, 1.0 # rad/s
         
         # Tolerance: Stop when within 1cm or 1 degree
-        linear_tol = 0.0025 
-        angular_tol = np.radians(0.3)
+        linear_tol = 0.0005 
 
         rate = rospy.Rate(50)
         while not rospy.is_shutdown():
