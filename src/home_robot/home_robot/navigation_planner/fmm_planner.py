@@ -82,6 +82,7 @@ class FMMPlanner:
         # self.goal_map = None
         self.vis_postfix = vis_postfix
         self.log = log
+        self.real_world = True
 
     def set_goal(self, goal):
         """Set planner goal. Goal should be of size 2, containing x and y positions."""
@@ -286,34 +287,44 @@ class FMMPlanner:
         subset -= subset[self.du, self.du]
         # ratio1 = subset / dist_mask
         # subset[ratio1 < -1.5] = 1
-        movement_threshold = -radius/2
 
-        for thickness in range(5)[::-1]:
+        if self.real_world:
+            movement_threshold = -radius / 2
+            # Keep only candidates with considerable improvement toward goal
+            progress_mask = np.logical_and(mask.astype(bool), subset < movement_threshold)
+
+            if np.any(progress_mask):
+                #     for thickness in range(5)[::-1]:
+                #         reachable_subset = self.filter_unreachable_goals(
+                #             subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=thickness
+                #         )
+                #         if np.min(reachable_subset) < movement_threshold:
+                #             break
+
+                # Among those, choose the one furthest from obstacles
+                obstacle_dist = cv2.distanceTransform(
+                    (1 - obstacle_mask).astype(np.uint8), cv2.DIST_L2, 5
+                ) + 1
+                clearance = np.where(progress_mask, obstacle_dist, 0)
+                vis_list.append(clearance.copy())
+                stg_x, stg_y = np.unravel_index(np.argmax(clearance), clearance.shape)
+                reachable = True
+            else:
+                reachable = stop
+            reachable = (subset[stg_x, stg_y] < movement_threshold) or stop
+        else:
             reachable_subset = self.filter_unreachable_goals(
-                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=thickness
+                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
             )
-            if np.min(reachable_subset) < movement_threshold:
-                break
-        vis_list.append(reachable_subset.copy())
+            vis_list.append(reachable_subset.copy())
+            stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+            # Rechable if stg distance is less than current location (negative).
+            reachable = (subset[stg_x, stg_y] < -0.0001) or stop
 
-
-        # #1 First attemp: Choose a safe reachable stg
-        stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
         self.log.debug(
             f"subset[stgx, stgy] = {subset[stg_x, stg_y]}"
         )
-        # if stg_x == self.du and stg_y == self.du:
-        #     #2 Second attemp: Choose a reachable stg
-        #     reachable_subset = self.filter_unreachable_goals(
-        #         subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
-        #     )
-        #     stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
-        #     vis_list.append(reachable_subset.copy())
 
-
-        # Rechable if stg distance is less than current location (negative).
-        # reachable = (subset[stg_x, stg_y] < -0.0001) or stop
-        reachable = (subset[stg_x, stg_y] < movement_threshold) or stop
 
         if self.print_images:
             self.visualize_get_short_term_goal(vis_list, timestep, prefix, postfix)
