@@ -40,7 +40,7 @@ AGENT:
     semantic_categories: dataset # map semantic channel categories ("coco_indoor", "longtail_indoor", "mukul_indoor")
     # num_sem_categories: 380           # number of map semantic channel categories (16, 257, 35)
     map_size_cm: 4800        # global map size (in centimeters)
-    map_resolution: 10        # size of map bins (in centimeters)
+    map_resolution: 5        # size of map bins (in centimeters)
     vision_range: 100        # diameter of local map region visible by the agent (in cells)
     global_downscaling: 2    # ratio of global over local map
     du_scale: 1              # frame downscaling before projecting to point cloud
