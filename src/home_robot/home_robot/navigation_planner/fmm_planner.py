@@ -287,31 +287,34 @@ class FMMPlanner:
         subset -= subset[self.du, self.du]
         # ratio1 = subset / dist_mask
         # subset[ratio1 < -1.5] = 1
-
         if self.real_world:
             movement_threshold = -radius / 2
-            # Keep only candidates with considerable improvement toward goal
             progress_mask = np.logical_and(mask.astype(bool), subset < movement_threshold)
 
             if np.any(progress_mask):
-                #     for thickness in range(5)[::-1]:
-                #         reachable_subset = self.filter_unreachable_goals(
-                #             subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=thickness
-                #         )
-                #         if np.min(reachable_subset) < movement_threshold:
-                #             break
-
-                # Among those, choose the one furthest from obstacles
                 obstacle_dist = cv2.distanceTransform(
                     (1 - obstacle_mask).astype(np.uint8), cv2.DIST_L2, 5
                 ) + 1
-                clearance = np.where(progress_mask, obstacle_dist, 0)
-                vis_list.append(clearance.copy())
-                stg_x, stg_y = np.unravel_index(np.argmax(clearance), clearance.shape)
+
+                # First, find the best goal by FMM distance
+                candidate_subset = np.where(progress_mask, subset, max_value)
+                best_x, best_y = np.unravel_index(np.argmin(candidate_subset), candidate_subset.shape)
+
+                min_clearance_threshold = 5  # cells
+                if obstacle_dist[best_x, best_y] < min_clearance_threshold:
+                    # Too close to obstacle — pick safest among progress candidates
+                    clearance = np.where(progress_mask, obstacle_dist, 0)
+                    stg_x, stg_y = np.unravel_index(np.argmax(clearance), clearance.shape)
+                else:
+                    # Enough clearance — pick closest to goal
+                    stg_x, stg_y = best_x, best_y
+
+                vis_list.append(obstacle_dist * progress_mask)
                 reachable = True
             else:
+                vis_list.append(subset)
+                stg_x, stg_y = self.du, self.du
                 reachable = stop
-            reachable = (subset[stg_x, stg_y] < movement_threshold) or stop
         else:
             reachable_subset = self.filter_unreachable_goals(
                 subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0

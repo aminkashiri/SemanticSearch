@@ -212,7 +212,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
                     self.comm_log.info(
                         f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
-                        f"received data at step {self.total_timesteps}, t: {time.time()}"
+                        f"received data at step {self.total_timesteps}, t: {time.time()}, map: {not data.get('map') is None}"
                     )
                     if not data.get("map") is None:
                         self.comm_log.debug(f"data contains map")
@@ -233,7 +233,6 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         sock.close()
         ctx.term()
 
-
     def _pack_comm_data(self, send_map) -> bytes:
         data = self._get_communication_data()
         global_map = data.pop("map")
@@ -247,7 +246,23 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         buf.write(meta_bytes)
 
         if send_map:
-            buf.write(global_map.cpu().numpy().tobytes())
+            map_np = global_map.cpu().numpy()
+            nonzero_mask = np.any(map_np != 0, axis=0)
+            rows, cols = np.where(nonzero_mask)
+            values = map_np[:, rows, cols].astype(np.float16)  # cut the size in half
+
+            n_nonzero = len(rows)
+            buf.write(struct.pack("I", n_nonzero))
+            buf.write(rows.astype(np.int32).tobytes())
+            buf.write(cols.astype(np.int32).tobytes())
+            buf.write(values.tobytes())
+
+            self.comm_log.debug(
+                f"Map packed: {n_nonzero}/{nonzero_mask.size} cells "
+                f"({n_nonzero / nonzero_mask.size * 100:.1f}%), "
+                f"size: {buf.tell() / 1024 / 1024:.1f}MB"
+            )
+
         return buf.getvalue()
 
     def _unpack_comm_data(self, raw: bytes) -> Optional[dict]:
@@ -264,8 +279,16 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
             }
 
             if has_map:
-                map_shape = self.semantic_map.global_map.shape
-                data["map"] = torch.from_numpy(np.frombuffer(buf.read(), dtype=np.float32).reshape(map_shape))
+                C, H, W = self.semantic_map.global_map.shape
+                n_nonzero = struct.unpack("I", buf.read(4))[0]
+
+                rows = np.frombuffer(buf.read(n_nonzero * 4), dtype=np.int32)
+                cols = np.frombuffer(buf.read(n_nonzero * 4), dtype=np.int32)
+                values = np.frombuffer(buf.read(n_nonzero * C * 2), dtype=np.float16).reshape(C, n_nonzero)
+
+                map_np = np.zeros((C, H, W), dtype=np.float32)
+                map_np[:, rows, cols] = values.astype(np.float32)
+                data["map"] = torch.from_numpy(map_np)
 
             return data
         except Exception as e:
