@@ -34,7 +34,7 @@ class MapMerger:
         semantic_weight: float = 1.0,
         vis_dir: Optional[str] = None,
     ):
-        self.num_sem_categories = num_sem_categories
+        self.num_sem_categories = num_sem_categories # Note that this includes last layer which is other robots loc
         self.resolution = resolution
         self.ransac_thresh = ransac_thresh
         self.iou_threshold = iou_threshold
@@ -228,7 +228,7 @@ class MapMerger:
         Same semantic class + similar local obstacle context = putative match.
         """
         sem_start = MC.NON_SEM_CHANNELS
-        sem_end = MC.NON_SEM_CHANNELS + self.num_sem_categories
+        sem_end = MC.NON_SEM_CHANNELS + self.num_sem_categories-1 #! Don't consider last layer which is other robots loc
 
         sem_A = map_A[sem_start:sem_end].cpu().numpy()
         sem_B = map_B[sem_start:sem_end].cpu().numpy()
@@ -273,7 +273,7 @@ class MapMerger:
         """Extract centroids + descriptors for each semantic object instance."""
         landmarks = []
 
-        for cat_idx in range(self.num_sem_categories):
+        for cat_idx in range(self.num_sem_categories - 1):
             binary = (sem_channels[cat_idx] > 0.5).astype(np.uint8)
             if binary.sum() < min_size:
                 continue
@@ -366,7 +366,7 @@ class MapMerger:
         """
         merged = global_map.clone()
         protected_channels = torch.tensor(
-            [MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP],
+            [MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP, MC.NON_SEM_CHANNELS + self.num_sem_categories],
             device=global_map.device,
         )
         all_channels = torch.arange(global_map.shape[0], device=global_map.device)
@@ -425,30 +425,15 @@ class MapMerger:
         path = os.path.join(self.vis_dir, f"{self.timestep}.15.map_merge_FAILED.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
 
-    def _visualize(
-        self,
-        map_A: Tensor,
-        loc_A: np.ndarray,
-        merged: Tensor,
-        data,
-    ):
-        map_B = data["transformed_map"]
+    def _visualize(self, map_A, loc_A, merged, data):
+        transformed_map = data["transformed_map"]
+        original_map = data["map"]  # original unwarped map
         loc_B_original = data["location"]
         loc_B_transformed = data["transformed_loc"]
-        transform = self._cached_transforms[data["agent_id"]]
         fig, axes = plt.subplots(1, 4, figsize=(24, 6))
 
         obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy()
-        obs_B = map_B[MC.OBSTACLE_MAP].cpu().numpy()
         obs_merged = merged[MC.OBSTACLE_MAP].cpu().numpy()
-
-        obs_B_warped = cv2.warpAffine(
-            obs_B.astype(np.float32),
-            transform,
-            (obs_A.shape[1], obs_A.shape[0]),
-            flags=cv2.INTER_NEAREST,
-            borderValue=0,
-        )
 
         # Robot A's map
         axes[0].imshow(obs_A, cmap="gray", origin="upper")
@@ -457,42 +442,29 @@ class MapMerger:
         axes[0].legend()
         axes[0].axis("off")
 
-        # Robot B's map (in its own frame)
-        axes[1].imshow(obs_B, cmap="gray", origin="upper")
-        axes[1].plot(
-            loc_B_original[1], loc_B_original[0], "ro", markersize=10, label="Robot B"
-        )
+        obs_B_original = original_map[MC.OBSTACLE_MAP].cpu().numpy()
+        axes[1].imshow(obs_B_original, cmap="gray", origin="upper")
+        axes[1].plot(loc_B_original[1], loc_B_original[0], "ro", markersize=10, label="Robot B")
         axes[1].set_title("Robot B - Obstacle Map (own frame)")
         axes[1].legend()
         axes[1].axis("off")
 
-        # Overlay before/after alignment
+        # Panel 3: Overlay — use already-warped map directly, no second warp
+        obs_B_warped = transformed_map[MC.OBSTACLE_MAP].cpu().numpy()
         overlay = np.zeros((*obs_A.shape, 3))
         overlay[:, :, 2] = np.clip(obs_A, 0, 1)
         overlay[:, :, 0] = np.clip(obs_B_warped, 0, 1)
         axes[2].imshow(overlay, origin="upper")
         axes[2].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[2].plot(
-            loc_B_transformed[1],
-            loc_B_transformed[0],
-            "ro",
-            markersize=10,
-            label="Robot B (aligned)",
-        )
+        axes[2].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10, label="Robot B (aligned)")
         axes[2].set_title("Alignment Overlay (blue=A, red=B)")
         axes[2].legend()
         axes[2].axis("off")
 
-        # Merged map
+        # Panel 4: Merged map
         axes[3].imshow(obs_merged, cmap="gray", origin="upper")
         axes[3].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[3].plot(
-            loc_B_transformed[1],
-            loc_B_transformed[0],
-            "ro",
-            markersize=10,
-            label="Robot B",
-        )
+        axes[3].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10, label="Robot B")
         dist_cells = np.sqrt(
             (loc_A[0] - loc_B_transformed[0]) ** 2
             + (loc_A[1] - loc_B_transformed[1]) ** 2
@@ -507,35 +479,49 @@ class MapMerger:
 
 
 
-
 if __name__ == "__main__":
-    # A is ps... 7 , step 220, with location 361, 539
-    # B is ps... 1 , step 260, with location 732, 316
-
-    map_A = torch.load("/home-robot/datadump/images/test/p53SfW6mjZe_7_0/map_220.pt")
-    map_B = torch.load("/home-robot/datadump/images/test/p53SfW6mjZe_1_0/map_260.pt")
+    map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/comm3/real_world_0/agent_1/mymap_40.pt")
+    map_B = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/comm3/real_world_0/agent_1/othermap_40.pt")
     num_sem = int((map_A.shape[0] - MC.NON_SEM_CHANNELS) / 2)
     print(f"Map channels: {map_A.shape[0]}, num_sem: {num_sem}")
 
     # Robot locations in their own frames (x, y) in pixel coords
-    loc_A = torch.tensor([361, 539])
-    loc_B = torch.tensor([732, 316])
+    loc_A = [502, 538]
+    loc_B = [434, 406]
+    data = {
+        "agent_id": 1,
+        "map": map_B,
+        "location": loc_B
+    }
 
-    merger = MapMerger(
+    map_merger = MapMerger(
         num_sem_categories=num_sem,
         resolution=0.05,
         ransac_thresh=10.0,
-        iou_threshold=0.3,
+        iou_threshold=0.2,
     )
-    merger.vis_dir = "."
+    map_merger.vis_dir = "."
 
-    result = merger.get_transformed_map(
+
+    transfomed_map = map_merger.get_transformed_map(
         global_map=map_A,
         neighbor_global_map=map_B,
-        agent_loc=loc_A,
-        neighbor_loc=loc_B,
-        visualize=True,
+        neighbor_id=1
+    )
+    merged = map_merger._merge(
+        map_A,
+        transfomed_map,
     )
 
-    print(f"Distance: {result['distance_meters']} m")
-    print(f"Neighbor location in our frame: {result['neighbor_loc_in_our_frame']}")
+    transformed_loc = map_merger.transform_location(
+        data["agent_id"], data["location"]
+    )
+    data["transformed_map"] = transfomed_map
+    data["transformed_loc"] = transformed_loc
+
+    map_merger._visualize(
+        map_A,
+        loc_A,
+        merged,
+        data,
+    )
