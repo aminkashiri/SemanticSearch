@@ -849,6 +849,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         #     print("Detected a person, removing previous people from the map")
         #     prev_map[:, MC.NON_SEM_CHANNELS + 11, :, :] = 0
 
+        # Morphological opening on obstacle channel to remove single-cell noise
+        obstacle = (translated[MC.OBSTACLE_MAP] > 0.5).cpu().numpy().astype(np.uint8)
+        selem = skimage.morphology.disk(1)
+        obstacle = cv2.morphologyEx(obstacle, cv2.MORPH_OPEN, selem)
+        translated[MC.OBSTACLE_MAP] = torch.from_numpy(obstacle).float().to(translated.device)
+
+
         # Aggregate by taking the max of the previous map and current map — this is robust
         # to false negatives in one frame but makes it impossible to remove false positives
         current_map = torch.maximum(prev_map, translated)
