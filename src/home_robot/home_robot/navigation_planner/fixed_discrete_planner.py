@@ -138,6 +138,8 @@ class DiscretePlanner:
         self.visualization_level = visualization_level
         self.ground_truth_semantics = ground_truth_semantics
         self.stop_distance = int(stop_distance / self.map_resolution)
+        self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
+        self._last_neighbor_set = set()
 
 
     def reset(self):
@@ -192,8 +194,8 @@ class DiscretePlanner:
         vis_input = {}
         inst_goal_found = not inst_goal_id is None
 
-        if inst_goal_found:
-            self.episode_panorama_start_steps = 0
+        # if inst_goal_found:
+        #     self.episode_panorama_start_steps = 0
 
         if self.total_timesteps < self.episode_panorama_start_steps:
             return (
@@ -945,6 +947,12 @@ class DiscretePlanner:
 
         return None, None, False
 
+    def _neighbor_set_changed(self, neighbor_locs):
+        current_set = set(neighbor_locs.keys()) if neighbor_locs else set()
+        changed = current_set != self._last_neighbor_set
+        self._last_neighbor_set = current_set
+        return changed
+
     def plan_to_frontier_goal(self, goal_category, postfix, neighbor_locs=None):
 
         i = 0
@@ -963,14 +971,29 @@ class DiscretePlanner:
                 return False, False, None, None, {}
 
             robot_loc = self.semantic_map.get_loc(is_local)
-            best_frontier_map = self.get_best_frontier(
-                frontier_map,
-                traversible,
-                robot_loc,
-                goal_category,
-                is_local,
-                neighbor_locs=neighbor_locs,
-            )
+            current_neighbor_set = set(neighbor_locs.keys()) if neighbor_locs else set()
+            if is_local:
+                lmb = self.semantic_map.lmb
+                prev_frontier = self.prev_frontier[lmb[0]:lmb[1], lmb[2]:lmb[3]]
+            else:
+                prev_frontier = self.prev_frontier
+
+            if self._last_neighbor_set != current_neighbor_set or np.all(
+                (prev_frontier & frontier_map) == 0 
+            ):
+                best_frontier_map = self.get_best_frontier(
+                    frontier_map,
+                    traversible,
+                    robot_loc,
+                    goal_category,
+                    is_local,
+                    neighbor_locs=neighbor_locs,
+                )
+            else:
+                self.log.debug("Using previous frontier map for planning.")
+                best_frontier_map = prev_frontier & frontier_map
+
+            self._last_neighbor_set = current_neighbor_set
 
             if self.visualization_level > 2:
                 visualize_map(
@@ -1013,6 +1036,13 @@ class DiscretePlanner:
             )
             if reachable:
                 self.log.info("Planning to frontier successfull.")
+                if is_local:
+                    lmb = self.semantic_map.lmb
+                    global_frontier = np.zeros(self.map_shape, dtype=np.uint8)
+                    global_frontier[lmb[0]:lmb[1], lmb[2]:lmb[3]] = best_frontier_map
+                    self.prev_frontier = global_frontier
+                else:
+                    self.prev_frontier = best_frontier_map
                 break
 
             self.log.info("Frontier not reachable.")
