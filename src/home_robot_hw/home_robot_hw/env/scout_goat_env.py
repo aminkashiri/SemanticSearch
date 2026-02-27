@@ -216,7 +216,6 @@ class ScoutGoatEnv:
             camera_pose=None,
             third_person_image=None,
         )
-        
         if self.verbose:
             print(f"[SCOUT_ENV] Running Detic perception...")
         
@@ -259,13 +258,16 @@ class ScoutGoatEnv:
                 goal_v["type"] = "objectnav"
 
             if goal_v["type"] == "imagenav":
-                # The goal_v["image"] somehow already has a numpy ndarray instead of a file path, so we skip loading it again. This is a bit hacky but works for now.
                 try:
                     image_path = Path(goal_v["image"])
+                    if not isinstance(image_path, Path):
+                        continue
                     if image_path.exists():
                         img = cv2.imread(str(image_path))
                         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         goal_v["image"] = img
+                    else:
+                        del goal_v["image"]
                 except Exception as e:
                     logger.warning(f"Error occurred while processing image: {e}")
                     
