@@ -196,6 +196,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         print_images: bool = False,
         log=None,
         mask_stairs=False,
+        start_obs_dilation=0,
     ):
         """
         Arguments:
@@ -289,6 +290,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.print_images = print_images
         self.log = UpdateStateLogger(log, None)
         self.mask_stairs = mask_stairs
+        self.start_obs_dilation = start_obs_dilation
 
     @torch.no_grad()
     def forward(
@@ -924,7 +926,18 @@ class Categorical2DSemanticMapModule(nn.Module):
         current_map[MC.VISITED_MAP] = (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
 
         # 2
-        traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+        # Can be implemented by changing this based on current planning dilation. However, this might be the better option to use fixed max dilation
+        obstacle_np = current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+        dilated_obstacle_np = cv2.dilate(
+            obstacle_np.astype(np.uint8),
+            skimage.morphology.disk(self.start_obs_dilation),
+            iterations=1
+        ).astype(bool)
+        traversible_np = 1 - dilated_obstacle_np.astype(float)
+        # traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+
+
+
         visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
         traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
         # traversible_ma[curr_loc[0], curr_loc[1]] = 0
