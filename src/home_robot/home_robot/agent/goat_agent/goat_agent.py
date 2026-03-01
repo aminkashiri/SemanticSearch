@@ -139,8 +139,9 @@ class GoatAgent(Agent):
             agent_cell_radius=agent_cell_radius,
             print_images=self.visualization_level > 2,
             log=self._log,
-            mask_stairs=self.real_world,
-            start_obs_dilation=config.AGENT.PLANNER.obs_dilation_selem_radius,
+            real_world=self.real_world,
+            # mask_stairs=self.real_world,
+            start_obs_dilation=config.AGENT.PLANNER.min_obs_dilation_selem_radius,
         )
         self.inst_goal_id = None
 

@@ -887,6 +887,10 @@ class DiscretePlanner:
         labeled_map, _ = label(goal_instance_map) # Use deault structure of only vert or hor connection, to not include noises
         component_sizes = np.bincount(labeled_map.ravel())
         component_sizes[0] = 0
+        if component_sizes.max() == 0:
+            self.log.warning(f"Instance map is empty — no clusters found.")
+            return goal_instance_map  # return empty map, let caller handle it
+
         largest_label = component_sizes.argmax()
         clustered_map = labeled_map == largest_label
 
@@ -1419,6 +1423,8 @@ class DiscretePlanner:
                 self.semantic_map.global_pose_to_global_location(view.pose)
                 for view in instance_views
             ]
+        
+        assert goal_instance_map.sum() > 0, f"Goal instance map is empty for instance {instance_goal_id}."
 
         goal_instance_map = self.get_largest_cluster(goal_instance_map, is_local)
 

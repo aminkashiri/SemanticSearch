@@ -195,8 +195,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         agent_cell_radius: int = 1,
         print_images: bool = False,
         log=None,
-        mask_stairs=False,
+        real_world=False,
         start_obs_dilation=0,
+        log_odds_occ=0.8,
+        log_odds_free=0.4,
+        max_log_odds=10.0,
     ):
         """
         Arguments:
@@ -289,8 +292,15 @@ class Categorical2DSemanticMapModule(nn.Module):
         self._disk_masks = {}
         self.print_images = print_images
         self.log = UpdateStateLogger(log, None)
-        self.mask_stairs = mask_stairs
+        self.mask_stairs = real_world
+        self.real_world = real_world
         self.start_obs_dilation = start_obs_dilation
+
+
+        self.log_odds_occ = log_odds_occ          # 0.8
+        self.log_odds_free = log_odds_free         # 0.4
+        self.max_log_odds = max_log_odds           # 10.0
+
 
     @torch.no_grad()
     def forward(
@@ -584,7 +594,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             voxels.device
         ), torch.tensor(ground_plane, dtype=torch.uint8).to(voxels.device)
 
-    def _update_local_map_and_pose(  # noqa: C901
+    def _update_local_map_and_pose(
         self,
         obs: Tensor,
         pose_delta: Tensor,
@@ -595,116 +605,44 @@ class Categorical2DSemanticMapModule(nn.Module):
         instance_scores: Tensor,
         category_scores,
     ) -> Tuple[Tensor, Tensor]:
-        """Update local map and sensor pose given a new observation using parameter-free
-        differentiable projective geometry.
 
-        Args:
-            obs: current frame containing (rgb, depth, segmentation) of shape
-             (batch_size, 3 + 1 + num_sem_categories, frame_height, frame_width)
-            pose_delta: delta in pose since last frame of shape (batch_size, 3)
-            prev_map: previous local map of shape
-             (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-            prev_pose: previous pose of shape (batch_size, 3)
-            camera_pose: current camera poseof shape (batch_size, 4, 4)
+        # Index of the extra visibility channel appended to agent_view
+        _VIS_CHANNEL = -1  # always the last channel
 
-        Returns:
-            current_map: current local map updated with current observation
-             and location of shape (batch_size, MC.NON_SEM_CHANNELS + num_sem_categories, M, M)
-            current_pose: current pose updated with pose delta of shape (batch_size, 3)
-        """
         obs_channels, h, w = obs.size()
         device, dtype = obs.device, obs.dtype
-        # if camera_pose is not None: # It is none in our case
-        #     # TODO: make consistent between sim and real
-        #     # hab_angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="YZX")
-        #     # angles = pt.matrix_to_euler_angles(camera_pose[:, :3, :3], convention="ZYX")
-        #     # angles = torch.Tensor(
-        #     #     [tra.euler_from_matrix(p[:3, :3].cpu(), "rzyx") for p in camera_pose]
-        #     # )
-        #     angles = torch.Tensor(tra.euler_from_matrix(camera_pose[:3, :3], "rzyx"))
 
-        #     # For habitat - pull x angle
-        #     # tilt = angles[:, -1]
-        #     # For real robot
-        #     tilt = angles[1]
-        #     # angles gives roll, pitch, yaw
-        #     yaw = angles[-1]
-
-        #     # Get the agent pose
-        #     # hab_agent_height = camera_pose[:, 1, 3] * 100
-        #     agent_pos = camera_pose[:3, 3] * 100
-        #     agent_height = agent_pos[2]
-
-        # else:
         tilt = torch.zeros(0)
         agent_height = self.agent_height
-
         yaw = torch.tensor(0)
         depth = obs[3, :, :].float()
-        # depth[depth > self.max_depth] = 0 # If changed max depth, stairs code should also be changed
 
-        # * This point cloud is with respect to cameras location. Is it not converted to world's coords.
         point_cloud_t = du.get_point_cloud_from_z_t(
             depth, self.camera_matrix, device, scale=self.du_scale
         )
 
         if self.debug_mode:
-            # import matplotlib
-            # matplotlib.use("TkAgg")
-            # import matplotlib.pyplot as plt
-            # i = np.random.random((100,100,3))
-            # plt.imshow(i)
-            # plt.show()
             from home_robot.utils.point_cloud import show_point_cloud
-
             rgb = obs[:3, :: self.du_scale, :: self.du_scale].permute(1, 2, 0)
-            print("Point cloud shape: ", point_cloud_t.shape)
             xyz = point_cloud_t.reshape(-1, 3)
-            rgb = rgb.reshape(-1, 3)
-            print("-> Showing point cloud in camera coords")
+            rgb_flat = rgb.reshape(-1, 3)
             show_point_cloud(
                 (xyz / 100.0).cpu().numpy(),
-                (rgb / 255.0).cpu().numpy(),
+                (rgb_flat / 255.0).cpu().numpy(),
                 orig=np.zeros(3),
             )
 
         tilt_deg = torch.rad2deg(tilt).item() if tilt.numel() > 0 else 0.0
-        # tilt_deg = 0.73
         point_cloud_base_coords = du.transform_camera_view_t(
             point_cloud_t, agent_height, tilt_deg, device
         )
-        print("DON'T FORGET THIS")
-        camera_forward_offset_cm  = 17.5
-        point_cloud_base_coords[..., 1] += camera_forward_offset_cm
-
-
-        # Show the point cloud in base coordinates for debugging
-        if self.debug_mode:
-            print()
-            print("------------------------------")
-            print("agent angles =", angles)
-            print("agent tilt   =", tilt)
-            print("agent height =", agent_height, "preset =", self.agent_height)
-            xyz = point_cloud_base_coords.reshape(-1, 3)
-            print("-> Showing point cloud in base coords")
-            show_point_cloud(
-                (xyz / 100.0).cpu().numpy(),
-                (rgb / 255.0).cpu().numpy(),
-                orig=np.zeros(3),
-            )
+        if self.real_world:
+            camera_forward_offset_cm = 17.5
+            point_cloud_base_coords[..., 1] += camera_forward_offset_cm
 
         point_cloud_map_coords = du.transform_pose_t(
             point_cloud_base_coords, self.shift_loc, device
         )
-
-        if self.debug_mode:
-            xyz = point_cloud_base_coords.reshape(-1, 3)
-            print("-> Showing point cloud in map coords")
-            show_point_cloud(
-                (xyz / 100.0).cpu().numpy(),
-                (rgb / 255.0).cpu().numpy(),
-                orig=np.zeros(3),
-            )
 
         voxel_channels = 1 + self.num_sem_categories
         num_instance_channels = 0
@@ -730,7 +668,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         semantic_channels = obs[4 : 4 + self.num_sem_categories]
-
         current_pose = pu.get_new_pose(prev_pose.clone(), pose_delta)
 
         if self.record_instance_ids:
@@ -746,7 +683,6 @@ class Categorical2DSemanticMapModule(nn.Module):
                     image=obs[:3],
                 )
 
-        # feat[1:, :] = self.avg_pooling_layer(obs[4:, :, :]).view(
         feat[1:, :] = obs[4:, :, :].view(
             obs_channels - 4, h // self.du_scale * w // self.du_scale
         )
@@ -778,53 +714,45 @@ class Categorical2DSemanticMapModule(nn.Module):
             ..., self.min_obstacle_height : self.max_obstacle_height
         ].sum(3)
         all_height_proj = voxels.sum(3)
-        # * Shape is: [voxech_channels, height, width]
 
-        fp_map_pred = agent_height_proj[0, :, :] > 10
-        robot_channel_idx = self.num_sem_categories  # 1-indexed in all_height_proj since [0] is occupancy
+        # ================================================================
+        # LAYER 1: Observation — raw counts → evidence
+        # ================================================================
+
+        obs_obstacle_evidence = agent_height_proj[0, :, :] / self.map_pred_threshold
+        robot_channel_idx = self.num_sem_categories
         robot_projected = all_height_proj[robot_channel_idx] > 1
-        fp_map_pred[robot_projected] = 0
+        obs_obstacle_evidence[robot_projected] = 0
 
-        # print(f"unique values in fp_map_pred before thresholding: {torch.unique(fp_map_pred)}")
+        obs_semantic_evidence = all_height_proj[1:] / self.cat_pred_threshold
 
-        # +rows is away from the camera, with the camra origin at row 0
-        # +cols is to the right of the image frame, the camera origin is at num_cols/2
-        # so the camera origin is at [0,num_cols/2]
+        obs_visible = (all_height_proj[0] > 0).float()
 
-        # self.local_map_size_cm
-        # plt.imshow(fp_exp_pred[0,0].cpu())
-        # plt.pause(0.01)
-        fp_exp_pred = get_fp_exp_pred(self, fp_map_pred)
-
-        # NOTE: Only works in fp_exp_pred is 'raycast'
+        fp_exp_pred = get_fp_exp_pred(self, obs_obstacle_evidence > 0.5)
         stairs_map, ground_plane = self.get_stairs(voxels[0], fp_exp_pred >= 1)
-        # fp_map_pred += stairs_map
 
+        # Build agent_view with visibility as extra last channel
+        local_size = self.local_map_size_cm // self.xy_resolution
         num_channels = MC.NON_SEM_CHANNELS + self.num_sem_categories
         if self.record_instance_ids:
             num_channels += num_instance_channels
+        num_channels_with_vis = num_channels + 1  # +1 for visibility
 
-        agent_view = torch.zeros(
-            num_channels,
-            self.local_map_size_cm // self.xy_resolution,
-            self.local_map_size_cm // self.xy_resolution,
-            device=device,
-            dtype=dtype,
-        )
+        agent_view = torch.zeros(num_channels_with_vis, local_size, local_size, device=device, dtype=dtype)
 
-        x1 = self.local_map_size_cm // (self.xy_resolution * 2) - self.vision_range // 2
+        x1 = local_size // 2 - self.vision_range // 2
         x2 = x1 + self.vision_range
-        y1 = self.local_map_size_cm // (self.xy_resolution * 2)
+        y1 = local_size // 2
         y2 = y1 + self.vision_range
+
         agent_view[MC.GROUND_PLANE, y1:y2, x1:x2] = ground_plane * 1.0
-        agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map
-        agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = fp_map_pred
+        agent_view[MC.STAIRS, y1:y2, x1:x2] = stairs_map * 1.0
+        agent_view[MC.OBSTACLE_MAP, y1:y2, x1:x2] = obs_obstacle_evidence
         agent_view[MC.GAZE_EXPLORED_MAP, y1:y2, x1:x2] = fp_exp_pred
+        agent_view[MC.NON_SEM_CHANNELS:num_channels, y1:y2, x1:x2] = obs_semantic_evidence
+        agent_view[_VIS_CHANNEL, y1:y2, x1:x2] = obs_visible
 
-        agent_view[MC.NON_SEM_CHANNELS :, y1:y2, x1:x2] = (
-            all_height_proj[1:] / self.cat_pred_threshold
-        )
-
+        # Transform to map coordinates (single grid_sample for all channels)
         st_pose = current_pose.clone().detach()
         st_pose[:2] = -(
             (
@@ -835,169 +763,157 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
         st_pose[2] = 90.0 - (st_pose[2])
 
-        # st_pose is current pose, last term in degrees
-        # account for camera yaw here by rotating the new map based on camera yaw
         st_pose_adjusted = st_pose.clone()
-        # yaw has to be inverted here, below rotates the map clockwise
         st_pose_adjusted[2] -= yaw.to(st_pose_adjusted.device) * 180 / np.pi
 
         rot_mat, trans_mat = ru.get_grid(st_pose_adjusted, agent_view.size(), dtype)
         rotated = F.grid_sample(agent_view.unsqueeze(0), rot_mat, align_corners=True)
-        translated = F.grid_sample(rotated, trans_mat, align_corners=True)
-        # plt.imshow(rotated[0, 0].cpu())
+        translated = F.grid_sample(rotated, trans_mat, align_corners=True).squeeze(0)
 
-        # Clamp to [0, 1] after transform agent view to map coordinates
+        # Extract visibility and evidence before clamping
+        visible_mask = translated[_VIS_CHANNEL] > 0.5
+        obs_evidence_in_map = torch.clamp(translated[MC.OBSTACLE_MAP], min=0.0)
+
+        sem_start = MC.NON_SEM_CHANNELS
+        sem_end = MC.NON_SEM_CHANNELS + self.num_sem_categories
+        sem_evidence_in_map = torch.clamp(translated[sem_start:sem_end], min=0.0)
+
+        # Strip visibility channel, clamp rest for binary channels
+        translated = translated[:num_channels]
         translated = torch.clamp(translated, min=0.0, max=1.0)
-        translated = translated.squeeze(0)
 
-        # update instance channels
         if self.record_instance_ids:
             translated = self._aggregate_instance_map_channels_per_category(
                 translated, num_instance_channels
             )
 
-        # Remove people from the last map if people are detected
-        # TODO Handle people more cleanly
-        #! Commented this because channel 11 is not a person in my case
-        # if translated[:, MC.NON_SEM_CHANNELS + 11, :, :].sum() > 0.99:
-        #     print("Detected a person, removing previous people from the map")
-        #     prev_map[:, MC.NON_SEM_CHANNELS + 11, :, :] = 0
+        # ================================================================
+        # LAYER 2: Accumulation
+        # ================================================================
 
-        # Morphological opening on obstacle channel to remove single-cell noise
-        obstacle = (translated[MC.OBSTACLE_MAP] > 0.5).cpu().numpy().astype(np.uint8)
-        selem = skimage.morphology.disk(1)
-        obstacle = cv2.morphologyEx(obstacle, cv2.MORPH_OPEN, selem)
-        translated[MC.OBSTACLE_MAP] = torch.from_numpy(obstacle).float().to(translated.device)
+        current_map = prev_map.clone()
 
-
-        # Aggregate by taking the max of the previous map and current map — this is robust
-        # to false negatives in one frame but makes it impossible to remove false positives
-        current_map = torch.maximum(prev_map, translated)
-        robot_sem_idx = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
-        current_map[robot_sem_idx] = translated[robot_sem_idx]
-
-        # Also clean obstacles where robot currently is
-        robot_present = current_map[robot_sem_idx] > 0.5
-        current_map[MC.OBSTACLE_MAP][robot_present] = 0 # This is also needed, and helps us with steps that the other robot is not detected.
-
-
-        # plt.clf()
-        # plt.subplot(221)
-        # plt.title("ground plane")
-        # plt.imshow(np.flipud((current_map[MC.GROUND_PLANE]>0).cpu()))
-        # plt.subplot(222)
-        # plt.title("stairs")
-        # plt.imshow(np.flipud((current_map[MC.STAIRS]>0).cpu()))
-        # plt.subplot(223)
-        # plt.title("Obstacle map")
-        # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
-        # plt.subplot(224)
-
-        # Add stairs to obstacle map
-        current_map[MC.OBSTACLE_MAP] = (current_map[MC.OBSTACLE_MAP] > 0.5) | (
-            (current_map[MC.STAIRS] > 0) & (current_map[MC.GROUND_PLANE] == 0.0)
+        # --- Obstacle: log-odds ---
+        obs_log_update = obs_evidence_in_map * self.log_odds_occ - self.log_odds_free
+        current_map[MC.OBSTACLE_MAP] = torch.where(
+            visible_mask,
+            (prev_map[MC.OBSTACLE_MAP] + obs_log_update).clamp(
+                -self.max_log_odds, self.max_log_odds
+            ),
+            prev_map[MC.OBSTACLE_MAP],
         )
 
-        # plt.title("Final obstacle map")
-        # plt.imshow(np.flipud((current_map[MC.OBSTACLE_MAP]>0).cpu()))
-        # plt.savefig(self.vis_dir + f"/{self.timestep}_1.stairs2.png")
+        # --- Semantics: log-odds per category (excluding robot channel) ---
+        robot_sem_idx = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
+        sem_log_update = sem_evidence_in_map * self.log_odds_occ - self.log_odds_free
+        prev_sem = prev_map[sem_start:sem_end]
+        updated_sem = torch.where(
+            visible_mask.unsqueeze(0).expand_as(prev_sem),
+            (prev_sem + sem_log_update).clamp(
+                -self.max_log_odds, self.max_log_odds
+            ),
+            prev_sem,
+        )
+        current_map[sem_start:sem_end] = updated_sem
 
-        # Aggregate by trusting the current map — this is not robust to false negatives in
-        # one frame, but it makes it possible to remove false positives
-        # TODO Implement this properly for num_environments > 1
-        # current_mask = translated[0, 1, :, :] > 0
-        # current_map = prev_map.clone()
-        # current_map[0, :, current_mask] = translated[0, :, current_mask]
+        # Robot semantic: overwrite (transient, not accumulated)
+        current_map[robot_sem_idx] = translated[robot_sem_idx]
+        robot_present = current_map[robot_sem_idx] > 0.5
+        current_map[MC.OBSTACLE_MAP][robot_present] = 0
 
-        # Set people as not obstacles for planning
-        # TODO Handle people more cleanly
-        # TODO Implement this properly for num_environments > 1
-        # people_mask = (
-        #     skimage.morphology.binary_dilation(
-        #         current_map[0, 5 + 11, :, :].cpu().numpy(), skimage.morphology.disk(2)
-        #     )
-        #     * 1.0
-        # )
-        # current_map[0, 0, :, :] *= 1 - torch.from_numpy(people_mask).to(device)
+        # Gaze explored, ground plane, stairs: max (monotonic)
+        for ch in [MC.GAZE_EXPLORED_MAP, MC.GROUND_PLANE, MC.STAIRS]:
+            current_map[ch] = torch.maximum(prev_map[ch], translated[ch])
 
+        # Instance channels: overwrite
         if self.record_instance_ids:
-            # overwrite channels containing instance IDs
-            current_map[MC.NON_SEM_CHANNELS + self.num_sem_categories :] = translated[
-                MC.NON_SEM_CHANNELS + self.num_sem_categories :
-            ]
+            inst_start = MC.NON_SEM_CHANNELS + self.num_sem_categories
+            current_map[inst_start:] = translated[inst_start:]
+
+        # Stairs → obstacle
+        stairs_obstacle = (current_map[MC.STAIRS] > 0.5) & (current_map[MC.GROUND_PLANE] < 0.5)
+        current_map[MC.OBSTACLE_MAP][stairs_obstacle] = self.max_log_odds
+
+        # ================================================================
+        # Derived channels
+        # ================================================================
 
         curr_loc = current_pose[:2].flip(0)
         curr_loc = (curr_loc * 100.0 / self.xy_resolution).round().int().tolist()
-
         prev_loc = prev_pose[:2].flip(0)
         prev_loc = (prev_loc * 100.0 / self.xy_resolution).round().int().tolist()
 
         current_map[MC.AGENT_VISITED_MAP] = self._get_update_visited_map(
             curr_loc, prev_loc, current_map[MC.AGENT_VISITED_MAP]
         )
-        current_map[MC.VISITED_MAP] = (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
+        current_map[MC.VISITED_MAP] = (
+            (current_map[MC.AGENT_VISITED_MAP] == 1) | (current_map[MC.VISITED_MAP] == 1)
+        )
 
-        # 2
-        # Can be implemented by changing this based on current planning dilation. However, this might be the better option to use fixed max dilation
-        obstacle_np = current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
-        dilated_obstacle_np = cv2.dilate(
-            obstacle_np.astype(np.uint8),
+
+        obstacle_binary = self._threshold_obstacles(current_map[MC.OBSTACLE_MAP])
+        dilated_obstacle = cv2.dilate(
+            obstacle_binary.astype(np.uint8),
             skimage.morphology.disk(self.start_obs_dilation),
-            iterations=1
+            iterations=1,
         ).astype(bool)
-        traversible_np = 1 - dilated_obstacle_np.astype(float)
-        # traversible_np = 1 - current_map[MC.OBSTACLE_MAP].detach().cpu().numpy()
+        traversible_np = (~dilated_obstacle).astype(float)
+
+
+
 
 
 
         visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
         traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
-        # traversible_ma[curr_loc[0], curr_loc[1]] = 0
         traversible_ma[visited_np == 1] = 0
+
         import skfmm
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
         distances = torch.from_numpy(distances).to(current_map.device)
 
         current_map[MC.BEEN_CLOSE_MAP] = 0
-        current_map[MC.BEEN_CLOSE_MAP][distances <= self.been_close_to_radius // self.resolution] = 1
-        current_map[MC.EXPLORED_MAP] = (current_map[MC.GAZE_EXPLORED_MAP] > 0.5) | (current_map[MC.BEEN_CLOSE_MAP] == 1.0)
-
+        current_map[MC.BEEN_CLOSE_MAP][
+            distances <= self.been_close_to_radius // self.resolution
+        ] = 1
+        current_map[MC.EXPLORED_MAP] = (
+            (current_map[MC.GAZE_EXPLORED_MAP] > 0.5)
+            | (current_map[MC.BEEN_CLOSE_MAP] == 1.0)
+        )
 
         radius = self.target_blacklisting_radius // self.resolution
         self._set_disk_to_one(radius, current_map, MC.BLACKLISTED_TARGETS_MAP, curr_loc)
 
-        # debug_maps = False
         if debug_maps:
             import matplotlib
-
             matplotlib.use("Agg")
-            current_map = current_map.cpu()
-            gaze_explored = current_map[MC.GAZE_EXPLORED_MAP].numpy()
-            explored = current_map[MC.EXPLORED_MAP].numpy()
-            been_close = current_map[MC.BEEN_CLOSE_MAP].numpy()
-            obstacles = current_map[MC.OBSTACLE_MAP].numpy()
-
-            plt.clf()
-            plt.subplot(221)
-            plt.axis("off")
-            plt.title("gaze_explored")
-            # print("unique values in gaze explored map: ", np.unique(gaze_explored))
-            plt.imshow(gaze_explored==1)
-            plt.subplot(222)
-            plt.axis("off")
-            plt.title("been close")
-            plt.imshow(been_close)
-            plt.subplot(223)
-            plt.axis("off")
-            plt.title("explored")
-            plt.imshow(explored==1)
-            plt.subplot(224)
-            plt.axis("off")
-            plt.title("obstacles")
-            plt.imshow(obstacles)
-            # plt.show()
+            cm = current_map.cpu()
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            axes[0, 0].set_title("obstacle log-odds")
+            im = axes[0, 0].imshow(cm[MC.OBSTACLE_MAP].numpy(), cmap="RdBu_r",
+                                    vmin=-self.max_log_odds, vmax=self.max_log_odds)
+            fig.colorbar(im, ax=axes[0, 0], fraction=0.046)
+            axes[0, 1].set_title("obstacle (>0)")
+            axes[0, 1].imshow(cm[MC.OBSTACLE_MAP].numpy() > 0)
+            axes[0, 2].set_title("visible this frame")
+            axes[0, 2].imshow(visible_mask.cpu().numpy())
+            sem_1d = cm[sem_start:sem_end].numpy()
+            no_cat = sem_1d.max(0) <= 0
+            sem_vis = sem_1d.argmax(0) + 1
+            sem_vis[no_cat] = 0
+            axes[1, 0].set_title("semantic (argmax >0)")
+            axes[1, 0].imshow(sem_vis, cmap="tab20")
+            axes[1, 1].set_title("explored")
+            axes[1, 1].imshow(cm[MC.EXPLORED_MAP].numpy() > 0.5)
+            axes[1, 2].set_title("frame obstacle evidence")
+            im2 = axes[1, 2].imshow(obs_evidence_in_map.cpu().numpy(), cmap="hot", vmin=0, vmax=3)
+            fig.colorbar(im2, ax=axes[1, 2], fraction=0.046)
+            for ax in axes.flat:
+                ax.axis("off")
+            plt.tight_layout()
             plt.savefig(self.vis_dir + f"/{self.timestep}_0.local_map.png")
+            plt.close()
 
         return current_map, current_pose
 
@@ -1388,3 +1304,9 @@ class Categorical2DSemanticMapModule(nn.Module):
     #         ),
     #     )
     #     return global_instances
+
+    @staticmethod
+    def _threshold_obstacles(log_odds_map):
+        """log-odds → clean binary obstacle map."""
+        binary = (log_odds_map.cpu().numpy() > 0).astype(np.uint8)
+        return cv2.morphologyEx(binary, cv2.MORPH_OPEN, skimage.morphology.disk(1)).astype(bool)
