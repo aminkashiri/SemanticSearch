@@ -400,27 +400,39 @@ class Categorical2DSemanticMapModule(nn.Module):
 
             # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
             for category_id in category_id_to_temp_id_list.keys():
-                assert len(category_id_to_temp_id_list[category_id]) != 0
                 # get all temp ids for this category
                 temp_ids = category_id_to_temp_id_list[category_id]
                 # Instance channel 0 corresponds to temp id 1
                 instance_map_onehot = temp_instance_map[[i - 1 for i in temp_ids]]
+                
+                # Detect map-level overlaps between same-category instances and merge
+                if len(temp_ids) > 1:
+                    binary_maps = (instance_map_onehot > 1e-5)
+                    merged = set()
+                    for j in range(len(temp_ids)):
+                        if j in merged:
+                            continue
+                        for k in range(j + 1, len(temp_ids)):
+                            if k in merged:
+                                continue
+                            intersection = (binary_maps[j] & binary_maps[k]).sum().item()
+                            smaller = min(binary_maps[j].sum().item(), binary_maps[k].sum().item())
+                            if smaller > 0 and intersection / smaller > 0.3:
+                                # Merge k into j (give j's pixels k's values too)
+                                instance_map_onehot[j] = torch.maximum(instance_map_onehot[j], instance_map_onehot[k])
+                                instance_map_onehot[k] = 0
+                                merged.add(k)
+
                 instance_map_onehot = torch.cat(
-                    (
-                        1e-5 * torch.ones_like(instance_map_onehot[:1]),
-                        instance_map_onehot,
-                    ),
+                    (1e-5 * torch.ones_like(instance_map_onehot[:1]), instance_map_onehot),
                     dim=0,
                 )
-
                 # Each entry is either a temp id, or 0 for no instance
                 category_instance_map = instance_map_onehot.argmax(dim=0)
                 idx_to_temp_id = [0] + temp_ids
-
                 category_instance_map = torch.tensor(
                     idx_to_temp_id, device=category_instance_map.device
                 )[category_instance_map]
-                # update the per category instance map
                 #! 1
                 aggregated_temp_instance_map[category_id - 1] = category_instance_map
                 # self.log.debug(f"Aggregated category {category_id} with temp instance ids {temp_ids}")
