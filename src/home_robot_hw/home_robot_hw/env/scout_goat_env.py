@@ -259,9 +259,9 @@ class ScoutGoatEnv:
 
             if goal_v["type"] == "imagenav":
                 try:
-                    image_path = Path(goal_v["image"])
-                    if not isinstance(image_path, Path):
+                    if not isinstance(goal_v["image"], str):
                         continue
+                    image_path = Path(goal_v["image"])
                     if image_path.exists():
                         img = cv2.imread(str(image_path))
                         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
