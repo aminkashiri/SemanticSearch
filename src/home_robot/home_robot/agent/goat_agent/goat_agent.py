@@ -651,10 +651,10 @@ class GoatAgent(Agent):
             task.goal_semantic_id,
         )
 
-        if not action is None:
+        if action is not None:
             return action, vis_input
 
-        if not self.inst_goal_id is None:
+        if self.inst_goal_id is not None:
             self.log.info("Couldn't navigate to goal, stopping")
             return DiscreteNavigationAction.STOP, {}
 
@@ -688,7 +688,7 @@ class GoatAgent(Agent):
                 self.semantic_map.global_pose,
                 score_thresh=0 if select_best else None
             )
-            if not inst_goal_id is None:
+            if inst_goal_id is not None:
                 # Else, we should not replace, maybe we have previously seen a goal and moving toward it.
                 self.inst_goal_id = inst_goal_id
 
@@ -700,7 +700,7 @@ class GoatAgent(Agent):
         else:
             dir_name = f"{scene_id}_{episode_id}"
 
-        if not self.agent_id is None:
+        if self.agent_id is not None:
             dir_name = os.path.join(dir_name, f"agent_{self.agent_id}")
 
         self.planner.set_vis_dir(dir_name)

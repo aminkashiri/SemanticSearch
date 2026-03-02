@@ -793,7 +793,7 @@ class DiscretePlanner:
             goal_map = self.get_hybrid_goal_map3(
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
-        if not goal_map is None:
+        if goal_map is not None:
             assert goal_map.dtype == bool
             assert np.sum(goal_map) > 0
 
@@ -1222,7 +1222,7 @@ class DiscretePlanner:
         distances = skfmm.distance(traversible_ma)
         distances = np.ma.filled(distances, np.max(distances) + 1)
 
-        if not neighbor_locs is None:
+        if neighbor_locs is not None:
             for key, loc in neighbor_locs.items():
                 neighbor_locs[key] = (
                     self.semantic_map.global_location_to_local_location(
@@ -1356,7 +1356,7 @@ class DiscretePlanner:
         ), "No frontiers found, but frontier_map is not empty."
 
         my_priority = 1
-        if not neighbor_locs is None:
+        if neighbor_locs is not None:
             for agent_id, loc in neighbor_locs.items():
                 if loc == robot_loc and agent_id < self.agent_id:
                     my_priority += 1

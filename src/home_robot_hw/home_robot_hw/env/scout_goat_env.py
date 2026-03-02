@@ -168,7 +168,7 @@ class ScoutGoatEnv:
             )
     
     def get_observation(self) -> Observations:
-        if not self._last_obs is None:
+        if self._last_obs is not None:
             return self._last_obs
 
         if self.verbose:

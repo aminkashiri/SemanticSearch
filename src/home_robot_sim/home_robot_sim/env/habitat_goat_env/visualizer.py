@@ -246,7 +246,7 @@ class Visualizer:
                 V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2,
             ] = self.get_td_map(top_down_map)
         else:
-            if not depth_frame is None:
+            if depth_frame is not None:
                 depth_frame[depth_frame > 5.0] = 0.0
                 main_frame[
                     V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,

@@ -70,24 +70,24 @@ def visualize_map(input_shape, dir, name, features=None, points=None, traversibl
     shape = input_shape + (3,)
     white = np.ones(shape, dtype=np.uint8) * 255
 
-    if not traversible is None:
+    if traversible is not None:
         white[traversible == 0] = [0, 0, 0] # black
 
-    if not dilated_goal_map is None:
+    if dilated_goal_map is not None:
         white[dilated_goal_map == 1] = [255, 0, 255] # magenta
     
-    if not goal_map is None:
+    if goal_map is not None:
         white[goal_map == 1] = [0, 0, 255] # red
 
-    if not frontier_map is None:
+    if frontier_map is not None:
         white[frontier_map == 1] = [255, 255, 0] # cyan
 
-    if not features is None:
+    if features is not None:
         for feature_map, color in features:
-            if not feature_map is None:
+            if feature_map is not None:
                 white[feature_map == 1] = color
     
-    if not points is None:
+    if points is not None:
         for point, color in points:
             white[point[0], point[1]] = color
 

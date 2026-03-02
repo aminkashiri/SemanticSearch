@@ -294,7 +294,7 @@ class GoatMatching(Matching):
             inst_goal_id = self.get_best_match(
                 mem_match_confidences, mem_match_instance_ids, score_thresh, agg_fn
             )
-            if not inst_goal_id is None:
+            if inst_goal_id is not None:
                 self.log.info(f"Goal instance {inst_goal_id} found by matching with memory.")
                 return inst_goal_id
             else:
@@ -321,7 +321,7 @@ class GoatMatching(Matching):
             inst_goal_id = self.get_best_match(
                 obs_match_confidences, obs_match_instance_ids, score_thresh, agg_fn
             )
-            if not inst_goal_id is None:
+            if inst_goal_id is not None:
                 self.log.debug(
                     f"Goal instance {inst_goal_id} found in this step by matching with observation."
                 )

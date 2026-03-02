@@ -1,34 +1,23 @@
 import os
-import torch
-import numpy as np
 import cv2
-import matplotlib.pyplot as plt
+import torch
+import logging
+import numpy as np
 from torch import Tensor
+import matplotlib.pyplot as plt
 from typing import Optional, Tuple, Dict
+from home_robot.mapping.semantic.constants import MapConstants as MC
 
-
-class MapConstants:
-    NON_SEM_CHANNELS = 10
-    OBSTACLE_MAP = 0
-    EXPLORED_MAP = 1
-    AGENT_VISITED_MAP = 2
-    VISITED_MAP = 3
-    BEEN_CLOSE_MAP = 4
-    BLACKLISTED_TARGETS_MAP = 5
-    UNREACHABLE_FRONTIERS_MAP = 6
-    GROUND_PLANE = 7
-    STAIRS = 8
-    GAZE_EXPLORED_MAP = 9
-
-
-MC = MapConstants
-
-
+class MapMergerLogger(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        # modify the message however you want
+        return f"[MAP MERGE] {msg}", kwargs
 class MapMerger:
     def __init__(
         self,
         num_sem_categories: int,
         resolution,
+        log=None,
         ransac_thresh: float = 10.0,
         iou_threshold: float = 0.3,
         semantic_weight: float = 1.0,
@@ -42,6 +31,14 @@ class MapMerger:
         self.vis_dir = vis_dir
         self.timestep = 0
         self._cached_transforms: Dict[int, np.ndarray] = {}
+        self._merged_masks: Dict[int, torch.Tensor] = {}
+        self.log = MapMergerLogger(log, None)
+        if log is None:
+            self.log = logging.getLogger()
+
+
+    def clear_merged_masks(self):
+        self._merged_masks.clear()
 
     def clear_cached_transforms(self):
         self._cached_transforms.clear()
@@ -50,74 +47,53 @@ class MapMerger:
         return neighbor_id in self._cached_transforms
 
     def transform_location(self, neighbor_id: int, location) -> Optional[torch.Tensor]:
-        if neighbor_id not in self._cached_transforms:
+        if not self.has_cached_transform(neighbor_id):
             return None
 
-        transform = self._cached_transforms[neighbor_id]
+        transform = self._cached_transforms[neighbor_id]["transform"]
         T = torch.from_numpy(transform).to(dtype=torch.float64)
         p = (T @ torch.tensor([location[1], location[0], 1.0], dtype=torch.float64)).round()
         return (int(p[1]), int(p[0]))
 
-    def get_transformed_map(
-        self,
-        global_map: Tensor,  # (C, H, W) - this robot's map
-        neighbor_global_map: Tensor,  # (C, H, W) - neighbor's map
-        neighbor_id: int,
-    ) -> Dict:
-        """
-        Align neighbor's map to this robot's frame using feature matching
-        on obstacle + semantic layers, then merge.
-
-        Returns dict with:
-            - merged_map: (C, H, W) tensor
-            - transform: (2, 3) np array or None if alignment failed
-            - neighbor_loc_in_our_frame: (2,) int tensor or None
-            - distance_cells: float or None
-            - distance_meters: float or None
-        """
+    def get_transformed_map(self, global_map, neighbor_global_map, neighbor_id):
         device = global_map.device
-        if not neighbor_global_map is None:
+        if neighbor_global_map is not None:
             neighbor_global_map = neighbor_global_map.to(device)
 
-        if self.has_cached_transform(neighbor_id):
-            transform = self._cached_transforms[neighbor_id]
-        elif not neighbor_global_map is None:
+        if neighbor_global_map is not None:
             transform = self._estimate_transform(global_map, neighbor_global_map)
         else:
             transform = None
 
         if transform is None:
-            print(
-                "[MapMerger] WARNING: Could not estimate transform. "
-                "Returning original map unchanged."
-            )
+            self.log.debug("WARNING: Could not estimate transform.")
             return None
 
-        # Warp neighbor map to our frame
-        warped_neighbor = self._warp_map(
-            neighbor_global_map, transform, global_map.shape
-        )
+        warped_neighbor = self._warp_map(neighbor_global_map, transform, global_map.shape)
 
-        # Only check IoU for newly estimated transforms
-        if neighbor_id not in self._cached_transforms:
-            iou = self._alignment_confidence(global_map, warped_neighbor)
-            print(f"[MapMerger] Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
+        iou = self._alignment_confidence(global_map, warped_neighbor)
+        self.log.debug(f"Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
+        min_iou = self.iou_threshold
+        if neighbor_id in self._cached_transforms:
+            min_iou = self._cached_transforms[neighbor_id]["iou"]
 
-            if iou < self.iou_threshold:
-                print(
-                    "[MapMerger] WARNING: Low alignment confidence. "
-                    "Returning original map unchanged."
-                )
-                return None
+        if iou < min_iou:
+            self.log.debug("WARNING: Low alignment confidence.")
+            return None
 
-            self._cached_transforms[neighbor_id] = transform
-            print(f"[MapMerger] Transform cached for neighbor {neighbor_id}")
+        self._cached_transforms[neighbor_id] = {
+            "iou": iou,
+            "transform": transform
+        }
+        self.log.debug(f"Transform cached for neighbor {neighbor_id}")
 
         return warped_neighbor
 
     def _alignment_confidence(self, map_A: Tensor, warped_B: Tensor) -> float:
         exp_A = map_A[MC.EXPLORED_MAP].cpu().numpy() > 0
         exp_B = warped_B[MC.EXPLORED_MAP].cpu().numpy() > 0
+        # exp_A = self._get_data_mask(map_A).cpu().numpy()
+        # exp_B = self._get_data_mask(warped_B).cpu().numpy()
         overlap = exp_A & exp_B
 
         if overlap.sum() < 50:
@@ -148,9 +124,8 @@ class MapMerger:
         obs_B = ((map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0) * 255).astype(np.uint8)
 
 
-        # Use explored map to weight features (only match in explored regions)
-        exp_A = (map_A[MC.EXPLORED_MAP].cpu().numpy() > 0).astype(np.uint8) * 255
-        exp_B = (map_B[MC.EXPLORED_MAP].cpu().numpy() > 0).astype(np.uint8) * 255
+        exp_A= (map_A[MC.EXPLORED_MAP].cpu().numpy() > 0).astype(np.uint8) * 255
+        exp_B= (map_B[MC.EXPLORED_MAP].cpu().numpy() > 0).astype(np.uint8) * 255
 
         pts_A, pts_B = [], []
 
@@ -167,14 +142,12 @@ class MapMerger:
             pts_B.append(sem_pB)
 
         if len(pts_A) == 0:
-            print("------------ 1", len(pts_A))
             return None
 
         all_pts_A = np.vstack(pts_A).astype(np.float32)
         all_pts_B = np.vstack(pts_B).astype(np.float32)
 
         if len(all_pts_A) < 3:
-            print("------------ 2", len(all_pts_A))
             return None
 
         # RANSAC for rigid transform (rotation + translation, no scale)
@@ -186,10 +159,22 @@ class MapMerger:
         )
 
         if M is None or inliers is None:
-            print("------------ 3")
             return None
 
         return M
+
+    def _get_data_mask(self, map_tensor: Tensor, threshold: float = 0.01) -> torch.Tensor:
+        protected_channels = {MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP, 
+                            MC.NON_SEM_CHANNELS + self.num_sem_categories}
+        
+        mask = torch.zeros(map_tensor.shape[1:], dtype=torch.bool, device=map_tensor.device)
+        
+        for c in range(min(map_tensor.shape[0], MC.NON_SEM_CHANNELS + self.num_sem_categories)):
+            if c in protected_channels:
+                continue
+            mask = mask | (map_tensor[c].abs() > threshold)
+        
+        return mask
 
     def _orb_matches(
         self,
@@ -359,33 +344,41 @@ class MapMerger:
 
         return warped
 
-    def _merge(self, global_map: Tensor, transformed_map) -> Tensor:
+    def _merge(self, global_map: Tensor, transformed_map: Tensor,
+            neighbor_id) -> Tensor:
         """
         Merge warped neighbor into our map.
-        - Protected (agent-specific) channels: untouched
-        - Mergeable channels (up to semantics): max
-        - Instance channels (beyond semantics): untouched
+        Only merges cells that haven't been merged before from this neighbor.
         """
         merged = global_map.clone()
+        device = global_map.device
+
         protected_channels = torch.tensor(
-            [MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP, MC.NON_SEM_CHANNELS + self.num_sem_categories],
-            device=global_map.device,
+            [MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP,
+            MC.NON_SEM_CHANNELS + self.num_sem_categories],
+            device=device,
         )
-        all_channels = torch.arange(global_map.shape[0], device=global_map.device)
-        merge_mask = ~torch.isin(all_channels, protected_channels) & (
+        all_channels = torch.arange(global_map.shape[0], device=device)
+        merge_channel_mask = ~torch.isin(all_channels, protected_channels) & (
             all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
         )
-        # our_explored = global_map[MC.EXPLORED_MAP] > 0.5
-        # neighbor_explored = transformed_map[MC.EXPLORED_MAP] > 0.5
 
-        # only_neighbor = neighbor_explored & ~our_explored
-        # for c in all_channels[merge_mask]:
-        #     merged[c][only_neighbor] = transformed_map[c][only_neighbor]
-
-        merged[merge_mask] = torch.maximum(
-            global_map[merge_mask],
-            transformed_map[merge_mask],
-        )
+        neighbor_has_data = self._get_data_mask(transformed_map)
+        if neighbor_id not in self._merged_masks:
+            self._merged_masks[neighbor_id] = torch.zeros(
+                global_map.shape[1:], dtype=torch.bool, device=device
+            )
+        already_merged = self._merged_masks[neighbor_id]
+        new_cells = neighbor_has_data & ~already_merged
+        if new_cells.sum() == 0:
+            return merged
+        for c in all_channels[merge_channel_mask]:
+            merged[c][new_cells] = torch.maximum(
+                global_map[c][new_cells],
+                transformed_map[c][new_cells],
+            )
+        if neighbor_id >= 0:
+            self._merged_masks[neighbor_id] = self._merged_masks[neighbor_id] | neighbor_has_data
 
         return merged
 
@@ -488,13 +481,10 @@ class MapMerger:
         path = os.path.join(self.vis_dir, f"{self.timestep}.15.map_merge_result.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
 
-
-
 if __name__ == "__main__":
-    map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/comm3/real_world_0/agent_1/mymap_40.pt")
-    map_B = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/comm3/real_world_0/agent_1/othermap_40.pt")
+    map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/mymap_85.pt")
+    map_B = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/othermap_85.pt")
     num_sem = int((map_A.shape[0] - MC.NON_SEM_CHANNELS) / 2)
-    print(f"Map channels: {map_A.shape[0]}, num_sem: {num_sem}")
 
     # Robot locations in their own frames (x, y) in pixel coords
     loc_A = [502, 538]
@@ -509,19 +499,20 @@ if __name__ == "__main__":
         num_sem_categories=num_sem,
         resolution=0.05,
         ransac_thresh=10.0,
-        iou_threshold=0.2,
+        iou_threshold=0.1,
     )
     map_merger.vis_dir = "."
-
 
     transfomed_map = map_merger.get_transformed_map(
         global_map=map_A,
         neighbor_global_map=map_B,
         neighbor_id=1
     )
+    assert transfomed_map is not None
     merged = map_merger._merge(
         map_A,
         transfomed_map,
+        1
     )
 
     transformed_loc = map_merger.transform_location(
@@ -530,6 +521,40 @@ if __name__ == "__main__":
     data["transformed_map"] = transfomed_map
     data["transformed_loc"] = transformed_loc
 
+    map_merger._visualize(
+        map_A,
+        loc_A,
+        merged,
+        data,
+    )
+
+    map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/mymap_90.pt")
+    map_B = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/othermap_90.pt")
+    data = {
+        "agent_id": 1,
+        "map": map_B,
+        "location": loc_B
+    }
+
+    transfomed_map = map_merger.get_transformed_map(
+        global_map=map_A,
+        neighbor_global_map=map_B,
+        neighbor_id=1
+    )
+    assert transfomed_map is not None
+    merged = map_merger._merge(
+        map_A,
+        transfomed_map,
+        1
+    )
+
+    transformed_loc = map_merger.transform_location(
+        data["agent_id"], data["location"]
+    )
+    data["transformed_map"] = transfomed_map
+    data["transformed_loc"] = transformed_loc
+
+    map_merger.timestep += 1
     map_merger._visualize(
         map_A,
         loc_A,

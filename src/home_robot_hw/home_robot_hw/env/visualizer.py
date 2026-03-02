@@ -109,7 +109,10 @@ class Visualizer:
         self.text_thickness = 1
         self.ind_frame_height = 480
 
-        self.num_agents = config.NUM_AGENTS
+        if config.REAL_WORLD:
+            self.num_agents = 1
+        else:
+            self.num_agents = config.NUM_AGENTS
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -118,10 +121,9 @@ class Visualizer:
         self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
         shutil.rmtree(self.vis_dir, ignore_errors=True)
         os.makedirs(self.vis_dir, exist_ok=True)
-        if self.num_agents > 1:
-            for i in range(self.num_agents):
-                agent_dir = os.path.join(self.vis_dir, f"agent_{i}")
-                os.makedirs(agent_dir, exist_ok=True)
+        for i in range(self.num_agents):
+            agent_dir = os.path.join(self.vis_dir, f"agent_{i}")
+            os.makedirs(agent_dir, exist_ok=True)
 
 
     def _add_border(self, frame: np.ndarray, border_size: int) -> np.ndarray:
@@ -247,7 +249,7 @@ class Visualizer:
                 V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X2,
             ] = self.get_td_map(top_down_map)
         else:
-            if not depth_frame is None:
+            if depth_frame is not None:
                 depth_frame[depth_frame > 5.0] = 0.0
                 main_frame[
                     V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
@@ -500,12 +502,17 @@ class Visualizer:
         # semantic_map_vis[blacklisted_targets_map] = (
         #     semantic_map_vis[blacklisted_targets_map] + color
         # ) / 2
-
+        map_h = semantic_map_vis.shape[0]
         pos = (
             robot_loc[1],
-            robot_loc[0],
+            map_h - 1 - robot_loc[0],
             np.deg2rad(-robot_orientation),
         )
+        # pos = (
+        #     robot_loc[1],
+        #     robot_loc[0],
+        #     np.deg2rad(-robot_orientation),
+        # )
         agent_arrow = vu.get_contour_points(pos, origin=(0, 0))
         color = self.semantic_category_mapping.map_color_palette[9:12][::-1]
         cv2.drawContours(semantic_map_vis, [agent_arrow], 0, color, -1)

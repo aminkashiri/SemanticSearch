@@ -95,7 +95,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                     self.semantic_map.global_pose,
                     score_thresh=0 if self.navigate_to_best else None,
                 )
-                if not inst_goal_id is None:
+                if inst_goal_id is not None:
                     self.inst_goal_ids[i] = inst_goal_id
             else:
                 self.log.debug(
@@ -127,7 +127,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 break
 
         neighbor_locs = kwargs.get("neighbor_locs", [])
-        if not self.active_task is None:
+        if self.active_task is not None:
             action, vis_input = self.planner.plan(
                 self.inst_goal_ids[self.active_task],
                 self.tasks[self.active_task].goal_semantic_id,
@@ -144,7 +144,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         action, vis_input = self.planner.plan(
             neighbor_locs=neighbor_locs,
         )
-        if not action is None:
+        if action is not None:
             return (None, action), vis_input
 
         if self.navigate_to_best:
@@ -191,7 +191,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.map_merger.vis_dir = self.semantic_map.vis_dir
 
     def _get_task_info(self, obs, action, info):
-        if not action["action_args"]["task_idx"] is None:
+        if action["action_args"]["task_idx"] is not None:
             current_task = obs.task_observations["tasks"][
                 action["action_args"]["task_idx"]
             ]
@@ -215,7 +215,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.reset_for_next_task()
         self.active_task = None
         task_idx = action["action_args"]["task_idx"]
-        if not task_idx is None:
+        if task_idx is not None:
             self.tasks_done[task_idx] = True
         else:
             self.log.debug("IDLE. Waiting for other agents to complete their tasks.")
@@ -261,6 +261,10 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             neighbor_global_map=data["map"],
             neighbor_id=data["agent_id"],
         )
+        # import os
+        # torch.save(self.semantic_map.global_map, os.path.join(self.planner.vis_dir, f'mymap_{self.total_timesteps}.pt'))
+        # torch.save(data["map"].to(self.semantic_map.device), os.path.join(self.planner.vis_dir, f'othermap_{self.total_timesteps}.pt'))
+
 
         # Get the transformed map (may come pre-computed from simulation)
         if transfomed_map is None:
@@ -335,30 +339,36 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
     def _merge_task_info(self, data):
         """Merge task completion and active task deconfliction."""
+        self.log.debug(f"Merging task done. Mine: {self.tasks_done}, neighbors: {data['tasks_done']}")
         if self.tasks_done is None:
             self.tasks_done = data["tasks_done"]
         else:
             self.tasks_done = [
                 a or b for a, b in zip(self.tasks_done, data["tasks_done"])
             ]
+        self.log.debug(f"After: {self.tasks_done}")
 
         self._handle_neighbor_active_task(data["agent_id"], data["active_task"])
 
     def _handle_neighbor_active_task(self, agent_id, active_task):
         if active_task is None:
+            self.log.debug(f"Neighbor active task is None")
             return
 
         same_task = active_task == self.active_task
         has_priority = agent_id < self.agent_id
+        self.log.debug(f"Neighbor {agent_id} active task: {active_task}, same_task: {same_task}, has_priority: {has_priority}")
         if not same_task:
             self.others_active_task_expiration[active_task] = (
                 self._get_communication_time_unit() + self.active_task_cooldown
             )
+            self.log.debug(f"Blocking neighbor's task {active_task} until {self.others_active_task_expiration[active_task]}")
         elif same_task and has_priority:
             self.others_active_task_expiration[active_task] = (
                 self._get_communication_time_unit() + self.active_task_cooldown
             )
             self.active_task = None
+            self.log.debug(f"Yielding task {active_task} to neighbor {agent_id} (higher priority)")
 
     def _update_steps(self):
         super()._update_steps()
