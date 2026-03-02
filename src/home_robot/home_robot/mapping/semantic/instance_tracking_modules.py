@@ -229,9 +229,6 @@ class InstanceMemory:
         pose: torch.Tensor,
         image: torch.Tensor,
     ):
-        self.unprocessed_views = {}
-        self.temp_id_to_global_id = {0: 0}
-        
         instance_frame = instance_frame_onehot.argmax(dim=0).int() + 1
         no_instance_mask = instance_frame_onehot.sum(0) == 0
         instance_frame[no_instance_mask] = 0

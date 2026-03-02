@@ -672,6 +672,9 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         if self.record_instance_ids:
             instance_channels = obs[4 + self.num_sem_categories :]
+            self.instance_memory.unprocessed_views = {}
+            self.instance_memory.temp_id_to_global_id = {0: 0}
+ 
             if num_instance_channels > 0:
                 self.instance_memory.process_instances(
                     semantic_channels,
