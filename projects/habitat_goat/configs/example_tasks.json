@@ -7,32 +7,38 @@
             "tasks": [
                 {
                     "type": "objectnav",
+                    "category": "chair"
+                },
+                {
+                    "type": "objectnav",
                     "category": "cup"
                 },
                 {
                     "type": "languagenav",
-                    "category": "chair",
-                    "description": "Navigate to a blue chair"
-                },
-                {
-                    "type": "languagenav",
                     "category": "umbrella",
-                    "description": "Navigate to a blue umbrella"
+                    "description": "a blue umbrella next to a jacket"
                 },
                 {
                     "type": "objectnav",
                     "category": "potted_plant"
                 },
-
                 {
                     "type": "imagenav",
                     "category": "microwave",
-                    "image": "projects/habitat_goat/configs/image_goals/turtlebot.jpeg"
+                    "image": "projects/habitat_goat/configs/image_goals/microwave.jpeg"
                 },
                 {
-                    "type": "imagenav",
-                    "category": "april_tag",
-                    "image": "projects/habitat_goat/configs/image_goals/apriltag_grid.jpeg"
+                    "type": "objectnav",
+                    "category": "backpack"
+                },
+                {
+                    "type": "objectnav",
+                    "category": "hoodie"
+                },
+                {
+                    "type": "objectnav",
+                    "category": "tennis_racket",
+                    "description": "a red tennis racket located below a table"
                 }
             ]
         }

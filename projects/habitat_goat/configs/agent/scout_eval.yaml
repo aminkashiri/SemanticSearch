@@ -1,6 +1,6 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: robot_det
+EXP_NAME: comm3
 REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.
@@ -13,7 +13,7 @@ USE_YOLO: 0               # 1: use YOLO in addition to Detic for object detectio
 # Used for the real world experiments, and not simulations
 ENVIRONMENT:
   control_frequency: 1 
-  episode_timeout_minutes: 15
+  episode_timeout_minutes: 45
   forward: 0.25
   turn_angle: 30.0        # agent turn angle (in degrees)
   frame_height: 480       # first-person frame height (in pixels)
@@ -49,9 +49,9 @@ AGENT:
     vision_range: 100        # diameter of local map region visible by the agent (in cells)
     global_downscaling: 2    # ratio of global over local map
     du_scale: 1              # frame downscaling before projecting to point cloud
-    cat_pred_threshold: 4.0  # number of depth points to be in bin to classify it as a certain semantic category
+    cat_pred_threshold: 5.0  # number of depth points to be in bin to classify it as a certain semantic category
     exp_pred_threshold: 1.0  # number of depth points to be in bin to consider it as explored
-    map_pred_threshold: 100.0  # number of depth points to be in bin to consider it as obstacle
+    map_pred_threshold: 10.0  # number of depth points to be in bin to consider it as obstacle
     been_close_to_radius: 200  # radius (in centimeters) of been close to region
     target_blacklisting_radius: 80 # radius (in centimeters) of region around goal to blacklist if object isn't a valid target
     min_obs_height_cm: 15    # minimum height (in centimeters) of obstacle to be considered as obstacle. Used 10 initially, set to 20 in goat
@@ -59,7 +59,7 @@ AGENT:
 
   PLANNER:
     collision_threshold: 0.20       # forward move distance under which we consider there's a collision (in meters)
-    min_obs_dilation_selem_radius: 2    # radius (in cells) of obstacle dilation structuring element
+    min_obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
     obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 
