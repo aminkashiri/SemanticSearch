@@ -79,15 +79,15 @@ class MapMerger:
         if neighbor_id in self._cached_transforms:
             cached_iou = self._cached_transforms[neighbor_id]["iou"]
 
-        if cached_iou is not None and cached_iou < 0.9:
+        if cached_iou is not None and cached_iou >= 0.9:
+            iou = cached_iou
+        else:
             iou = self._alignment_confidence(global_map, warped_neighbor)
             self.log.debug(f"Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
-            min_iou = min(self.iou_threshold, cached_iou)
+            min_iou = min(self.iou_threshold, cached_iou) if cached_iou is not None else self.iou_threshold
             if iou < min_iou:
                 self.log.debug("WARNING: Low alignment confidence.")
                 return None
-        else:
-            iou = cached_iou
 
         self._cached_transforms[neighbor_id] = {
             "iou": iou,

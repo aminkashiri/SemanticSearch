@@ -716,16 +716,20 @@ class DiscretePlanner:
         closest_idx_in_valid = np.argmin(valid_min_distances)
         closest_cluster_id = valid_cluster_ids[closest_idx_in_valid]
         closest_cluster_mask = labeled_map == closest_cluster_id
-
+        max_reachable_dist = np.min(distances_from_viewpoint[closest_cluster_mask]) * 4
+        reachable_cluster_mask = np.logical_and(
+            closest_cluster_mask,
+            distances_from_viewpoint <= max_reachable_dist
+        )
 
         # Choose a point in cluster
 
         # Compute each pixel's distance to the nearest goal cell
         goal_distance_map = distance_transform_edt(goal_instance_map == 0)
-        cluster_distances_to_goal = goal_distance_map[closest_cluster_mask]
+        cluster_distances_to_goal = goal_distance_map[reachable_cluster_mask]
         min_dist = cluster_distances_to_goal.min()
         close_to_goal_mask = np.logical_and(
-            closest_cluster_mask,
+            reachable_cluster_mask,
             goal_distance_map <= min_dist * 1.2
         )
 
@@ -736,12 +740,13 @@ class DiscretePlanner:
         goal_map = np.zeros_like(goal_instance_map, dtype=bool)
         goal_map[goal_location[0], goal_location[1]] = 1
 
-        features.append((goal_instance_map, [0, 165, 255]))  # orange - All instance cells
-        points = []
-        points.append((viewpoint_location, [255, 0, 0]))
-        points.append((goal_location, [0, 0, 255]))
-
         if self.visualization_level > 1:
+            features.append((goal_instance_map, [0, 165, 255]))  # orange - All instance cells
+            points = []
+            points.append((viewpoint_location, [255, 0, 0]))
+            points.append((goal_location, [0, 0, 255]))
+            features.append((reachable_cluster_mask, [255, 0, 255]))  # magenta - reachable portion
+            features.append((close_to_goal_mask, [0, 255, 255]))      # yellow - final candidates
             visualize_map(
                 traversible.shape,
                 self.vis_dir,
