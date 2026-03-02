@@ -35,6 +35,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             ransac_thresh=10.0,
             iou_threshold=0.2,
+            log=self.log,
         )
         self.neighbors = {}
         self._recv_queue = queue.Queue()
@@ -379,11 +380,7 @@ class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
     def __init__(self, config, vocabulary, agent_id=None, device_id=0):
         super().__init__(config, vocabulary, agent_id, device_id)
         for i in range(config.NUM_AGENTS):
-
             self.map_merger._cached_transforms[i] = {"iou": 1.0, "transform": np.eye(2, 3)}
-
-    def _transform_map(self, data):
-        return data["map"]
 
     def simulate_receive_map(self, other_agents):
         neighbors = []

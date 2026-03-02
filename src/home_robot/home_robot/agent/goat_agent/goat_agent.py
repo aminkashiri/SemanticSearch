@@ -580,7 +580,8 @@ class GoatAgent(Agent):
                     if "Goat-v1" in self.task_type :
                         category_scores[cls + 1].append(box.conf[0].item())  # Store at 1 to num_categories
                     else:
-                        category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
+                        if cls in coco_categories_mapping:
+                            category_scores[coco_categories_mapping[cls]+1].append(box.conf[0].item())
                 self.frame_yolo = cv2.cvtColor(yolo_output[0].plot(), cv2.COLOR_BGR2RGB)
 
                 for i in range(self.num_sem_categories + 1):

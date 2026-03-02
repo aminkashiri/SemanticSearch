@@ -10,8 +10,8 @@ from home_robot.mapping.semantic.constants import MapConstants as MC
 
 class MapMergerLogger(logging.LoggerAdapter):
     def process(self, msg, kwargs):
-        # modify the message however you want
         return f"[MAP MERGE] {msg}", kwargs
+
 class MapMerger:
     def __init__(
         self,
@@ -61,7 +61,11 @@ class MapMerger:
             neighbor_global_map = neighbor_global_map.to(device)
 
         if neighbor_global_map is not None:
-            transform = self._estimate_transform(global_map, neighbor_global_map)
+            if neighbor_id in self._cached_transforms and self._cached_transforms[neighbor_id]["iou"] > 0.90:
+                transform = self._cached_transforms[neighbor_id]["transform"]
+                self.log.debug(f"Using cached transform for neighbor {neighbor_id}, iou>90")
+            else:
+                transform = self._estimate_transform(global_map, neighbor_global_map)
         else:
             transform = None
 
@@ -71,15 +75,19 @@ class MapMerger:
 
         warped_neighbor = self._warp_map(neighbor_global_map, transform, global_map.shape)
 
-        iou = self._alignment_confidence(global_map, warped_neighbor)
-        self.log.debug(f"Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
-        min_iou = self.iou_threshold
+        cached_iou = None
         if neighbor_id in self._cached_transforms:
-            min_iou = self._cached_transforms[neighbor_id]["iou"]
+            cached_iou = self._cached_transforms[neighbor_id]["iou"]
 
-        if iou < min_iou:
-            self.log.debug("WARNING: Low alignment confidence.")
-            return None
+        if cached_iou is not None and cached_iou < 0.9:
+            iou = self._alignment_confidence(global_map, warped_neighbor)
+            self.log.debug(f"Alignment IoU: {iou:.4f} (threshold: {self.iou_threshold})")
+            min_iou = min(self.iou_threshold, cached_iou)
+            if iou < min_iou:
+                self.log.debug("WARNING: Low alignment confidence.")
+                return None
+        else:
+            iou = cached_iou
 
         self._cached_transforms[neighbor_id] = {
             "iou": iou,
