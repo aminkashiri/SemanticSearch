@@ -383,10 +383,10 @@ class MapMerger:
         if new_cells.sum() == 0:
             return merged
         for c in all_channels[merge_channel_mask]:
-            merged[c][new_cells] = torch.maximum(
-                global_map[c][new_cells],
-                transformed_map[c][new_cells],
-            )
+            ours = global_map[c][new_cells]
+            theirs = transformed_map[c][new_cells]
+            take_theirs = theirs.abs() > ours.abs()
+            merged[c][new_cells] = torch.where(take_theirs, theirs, ours)
         if neighbor_id >= 0:
             self._merged_masks[neighbor_id] = self._merged_masks[neighbor_id] | neighbor_has_data
 
