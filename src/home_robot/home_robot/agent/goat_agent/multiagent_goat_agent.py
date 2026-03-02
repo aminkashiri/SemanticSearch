@@ -271,16 +271,18 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             self._vis_merge_failed(data)
             return
 
+        data["transformed_map"] = transfomed_map
         # Apply merge
         merged = self.map_merger._merge(
             # self.semantic_map.global_map, data["transformed_map"]
             self.semantic_map.global_map,
-            transfomed_map,
+            data,
         )
 
         transformed_loc = self.map_merger.transform_location(
             data["agent_id"], data["location"]
         )
+        data["transformed_loc"] = transformed_loc
         distance = (
             (torch.tensor(self.semantic_map.global_loc) - torch.tensor(transformed_loc))
             .float()
@@ -290,8 +292,6 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             / 100
         )
 
-        data["transformed_map"] = transfomed_map
-        data["transformed_loc"] = transformed_loc
 
         self.comm_log.info(
             f"Map aligned with Agent {neighbor_id}, distance: {distance:.2f}m, neighor_loc: {transformed_loc}"
@@ -380,7 +380,7 @@ class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
         super().__init__(config, vocabulary, agent_id, device_id)
         for i in range(config.NUM_AGENTS):
 
-            self.map_merger._cached_transforms[i] = np.eye(2, 3)
+            self.map_merger._cached_transforms[i] = {"iou": 1.0, "transform": np.eye(2, 3)}
 
     def _transform_map(self, data):
         return data["map"]

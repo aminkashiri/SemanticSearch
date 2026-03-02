@@ -30,7 +30,7 @@ class MapMerger:
         self.semantic_weight = semantic_weight
         self.vis_dir = vis_dir
         self.timestep = 0
-        self._cached_transforms: Dict[int, np.ndarray] = {}
+        self._cached_transforms: Dict[int, Dict] = {}
         self._merged_masks: Dict[int, torch.Tensor] = {}
         self.log = MapMergerLogger(log, None)
         if log is None:
@@ -344,12 +344,14 @@ class MapMerger:
 
         return warped
 
-    def _merge(self, global_map: Tensor, transformed_map: Tensor,
-            neighbor_id) -> Tensor:
+    def _merge(self, global_map: Tensor, data) -> Tensor:
         """
         Merge warped neighbor into our map.
         Only merges cells that haven't been merged before from this neighbor.
         """
+        transformed_map = data["transformed_map"]
+        neighbor_id = data["agent_id"]
+
         merged = global_map.clone()
         device = global_map.device
 
