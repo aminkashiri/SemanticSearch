@@ -123,8 +123,9 @@ class MapMerger:
         if overlap.sum() < 50:
             return 0.0
 
-        obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0.5
-        obs_B = warped_B[MC.OBSTACLE_MAP].cpu().numpy() > 0.5
+        obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0
+        obs_B = warped_B[MC.OBSTACLE_MAP].cpu().numpy() > 0
+
 
         a = obs_A[overlap]
         b = obs_B[overlap]
@@ -143,8 +144,9 @@ class MapMerger:
         using ORB features on obstacle map + semantic landmark correspondences.
         Returns 2x3 affine matrix or None.
         """
-        obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() * 255).astype(np.uint8)
-        obs_B = (map_B[MC.OBSTACLE_MAP].cpu().numpy() * 255).astype(np.uint8)
+        obs_A = ((map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0) * 255).astype(np.uint8)
+        obs_B = ((map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0) * 255).astype(np.uint8)
+
 
         # Use explored map to weight features (only match in explored regions)
         exp_A = (map_A[MC.EXPLORED_MAP].cpu().numpy() > 0).astype(np.uint8) * 255
@@ -232,8 +234,8 @@ class MapMerger:
 
         sem_A = map_A[sem_start:sem_end].cpu().numpy()
         sem_B = map_B[sem_start:sem_end].cpu().numpy()
-        obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy()
-        obs_B = map_B[MC.OBSTACLE_MAP].cpu().numpy()
+        obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
+        obs_B = (map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
 
         landmarks_A = self._extract_semantic_landmarks(sem_A, obs_A, min_component_size)
         landmarks_B = self._extract_semantic_landmarks(sem_B, obs_B, min_component_size)
@@ -373,6 +375,13 @@ class MapMerger:
         merge_mask = ~torch.isin(all_channels, protected_channels) & (
             all_channels < (MC.NON_SEM_CHANNELS + self.num_sem_categories)
         )
+        # our_explored = global_map[MC.EXPLORED_MAP] > 0.5
+        # neighbor_explored = transformed_map[MC.EXPLORED_MAP] > 0.5
+
+        # only_neighbor = neighbor_explored & ~our_explored
+        # for c in all_channels[merge_mask]:
+        #     merged[c][only_neighbor] = transformed_map[c][only_neighbor]
+
         merged[merge_mask] = torch.maximum(
             global_map[merge_mask],
             transformed_map[merge_mask],
@@ -402,8 +411,10 @@ class MapMerger:
     ):
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-        obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy()
-        obs_B = map_B[MC.OBSTACLE_MAP].cpu().numpy()
+        obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
+        obs_B = (map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
+
+
 
         axes[0].imshow(obs_A, cmap="gray", origin="upper")
         axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
@@ -432,8 +443,8 @@ class MapMerger:
         loc_B_transformed = data["transformed_loc"]
         fig, axes = plt.subplots(1, 4, figsize=(24, 6))
 
-        obs_A = map_A[MC.OBSTACLE_MAP].cpu().numpy()
-        obs_merged = merged[MC.OBSTACLE_MAP].cpu().numpy()
+        obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
+        obs_merged =(merged[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float) 
 
         # Robot A's map
         axes[0].imshow(obs_A, cmap="gray", origin="upper")
@@ -442,7 +453,7 @@ class MapMerger:
         axes[0].legend()
         axes[0].axis("off")
 
-        obs_B_original = original_map[MC.OBSTACLE_MAP].cpu().numpy()
+        obs_B_original = (original_map[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
         axes[1].imshow(obs_B_original, cmap="gray", origin="upper")
         axes[1].plot(loc_B_original[1], loc_B_original[0], "ro", markersize=10, label="Robot B")
         axes[1].set_title("Robot B - Obstacle Map (own frame)")
@@ -450,7 +461,7 @@ class MapMerger:
         axes[1].axis("off")
 
         # Panel 3: Overlay — use already-warped map directly, no second warp
-        obs_B_warped = transformed_map[MC.OBSTACLE_MAP].cpu().numpy()
+        obs_B_warped = (transformed_map[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
         overlay = np.zeros((*obs_A.shape, 3))
         overlay[:, :, 2] = np.clip(obs_A, 0, 1)
         overlay[:, :, 0] = np.clip(obs_B_warped, 0, 1)

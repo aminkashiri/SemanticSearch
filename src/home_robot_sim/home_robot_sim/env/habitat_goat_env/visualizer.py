@@ -499,12 +499,17 @@ class Visualizer:
         # semantic_map_vis[blacklisted_targets_map] = (
         #     semantic_map_vis[blacklisted_targets_map] + color
         # ) / 2
-
+        map_h = semantic_map_vis.shape[0]
         pos = (
             robot_loc[1],
-            robot_loc[0],
+            map_h - 1 - robot_loc[0],
             np.deg2rad(-robot_orientation),
         )
+        # pos = (
+        #     robot_loc[1],
+        #     robot_loc[0],
+        #     np.deg2rad(-robot_orientation),
+        # )
         agent_arrow = vu.get_contour_points(pos, origin=(0, 0))
         color = self.semantic_category_mapping.map_color_palette[9:12][::-1]
         cv2.drawContours(semantic_map_vis, [agent_arrow], 0, color, -1)

@@ -634,6 +634,124 @@ class DiscretePlanner:
             )
         return goal_map
 
+    def get_hybrid_goal_map3(
+        self, traversible, goal_instance_map, viewpoint_location, is_local, try_index
+    ):
+        """
+        This is a hybrid to approach. We get closest cluster of free cells to the viewpoint. We try to dilate a goal a lot, so it can contain cells on different sides of the goal.
+        Finally, we choose the closest cell in the cluster to a goal point.
+        """
+        self.log.info(f"Creating goal map using hybrid method.")
+        if try_index != 0:
+            self.log.info(f"Hybrid only works for try_index=0")
+            return None
+
+        kernel_size = 10
+        max_retries = 3  # original, 2x, 3x
+
+        # Compute Euclidean distance from viewpoint to goal center
+        goal_coords = np.argwhere(goal_instance_map == 1)
+        goal_center = goal_coords.mean(axis=0)
+        euclidean_dist = np.linalg.norm(np.array(viewpoint_location) - goal_center)
+        threshold = 2.0 * euclidean_dist
+
+        valid_cluster_ids = []
+        valid_min_distances = []
+        features = []
+
+        for attempt in range(max_retries):
+            current_kernel = kernel_size * (attempt + 1)
+            dilated_goal_instance_map = cv2.dilate(
+                goal_instance_map.astype(np.uint8),
+                skimage.morphology.disk(current_kernel),
+                iterations=1,
+            )
+            free_goal_cells = np.logical_and(
+                dilated_goal_instance_map == 1, traversible == 1
+            )
+            labeled_map, num_clusters = label(free_goal_cells, structure=np.ones((3, 3)))
+            if num_clusters == 0:
+                free_goal_cells = self._get_closest_free_cell(
+                    goal_instance_map, traversible
+                )
+                labeled_map, num_clusters = label(free_goal_cells, structure=np.ones((3, 3)))
+
+            viewpoint_map = np.zeros_like(goal_instance_map)
+            viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
+            traversible_ma = np.ma.masked_values(traversible * 1, 0)
+            traversible_ma[viewpoint_location[0], viewpoint_location[1]] = 0
+            distances_from_viewpoint = skfmm.distance(traversible_ma)
+            distances_from_viewpoint = np.ma.filled(distances_from_viewpoint, np.max(distances_from_viewpoint) + 1)
+            distances_from_viewpoint[free_goal_cells != 1] = 100000
+
+            features = []
+            min_distance_per_cluster = []
+            for cluster_id in range(1, num_clusters + 1):
+                cluster_mask = labeled_map == cluster_id
+                features.append((cluster_mask, [0, int(255 / (num_clusters + 1) * cluster_id), 0]))
+                min_dist_in_cluster = np.min(distances_from_viewpoint[cluster_mask])
+                min_distance_per_cluster.append(min_dist_in_cluster)
+
+            valid_cluster_ids = []
+            valid_min_distances = []
+            valid_features = []
+            for i, cluster_id in enumerate(range(1, num_clusters + 1)):
+                if min_distance_per_cluster[i] <= threshold:
+                    valid_cluster_ids.append(cluster_id)
+                    valid_min_distances.append(min_distance_per_cluster[i])
+                    valid_features.append(features[i])
+
+            if len(valid_cluster_ids) > 0:
+                self.log.info(f"Found {len(valid_cluster_ids)} valid clusters with kernel_size={current_kernel} (attempt {attempt + 1}).")
+                features = valid_features
+                break
+            else:
+                self.log.info(f"All clusters filtered out with kernel_size={current_kernel} (attempt {attempt + 1}), retrying...")
+
+        if len(valid_cluster_ids) == 0:
+            self.log.info("All retries exhausted, falling back to closest cluster without filtering.")
+            valid_cluster_ids = list(range(1, num_clusters + 1))
+            valid_min_distances = min_distance_per_cluster
+
+        closest_idx_in_valid = np.argmin(valid_min_distances)
+        closest_cluster_id = valid_cluster_ids[closest_idx_in_valid]
+        closest_cluster_mask = labeled_map == closest_cluster_id
+
+
+        # Choose a point in cluster
+
+        # Compute each pixel's distance to the nearest goal cell
+        goal_distance_map = distance_transform_edt(goal_instance_map == 0)
+        cluster_distances_to_goal = goal_distance_map[closest_cluster_mask]
+        min_dist = cluster_distances_to_goal.min()
+        close_to_goal_mask = np.logical_and(
+            closest_cluster_mask,
+            goal_distance_map <= min_dist * 1.2
+        )
+
+        closest_idx = np.argmin(distances_from_viewpoint[close_to_goal_mask])
+        candidate_coords = np.argwhere(close_to_goal_mask)
+        goal_location = tuple(candidate_coords[closest_idx])
+
+        goal_map = np.zeros_like(goal_instance_map, dtype=bool)
+        goal_map[goal_location[0], goal_location[1]] = 1
+
+        features.append((goal_instance_map, [0, 165, 255]))  # orange - All instance cells
+        points = []
+        points.append((viewpoint_location, [255, 0, 0]))
+        points.append((goal_location, [0, 0, 255]))
+
+        if self.visualization_level > 1:
+            visualize_map(
+                traversible.shape,
+                self.vis_dir,
+                f"{self.prefix}{self.timestep}_6.get_hybrid_goal{'' if is_local else '_global'}.png",
+                traversible=traversible,
+                features=features,
+                points=points,
+            )
+        return goal_map
+
     def get_goal_map(
         self,
         traversible,
@@ -672,7 +790,7 @@ class DiscretePlanner:
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
         elif method == "hybrid":
-            goal_map = self.get_hybrid_goal_map(
+            goal_map = self.get_hybrid_goal_map3(
                 traversible, goal_instance_map, viewpoint_location, is_local, try_index
             )
         if not goal_map is None:
@@ -981,10 +1099,8 @@ class DiscretePlanner:
                 prev_frontier = self.prev_frontier[lmb[0]:lmb[1], lmb[2]:lmb[3]]
             else:
                 prev_frontier = self.prev_frontier
-
-            if self._last_neighbor_set != current_neighbor_set or np.all(
-                (prev_frontier & frontier_map) == 0 
-            ):
+            #! TODO: Save time started a frontier instead
+            if self._last_neighbor_set != current_neighbor_set or np.all((prev_frontier & frontier_map) == 0)  or self.timestep % 8 == 0:
                 best_frontier_map = self.get_best_frontier(
                     frontier_map,
                     traversible,

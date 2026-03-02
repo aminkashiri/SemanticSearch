@@ -197,9 +197,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         log=None,
         real_world=False,
         start_obs_dilation=0,
-        log_odds_occ=0.8,
-        log_odds_free=0.4,
-        max_log_odds=10.0,
+        log_odds_occ=1.0,
+        log_odds_free=1.0,
+        max_log_odds=3.0,
     ):
         """
         Arguments:
