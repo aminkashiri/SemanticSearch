@@ -322,8 +322,8 @@ class DiscretePlanner:
                     action = DiscreteNavigationAction.STOP
                     self.moved_forward = True
             else:
-                if abs(relative_angle_to_stg) > 10.0:
-                    action = ContinuousNavigationAction(np.array([0,0,relative_angle_to_stg]))
+                if abs(relative_angle_to_closest_goal) > 10.0:
+                    action = ContinuousNavigationAction(np.array([0,0,-relative_angle_to_closest_goal.cpu().item()]))
                 else:
                     action = DiscreteNavigationAction.STOP
                     self.moved_forward = True

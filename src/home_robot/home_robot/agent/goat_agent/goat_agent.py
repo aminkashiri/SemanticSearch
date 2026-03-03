@@ -222,6 +222,7 @@ class GoatAgent(Agent):
                 'hfov': config.ENVIRONMENT.hfov,
                 'max_depth': config.ENVIRONMENT.max_depth,
                 'turn_angle': config.ENVIRONMENT.turn_angle,
+                'forward_step_size': config.ENVIRONMENT.forward_step_size,
             }
         else:
             # Simulation: use habitat.simulator config
@@ -233,6 +234,7 @@ class GoatAgent(Agent):
                 'hfov': camera.hfov,
                 'max_depth': camera.max_depth,
                 'turn_angle': config.habitat.simulator.turn_angle,
+                'forward_step_size': config.habitat.simulator.forward_step_size,
             }
 
     def _setup_perception(self, config, vocabulary):

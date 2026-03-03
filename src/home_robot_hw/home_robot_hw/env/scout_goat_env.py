@@ -88,7 +88,7 @@ class ScoutGoatEnv:
         self._episode_start_pose = None
         self._last_obs = None
         
-        self.forward_step = config.ENVIRONMENT.forward
+        self.forward_step = config.ENVIRONMENT.forward_step_size
         self.turn_angle = np.radians(config.ENVIRONMENT.turn_angle)
         
         if self.verbose:
@@ -312,8 +312,7 @@ class ScoutGoatEnv:
             continuous_action[2] = self.turn_angle
             if self.verbose:
                 print(f"[SCOUT_ENV] TURN LEFT: {np.degrees(self.turn_angle):.1f}°")
-        else:
-            assert isinstance(action_enum, ContinuousNavigationAction)
+        elif isinstance(action_enum, ContinuousNavigationAction):
             continuous_action[2] = np.radians(action_enum.xyt[2].item())
             if self.verbose:
                 print(f"[SCOUT_ENV] Continuous TURN : {np.degrees(continuous_action[2]):.1f}°")
