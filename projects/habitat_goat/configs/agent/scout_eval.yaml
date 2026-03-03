@@ -1,6 +1,6 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: comm3
+EXP_NAME: final3
 REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.
@@ -13,8 +13,8 @@ USE_YOLO: 0               # 1: use YOLO in addition to Detic for object detectio
 # Used for the real world experiments, and not simulations
 ENVIRONMENT:
   control_frequency: 1 
-  episode_timeout_minutes: 45
-  forward: 0.25
+  episode_timeout_minutes: 100
+  forward_step_size: 0.40
   turn_angle: 30.0        # agent turn angle (in degrees)
   frame_height: 480       # first-person frame height (in pixels)
   frame_width: 848       # first-person frame width (in pixels)
@@ -64,7 +64,7 @@ AGENT:
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 10                    # maximum distance of the short-term goal selected by the planner
-    discrete_actions: True         # discrete motion planner output space or not
+    discrete_actions: False         # discrete motion planner output space or not
     stop_distance: 100              # cm - semantic_map.explored_radius should be bigger than this
 
   SUPERGLUE:
