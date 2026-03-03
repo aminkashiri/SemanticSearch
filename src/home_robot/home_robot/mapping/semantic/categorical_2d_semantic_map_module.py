@@ -403,7 +403,8 @@ class Categorical2DSemanticMapModule(nn.Module):
             # create category id to instance id list mapping
             category_id_to_temp_id_list = defaultdict(list)
             # loop over unprocessed instances
-            for temp_id, instance in self.unprocessed_views.items():
+            unprocessed_views = self.instance_memory.unprocessed_views
+            for temp_id, instance in unprocessed_views.items():
                 category_id_to_temp_id_list[instance.category_id].append(temp_id)
 
             for category_id in category_id_to_temp_id_list.keys():
@@ -424,8 +425,8 @@ class Categorical2DSemanticMapModule(nn.Module):
                             smaller = min(binary_maps[j].sum().item(), binary_maps[k].sum().item())
                             
                             if smaller > 0 and intersection / smaller > 0.3:
-                                score_j = self.unprocessed_views[temp_ids[j]].score
-                                score_k = self.unprocessed_views[temp_ids[k]].score
+                                score_j = unprocessed_views[temp_ids[j]].score
+                                score_k = unprocessed_views[temp_ids[k]].score
                                 
                                 winner, loser = (j, k) if score_j >= score_k else (k, j)
                                 
