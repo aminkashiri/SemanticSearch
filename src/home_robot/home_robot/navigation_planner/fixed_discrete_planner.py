@@ -716,7 +716,7 @@ class DiscretePlanner:
         closest_idx_in_valid = np.argmin(valid_min_distances)
         closest_cluster_id = valid_cluster_ids[closest_idx_in_valid]
         closest_cluster_mask = labeled_map == closest_cluster_id
-        max_reachable_dist = np.min(distances_from_viewpoint[closest_cluster_mask]) * 4
+        max_reachable_dist = (np.min(distances_from_viewpoint[closest_cluster_mask])+5) * 4
         reachable_cluster_mask = np.logical_and(
             closest_cluster_mask,
             distances_from_viewpoint <= max_reachable_dist
