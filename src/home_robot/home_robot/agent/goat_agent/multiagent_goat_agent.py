@@ -35,7 +35,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
             ransac_thresh=10.0,
             iou_threshold=0.2,
-            log=self.log,
+            log=self._log,
         )
         self.neighbors = {}
         self._recv_queue = queue.Queue()

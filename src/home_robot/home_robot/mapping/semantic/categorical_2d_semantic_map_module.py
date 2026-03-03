@@ -797,14 +797,38 @@ class Categorical2DSemanticMapModule(nn.Module):
         current_map = prev_map.clone()
 
         # --- Obstacle: log-odds ---
-        obs_log_update = obs_evidence_in_map * self.log_odds_occ - self.log_odds_free
+        # obs_log_update = obs_evidence_in_map * self.log_odds_occ - self.log_odds_free
+        # current_map[MC.OBSTACLE_MAP] = torch.where(
+        #     visible_mask,
+        #     (prev_map[MC.OBSTACLE_MAP] + obs_log_update).clamp(
+        #         -self.max_log_odds, self.max_log_odds
+        #     ),
+        #     prev_map[MC.OBSTACLE_MAP],
+        # )
+
+        gaze_mask = translated[MC.GAZE_EXPLORED_MAP] > 0.5
+
+        # Positive update: only where depth points actually landed
+        occ_update = torch.where(
+            visible_mask & (obs_evidence_in_map > 0),
+            obs_evidence_in_map * self.log_odds_occ,
+            torch.zeros_like(obs_evidence_in_map),
+        )
+        # Negative update: anywhere in gaze FOV (we can see it's empty)
+        free_update = torch.where(
+            gaze_mask,
+            torch.full_like(obs_evidence_in_map, self.log_odds_free),
+            torch.zeros_like(obs_evidence_in_map),
+        )
+
         current_map[MC.OBSTACLE_MAP] = torch.where(
-            visible_mask,
-            (prev_map[MC.OBSTACLE_MAP] + obs_log_update).clamp(
+            visible_mask | gaze_mask,
+            (prev_map[MC.OBSTACLE_MAP] + occ_update - free_update).clamp(
                 -self.max_log_odds, self.max_log_odds
             ),
             prev_map[MC.OBSTACLE_MAP],
         )
+
 
         # --- Semantics: log-odds per category (excluding robot channel) ---
         robot_sem_idx = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
