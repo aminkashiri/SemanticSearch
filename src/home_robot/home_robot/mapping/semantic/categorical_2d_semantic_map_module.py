@@ -402,20 +402,14 @@ class Categorical2DSemanticMapModule(nn.Module):
         if num_instance_channels > 0:
             # create category id to instance id list mapping
             category_id_to_temp_id_list = defaultdict(list)
-            # retrieve unprocessed instances
-            unprocessed_instances = self.instance_memory.unprocessed_views
             # loop over unprocessed instances
-            for temp_id, instance in unprocessed_instances.items():
+            for temp_id, instance in self.unprocessed_views.items():
                 category_id_to_temp_id_list[instance.category_id].append(temp_id)
 
-            # TODO Can we vectorize this across categories? (Only needed if speed bottleneck)
             for category_id in category_id_to_temp_id_list.keys():
-                # get all temp ids for this category
                 temp_ids = category_id_to_temp_id_list[category_id]
-                # Instance channel 0 corresponds to temp id 1
                 instance_map_onehot = temp_instance_map[[i - 1 for i in temp_ids]]
                 
-                # Detect map-level overlaps between same-category instances and merge
                 if len(temp_ids) > 1:
                     binary_maps = (instance_map_onehot > 1e-5)
                     merged = set()
@@ -425,13 +419,22 @@ class Categorical2DSemanticMapModule(nn.Module):
                         for k in range(j + 1, len(temp_ids)):
                             if k in merged:
                                 continue
+                            
                             intersection = (binary_maps[j] & binary_maps[k]).sum().item()
                             smaller = min(binary_maps[j].sum().item(), binary_maps[k].sum().item())
+                            
                             if smaller > 0 and intersection / smaller > 0.3:
-                                # Merge k into j (give j's pixels k's values too)
-                                instance_map_onehot[j] = torch.maximum(instance_map_onehot[j], instance_map_onehot[k])
-                                instance_map_onehot[k] = 0
-                                merged.add(k)
+                                score_j = self.unprocessed_views[temp_ids[j]].score
+                                score_k = self.unprocessed_views[temp_ids[k]].score
+                                
+                                winner, loser = (j, k) if score_j >= score_k else (k, j)
+                                
+                                instance_map_onehot[winner] = torch.maximum(instance_map_onehot[winner], instance_map_onehot[loser])
+                                instance_map_onehot[loser] = 0
+                                merged.add(loser)
+                                
+                                if loser == j:
+                                    break
 
                 instance_map_onehot = torch.cat(
                     (1e-5 * torch.ones_like(instance_map_onehot[:1]), instance_map_onehot),
