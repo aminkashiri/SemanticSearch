@@ -41,15 +41,12 @@ class FMMPlanner:
 
     def __init__(
         self,
-        traversible: np.ndarray,
         log,
         stop_distance,
         scale: int = 1,
         step_size: int = 5,
-        vis_dir: str = "data/images/planner",
         print_images=True,
         debug=False,
-        vis_postfix: str = "",
     ):
         """
         Arguments:
@@ -60,29 +57,20 @@ class FMMPlanner:
             vis_dir: folder where to dump visualization
         """
         self.print_images = print_images
-        self.vis_dir = vis_dir
-        os.makedirs(self.vis_dir, exist_ok=True)
-
         self.scale = scale
         self.step_size = step_size
         self.stop_distance = stop_distance
-        if scale != 1.0:
-            self.traversible = cv2.resize(
-                traversible,
-                (traversible.shape[1] // scale, traversible.shape[0] // scale),
-                interpolation=cv2.INTER_NEAREST,
-            )
-            self.traversible = np.rint(self.traversible).astype(np.uint8)
-        else:
-            self.traversible = traversible
 
         self.du = int(self.step_size / (self.scale * 1.0))
         self.fmm_dist = None
+        # self.debug = True
         self.debug = debug
         # self.goal_map = None
-        self.vis_postfix = vis_postfix
         self.log = log
         self.real_world = True
+    
+    def set_vis_dir(self, vis_dir):
+        self.vis_dir = vis_dir
 
     def set_goal(self, goal):
         """Set planner goal. Goal should be of size 2, containing x and y positions."""
@@ -100,11 +88,13 @@ class FMMPlanner:
     def set_multi_goal(
         self,
         goal_map: np.ndarray,
+        traversible,
         timestep: int = 0,
         dd: np.ndarray = None,
         map_downsample_factor: float = 1.0,
         map_update_frequency: int = 1,
         number="",
+        vis_postfix=""
     ):
         """Set long-term goal(s) used to compute distance from a binary
         goal map.
@@ -113,7 +103,14 @@ class FMMPlanner:
         map_downsample_factor: 1 for no downsampling, 2 for halving both image dimensions.
         """
         assert map_downsample_factor >= 1.0
-        traversible = self.traversible
+        if self.scale != 1.0:
+            traversible = cv2.resize(
+                traversible,
+                (traversible.shape[1] // self.scale, traversible.shape[0] // self.scale),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            traversible = np.rint(traversible).astype(np.uint8)
+
         if map_downsample_factor > 1.0:
             l, w = self.traversible.shape
             traversible = cv2.resize(
@@ -168,7 +165,7 @@ class FMMPlanner:
             dist_vis[:, c : 2 * c] = np.flipud(goal_map)
             dist_vis[:, 2 * c :] = np.flipud(self.fmm_dist / self.fmm_dist.max())
 
-            output_name = f"{timestep}_{number}.distance_to_goal{self.vis_postfix}.png"
+            output_name = f"{timestep}_{number}.distance_to_goal{vis_postfix}.png"
             cv2.imwrite(
                 os.path.join(self.vis_dir, output_name),
                 (dist_vis * 255).astype(int),
@@ -185,7 +182,7 @@ class FMMPlanner:
 
         cv2.imwrite(
             os.path.join(
-                self.vis_dir, f"{prefix}{timestep}_11.get_stg_details{self.vis_postfix}{postfix}.png"
+                self.vis_dir, f"{prefix}{timestep}_11.get_stg_details{postfix}.png"
             ),
             (dist_vis).astype(int),
         )
@@ -224,9 +221,10 @@ class FMMPlanner:
         masked_subset = np.copy(subset)
         masked_subset[np.logical_and(mask, ~safe_mask)] = np.max(subset)
         return masked_subset
-    def get_short_term_goal(self, state: List[float], timestep=0, prefix=""):
+
+    def get_short_term_goal(self, state: List[float], timestep=0, prefix="", postfix=""):
         for radius in range(2, self.step_size+1)[::-1]:
-            stg_x, stg_y, reachable, stop = self.get_short_term_goal_util(state, radius, timestep, prefix=prefix, postfix=f"_step{radius}")
+            stg_x, stg_y, reachable, stop = self.get_short_term_goal_util(state, radius, timestep, prefix=prefix, postfix=postfix + f"_step{radius}")
             if reachable:
                 break
         return stg_x, stg_y, reachable, stop
@@ -379,65 +377,3 @@ class FMMPlanner:
                         ** 0.5,
                     )
         return mask
-
-    def dilate_goal(
-        self,
-        goal: np.ndarray,
-        distance: float,
-        timestep=0,
-        prefix=""
-    ) -> np.ndarray:
-        """
-        Find the nearest point to a goal which is traversible
-        """
-        self.log.debug(f"Dilating goal map")
-
-        planner = FMMPlanner(
-            self.traversible,
-            print_images=self.print_images,
-            vis_dir=self.vis_dir,
-            vis_postfix=self.vis_postfix,
-        )
-        # Plan to the goal mask
-        planner.set_multi_goal(goal, timestep=timestep)
-
-        # Now mask out anything here based on distance to the goal mask
-        mask = self.traversible
-        dist_map = planner.fmm_dist * mask
-        dist_map[dist_map == 0] = (
-            dist_map.max()
-        )  #! max is either obstacle, or unreachable.
-        dist_map[dist_map == dist_map.max()] = (
-            distance + 1
-        )  #! This makes sure that max cells are never chosen as dilated goals.
-
-        #! set multigoal always sets masked cell to max+1, and it that is 1, it means max is 0, which means we found no possible path to goal.
-        if np.max(dist_map) != 1.0:
-            self.log.debug(
-                f"Number of traversible points within distance {distance} (in pixels) is {np.sum(dist_map < distance)}"
-            )
-            self.log.debug(f"max and min : {np.max(dist_map)}, {np.min(dist_map)}")
-            self.log.debug(f"len unique values: {len(np.unique(dist_map))}")
-            dilated_goal_map = dist_map < distance
-        else:
-            self.log.error(
-                f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
-            )
-            raise Exception(
-                f"Dilating was not successful, using FMM to find closest traversible point. THIS SHOULD NOT HAPPEN NORMALLY"
-            )
-
-        initial_navigable_goal_map = np.logical_and(self.traversible, goal)
-        dilated_goal_map = np.logical_or(initial_navigable_goal_map, dilated_goal_map)
-
-        if self.print_images:
-            visualize_map(
-                dilated_goal_map.shape,
-                self.vis_dir,
-                f"{prefix}{timestep}_9.dilate_goal{self.vis_postfix}.png",
-                traversible=self.traversible.astype(np.uint8),
-                goal_map=goal,
-                dilated_goal_map=dilated_goal_map.astype(np.uint8),
-            )
-
-        return dilated_goal_map

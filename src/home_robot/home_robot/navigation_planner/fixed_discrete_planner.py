@@ -140,7 +140,12 @@ class DiscretePlanner:
         self.stop_distance = int(stop_distance / self.map_resolution)
         self.prev_frontier = np.zeros(self.map_shape, dtype=np.uint8)
         self._last_neighbor_set = set()
-
+        self.planner = FMMPlanner(
+            self.log,
+            step_size=self.step_size,
+            print_images=self.visualization_level > 1,
+            stop_distance=self.stop_distance,
+        )
 
     def reset(self):
         self.dd = None
@@ -167,6 +172,7 @@ class DiscretePlanner:
 
     def set_vis_dir(self, dir_name):
         self.vis_dir = os.path.join(self.default_vis_dir, dir_name)
+        self.planner.set_vis_dir(self.vis_dir)
         os.makedirs(self.vis_dir, exist_ok=True)
 
     def plan(
@@ -214,6 +220,7 @@ class DiscretePlanner:
         self.log.info(f"> Global Location: {self.semantic_map.global_loc}")
         self.log.info(f"> Local Location: {self.semantic_map.local_loc}")
         self.log.info(f"> Instance goal found: {inst_goal_found}")
+
 
         if inst_goal_found:
             (
@@ -466,18 +473,9 @@ class DiscretePlanner:
             return None
         # Here, I have to first dilate the goal instance map a bit, then from all free goal cells, choose closest to the viewpoint
         free_goal_cells = self._get_closest_free_cell(goal_instance_map, traversible)
-        planner = FMMPlanner(
-            traversible,
-            self.log,
-            step_size=self.step_size,
-            vis_dir=self.vis_dir,
-            print_images=self.visualization_level > 1,
-            stop_distance=self.stop_distance,
-            # vis_postfix="_closest_to_viewpoint",
-        )
         viewpoint_map = np.zeros_like(goal_instance_map)
         viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
-        distances_from_viewpoint = planner.set_multi_goal(viewpoint_map, self.timestep)
+        distances_from_viewpoint = self.planner.set_multi_goal(viewpoint_map, traversible, self.timestep)
         distances_from_viewpoint[free_goal_cells == 0] = 100000
 
         closest_goal_map = distances_from_viewpoint == distances_from_viewpoint.min()
@@ -669,6 +667,12 @@ class DiscretePlanner:
         valid_min_distances = []
         features = []
 
+        viewpoint_map = np.zeros_like(goal_instance_map)
+        viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
+        traversible_ma = np.ma.masked_values(traversible * 1, 0)
+        traversible_ma[viewpoint_location[0], viewpoint_location[1]] = 0
+        distances_from_viewpoint = skfmm.distance(traversible_ma)
+        distances_from_viewpoint = np.ma.filled(distances_from_viewpoint, np.max(distances_from_viewpoint) + 1)
         for attempt in range(max_retries):
             current_kernel = kernel_size * (attempt + 1)
             dilated_goal_instance_map = cv2.dilate(
@@ -686,20 +690,15 @@ class DiscretePlanner:
                 )
                 labeled_map, num_clusters = label(free_goal_cells, structure=np.ones((3, 3)))
 
-            viewpoint_map = np.zeros_like(goal_instance_map)
-            viewpoint_map[viewpoint_location[0], viewpoint_location[1]] = 1.0
-            traversible_ma = np.ma.masked_values(traversible * 1, 0)
-            traversible_ma[viewpoint_location[0], viewpoint_location[1]] = 0
-            distances_from_viewpoint = skfmm.distance(traversible_ma)
-            distances_from_viewpoint = np.ma.filled(distances_from_viewpoint, np.max(distances_from_viewpoint) + 1)
-            distances_from_viewpoint[free_goal_cells != 1] = 100000
+            distances_from_viewpoint_masked = distances_from_viewpoint.copy()
+            distances_from_viewpoint_masked[free_goal_cells != 1] = 100000
 
             features = []
             min_distance_per_cluster = []
             for cluster_id in range(1, num_clusters + 1):
                 cluster_mask = labeled_map == cluster_id
                 features.append((cluster_mask, [0, int(255 / (num_clusters + 1) * cluster_id), 0]))
-                min_dist_in_cluster = np.min(distances_from_viewpoint[cluster_mask])
+                min_dist_in_cluster = np.min(distances_from_viewpoint_masked[cluster_mask])
                 min_distance_per_cluster.append(min_dist_in_cluster)
 
             valid_cluster_ids = []
@@ -726,10 +725,10 @@ class DiscretePlanner:
         closest_idx_in_valid = np.argmin(valid_min_distances)
         closest_cluster_id = valid_cluster_ids[closest_idx_in_valid]
         closest_cluster_mask = labeled_map == closest_cluster_id
-        max_reachable_dist = (np.min(distances_from_viewpoint[closest_cluster_mask])+5) * 4
+        max_reachable_dist = (np.min(distances_from_viewpoint_masked[closest_cluster_mask])+5) * 4
         reachable_cluster_mask = np.logical_and(
             closest_cluster_mask,
-            distances_from_viewpoint <= max_reachable_dist
+            distances_from_viewpoint_masked <= max_reachable_dist
         )
 
         # Choose a point in cluster
@@ -743,7 +742,7 @@ class DiscretePlanner:
             goal_distance_map <= min_dist * 1.2
         )
 
-        closest_idx = np.argmin(distances_from_viewpoint[close_to_goal_mask])
+        closest_idx = np.argmin(distances_from_viewpoint_masked[close_to_goal_mask])
         candidate_coords = np.argwhere(close_to_goal_mask)
         goal_location = tuple(candidate_coords[closest_idx])
 
@@ -843,26 +842,10 @@ class DiscretePlanner:
             dist_to_closest = float(distances.min())
             # print("dist to closest goal cell: ", dist_to_closest)
             if dist_to_closest < self.stop_distance:
-                return True, True, None, None
+                return True, True, None
 
-        # goal_map = add_boundary(goal_map, value=0)
-        # traversible = add_boundary(traversible)
         self.log.debug(f"Getting short-term goal")
-        planner = FMMPlanner(
-            traversible,
-            self.log,
-            step_size=self.step_size,
-            vis_dir=self.vis_dir,
-            print_images=self.visualization_level > 1,
-            stop_distance=self.stop_distance,
-            vis_postfix=postfix,
-        )
-
-        navigable_goal_map = goal_map & traversible
-        #! myTODO: IF assert doesn't fail, we don't need navigable goal map
-        assert np.all(navigable_goal_map == goal_map)
-        #! myTODO
-        if not np.any(navigable_goal_map):
+        if not np.any(goal_map):
             self.log.info(
                 f"Couldn't find any navigable goal points in the map. Should only happen for frontier."
             )
@@ -870,30 +853,21 @@ class DiscretePlanner:
                 False,
                 False,
                 None,
-                None,
             )
 
-        # * Previously they had another logic of dilating goal similar to obstacles too (cv2.dilate(sel)). I don't see much difference, but I can think more later
-        # dilated_goal_map = planner.dilate_goal(
-        #     navigable_goal_map,
-        #     self.min_goal_distance_cm / self.map_resolution,
-        #     timestep=self.timestep,
-        #     prefix=self.prefix,
-        # )
-        # dilated_goal_map = np.logical_and(dilated_goal_map, traversible)
-
-        self.dd = planner.set_multi_goal(
-            navigable_goal_map,
+        self.dd = self.planner.set_multi_goal(
+            goal_map,
+            traversible,
             self.timestep,
-            self.dd,
+            None,
             self.map_downsample_factor,
             self.map_update_frequency,
-            # number="10",
+            vis_postfix=postfix,
         )
 
         # This is where we create the planner to get the trajectory to this state
-        stg_x, stg_y, reachable, stop = planner.get_short_term_goal(
-            location, timestep=self.timestep, prefix=self.prefix
+        stg_x, stg_y, reachable, stop = self.planner.get_short_term_goal(
+            location, timestep=self.timestep, prefix=self.prefix, postfix=postfix
         )
 
         short_term_goal = int(stg_x), int(stg_y)
@@ -907,30 +881,15 @@ class DiscretePlanner:
                 ),  # stg green
             ]
             visualize_map(
-                navigable_goal_map.shape,
+                goal_map.shape,
                 self.vis_dir,
                 f"{self.prefix}{self.timestep}_12.stg{postfix}.png",
                 points=points,
                 traversible=traversible,
-                goal_map=navigable_goal_map,
+                goal_map=goal_map,
             )
 
-        return reachable, stop, short_term_goal, navigable_goal_map
-
-    #! It actually gets closest geometrical goal, not closest traversible goal
-    def get_closest_goal(self, goal_map, start):
-        """closest goal, avoiding any obstacles."""
-        empty = np.ones_like(goal_map)
-        empty_planner = FMMPlanner(empty)
-        empty_planner.set_goal(start)
-        dist_map = empty_planner.fmm_dist * goal_map
-        dist_map[dist_map == 0] = 10000
-        closest_goal_map = dist_map == dist_map.min()
-        closest_goal_map = remove_boundary(closest_goal_map)
-        closest_goal_pt = np.unravel_index(
-            closest_goal_map.argmax(), closest_goal_map.shape
-        )
-        return closest_goal_pt
+        return reachable, stop, short_term_goal
 
     def _check_collision(self, postfix):
         """Check whether we had a collision and update the collision map."""
@@ -1161,8 +1120,7 @@ class DiscretePlanner:
             (
                 reachable,
                 stop,
-                short_term_goal,
-                dilated_frontier_map,
+                short_term_goal
             ) = self._get_short_term_goal(
                 traversible,
                 best_frontier_map,
@@ -1182,7 +1140,7 @@ class DiscretePlanner:
 
             self.log.info("Frontier not reachable.")
             self.semantic_map.set_unreachable_frontier(
-                dilated_frontier_map, is_local
+                best_frontier_map, is_local
             )
             i += 1
 
@@ -1448,7 +1406,7 @@ class DiscretePlanner:
                 f"Trying to plan to instance goal with\n\t - pose_idx: {try_idx}\n\t - {'local' if is_local else 'global'}\n\t - obs dilation: {self.curr_frontier_dilation}"
             )
 
-            (reachable, stop, short_term_goal, navigable_goal_map) = (
+            (reachable, stop, short_term_goal) = (
                 self._get_short_term_goal(
                     traversible,
                     goal_map,
@@ -1473,7 +1431,7 @@ class DiscretePlanner:
                     try_idx += 1
                     #! myTODO: Important: This might not be lots of heurisitc. Maybe its better to use something like BLACKLISTED_TARGET_MAP, however, that has its own issues.
                     self.semantic_map.merge_map(
-                        navigable_goal_map, MC.OBSTACLE_MAP, is_local
+                        goal_map, MC.OBSTACLE_MAP, is_local
                     )
                     self.curr_frontier_dilation = self.start_obs_dilation_selem_radius
             (
