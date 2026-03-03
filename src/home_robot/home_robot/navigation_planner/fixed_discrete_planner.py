@@ -287,6 +287,11 @@ class DiscretePlanner:
                     action = DiscreteNavigationAction.TURN_LEFT
                 else:
                     action = DiscreteNavigationAction.MOVE_FORWARD
+            else:
+                if abs(relative_angle_to_stg) > 10.0:
+                    action = ContinuousNavigationAction(np.array([0,0,-relative_angle_to_stg.cpu().item()]))
+                else:
+                    action = DiscreteNavigationAction.MOVE_FORWARD
         else:
             # Try to orient towards the goal object
             if viewpoint_orientation is None:
@@ -316,7 +321,12 @@ class DiscretePlanner:
                     # action = DiscreteNavigationAction.MOVE_FORWARD
                     action = DiscreteNavigationAction.STOP
                     self.moved_forward = True
-
+            else:
+                if abs(relative_angle_to_stg) > 10.0:
+                    action = ContinuousNavigationAction(np.array([0,0,relative_angle_to_stg]))
+                else:
+                    action = DiscreteNavigationAction.STOP
+                    self.moved_forward = True
         return action
 
     def get_traversible(self, is_local, dilation_raduis):

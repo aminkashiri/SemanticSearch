@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import home_robot
-from home_robot.core.interfaces import DiscreteNavigationAction, Observations
+from home_robot.core.interfaces import DiscreteNavigationAction, Observations, ContinuousNavigationAction
 from home_robot.perception.constants import GoatCategories
 from home_robot.utils.geometry import xyt2sophus
 from home_robot.utils.logger import get_logger
@@ -312,6 +312,11 @@ class ScoutGoatEnv:
             continuous_action[2] = self.turn_angle
             if self.verbose:
                 print(f"[SCOUT_ENV] TURN LEFT: {np.degrees(self.turn_angle):.1f}°")
+        else:
+            assert isinstance(action_enum, ContinuousNavigationAction)
+            continuous_action[2] = np.radians(action_enum.xyt[2].item())
+            if self.verbose:
+                print(f"[SCOUT_ENV] Continuous TURN : {np.degrees(continuous_action[2]):.1f}°")
         
         if np.any(continuous_action != 0):
             try:
