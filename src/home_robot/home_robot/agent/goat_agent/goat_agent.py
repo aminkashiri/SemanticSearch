@@ -594,13 +594,14 @@ class GoatAgent(Agent):
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
         other_robots_mask = mask_other_robots(obs.rgb, obs.depth)
-        visualize_depth_filter(
-            rgb=obs.rgb,
-            robot_mask=other_robots_mask,
-            depth=obs.depth,
-            save_dir=self.planner.vis_dir,
-            timestep=self.total_timesteps,
-        )
+        if self.visualization_level > 2:
+            visualize_depth_filter(
+                rgb=obs.rgb,
+                robot_mask=other_robots_mask,
+                depth=obs.depth,
+                save_dir=self.planner.vis_dir,
+                timestep=self.total_timesteps,
+            )
         depth = (
             torch.from_numpy(obs.depth).unsqueeze(-1).to(self.device) * 100.0
         )  # m to cm

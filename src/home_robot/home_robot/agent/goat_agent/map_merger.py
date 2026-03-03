@@ -436,7 +436,7 @@ class MapMerger:
         else:
             plt.suptitle("Map Merge FAILED - Alignment could not be estimated", color="red")
         plt.tight_layout()
-        path = os.path.join(self.vis_dir, f"{self.timestep}.15.map_merge_FAILED.png")
+        path = os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_FAILED.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
 
     def _visualize(self, map_A, loc_A, merged, data):
@@ -488,7 +488,7 @@ class MapMerger:
         axes[3].axis("off")
 
         plt.tight_layout()
-        path = os.path.join(self.vis_dir, f"{self.timestep}.15.map_merge_result.png")
+        path = os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_SUCCESS.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
 
 if __name__ == "__main__":
