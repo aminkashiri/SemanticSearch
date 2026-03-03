@@ -285,11 +285,14 @@ class FMMPlanner:
         self.log.debug(f"stop {stop}")
 
         subset -= subset[self.du, self.du]
+        reachable_subset = self.filter_unreachable_goals(
+            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
+        )
         # ratio1 = subset / dist_mask
         # subset[ratio1 < -1.5] = 1
         if self.real_world:
             movement_threshold = -radius / 2
-            progress_mask = np.logical_and(mask.astype(bool), subset < movement_threshold)
+            progress_mask = np.logical_and(mask.astype(bool), reachable_subset < movement_threshold)
 
             if np.any(progress_mask):
                 obstacle_dist = cv2.distanceTransform(
@@ -297,10 +300,10 @@ class FMMPlanner:
                 ) + 1
 
                 # First, find the best goal by FMM distance
-                candidate_subset = np.where(progress_mask, subset, max_value)
+                candidate_subset = np.where(progress_mask, reachable_subset, max_value)
                 best_x, best_y = np.unravel_index(np.argmin(candidate_subset), candidate_subset.shape)
 
-                min_clearance_threshold = 5  # cells
+                min_clearance_threshold = 3  # cells
                 if obstacle_dist[best_x, best_y] < min_clearance_threshold:
                     # Too close to obstacle — pick safest among progress candidates
                     clearance = np.where(progress_mask, obstacle_dist, 0)
@@ -312,13 +315,10 @@ class FMMPlanner:
                 vis_list.append(obstacle_dist * progress_mask)
                 reachable = True
             else:
-                vis_list.append(subset)
+                vis_list.append(reachable_subset)
                 stg_x, stg_y = self.du, self.du
                 reachable = stop
         else:
-            reachable_subset = self.filter_unreachable_goals(
-                subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
-            )
             vis_list.append(reachable_subset.copy())
             stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
             # Rechable if stg distance is less than current location (negative).
