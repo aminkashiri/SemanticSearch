@@ -57,6 +57,9 @@ class ContinuousNavigationAction(Action):
                 "continuous navigation action space has 3 dimentions, x y and theta"
             )
         self.xyt = xyt
+    
+    def __str__(self):
+        return str(self.xyt.tolist())
 
 
 class ContinuousFullBodyAction:

@@ -284,43 +284,46 @@ class FMMPlanner:
 
         subset -= subset[self.du, self.du]
         reachable_subset = self.filter_unreachable_goals(
-            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=0
+            subset, mask, (self.du, self.du), obstacle_mask, ray_thickness=1 if self.real_world else 0
         )
         # ratio1 = subset / dist_mask
         # subset[ratio1 < -1.5] = 1
-        if self.real_world:
-            movement_threshold = -radius / 2
-            progress_mask = np.logical_and(mask.astype(bool), reachable_subset < movement_threshold)
 
-            if np.any(progress_mask):
-                obstacle_dist = cv2.distanceTransform(
-                    (1 - obstacle_mask).astype(np.uint8), cv2.DIST_L2, 5
-                ) + 1
+        # Method 1
+        movement_threshold = -radius / 2
+        progress_mask = np.logical_and(mask.astype(bool), reachable_subset < movement_threshold)
 
-                # First, find the best goal by FMM distance
-                candidate_subset = np.where(progress_mask, reachable_subset, max_value)
-                best_x, best_y = np.unravel_index(np.argmin(candidate_subset), candidate_subset.shape)
+        if np.any(progress_mask):
+            obstacle_dist = cv2.distanceTransform(
+                (1 - obstacle_mask).astype(np.uint8), cv2.DIST_L2, 5
+            ) + 1
 
-                min_clearance_threshold = 3  # cells
-                if obstacle_dist[best_x, best_y] < min_clearance_threshold:
-                    # Too close to obstacle — pick safest among progress candidates
-                    clearance = np.where(progress_mask, obstacle_dist, 0)
-                    stg_x, stg_y = np.unravel_index(np.argmax(clearance), clearance.shape)
-                else:
-                    # Enough clearance — pick closest to goal
-                    stg_x, stg_y = best_x, best_y
+            # First, find the best goal by FMM distance
+            candidate_subset = np.where(progress_mask, reachable_subset, max_value)
+            best_x, best_y = np.unravel_index(np.argmin(candidate_subset), candidate_subset.shape)
 
-                vis_list.append(obstacle_dist * progress_mask)
-                reachable = True
+
+            min_clearance_threshold = 7  if self.real_world else 3# cells
+            if obstacle_dist[best_x, best_y] < min_clearance_threshold:
+                # Too close to obstacle — pick safest among progress candidates
+                clearance = np.where(progress_mask, obstacle_dist, 0)
+                stg_x, stg_y = np.unravel_index(np.argmax(clearance), clearance.shape)
             else:
-                vis_list.append(reachable_subset)
-                stg_x, stg_y = self.du, self.du
-                reachable = stop
+                # Enough clearance — pick closest to goal
+                stg_x, stg_y = best_x, best_y
+
+            vis_list.append(obstacle_dist * progress_mask)
+            reachable = True
         else:
-            vis_list.append(reachable_subset.copy())
-            stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
-            # Rechable if stg distance is less than current location (negative).
-            reachable = (subset[stg_x, stg_y] < -0.0001) or stop
+            vis_list.append(reachable_subset)
+            stg_x, stg_y = self.du, self.du
+            reachable = stop
+
+        # Method 2
+        # vis_list.append(reachable_subset.copy())
+        # stg_x, stg_y = np.unravel_index(np.argmin(reachable_subset), subset.shape)
+        # # Rechable if stg distance is less than current location (negative).
+        # reachable = (subset[stg_x, stg_y] < -0.0001) or stop
 
         self.log.debug(
             f"subset[stgx, stgy] = {subset[stg_x, stg_y]}"

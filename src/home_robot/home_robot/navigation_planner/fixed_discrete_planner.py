@@ -251,11 +251,7 @@ class DiscretePlanner:
             action = self.get_action(
                 stop,
                 short_term_goal,
-                (
-                    self.semantic_map.local_loc
-                    if is_local
-                    else self.semantic_map.global_loc
-                ),
+                self.semantic_map.get_loc(is_local),
                 None, # Not passing viewpoint orientation, because we are not going exactly to the viewpoint
             )
 

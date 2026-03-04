@@ -328,6 +328,7 @@ class GoatAgent(Agent):
         self._curr_obs = obs
         self._update_steps()
         self._update_pose()
+        self.tasks = self._preprocess_tasks(obs.task_observations["tasks"])
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
@@ -420,7 +421,10 @@ class GoatAgent(Agent):
         else:
             info["third_person_image"] = obs.third_person_image
 
-        info["caption"] += f" | Action: {str(action['action']).split('.')[-1]}"
+        if isinstance(action["action"], DiscreteNavigationAction):
+            info["caption"] += f" | Action: {str(action['action']).split('.')[-1]}"
+        else:
+            info["caption"] += f" | Action: {str(action['action'])}"
 
     def _update_pose(self):
         obs = self._curr_obs
@@ -649,7 +653,6 @@ class GoatAgent(Agent):
 
         assert obs.camera_pose is None
 
-        self.tasks = self._preprocess_tasks(obs.task_observations["tasks"])
 
         # * preprocessed obs shape is (1, 3+1+num_sem_classes+num_instances, H, W)
         return obs_preprocessed, inst_scores, category_scores

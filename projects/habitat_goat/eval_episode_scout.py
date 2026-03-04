@@ -3,6 +3,7 @@ import sys
 import json
 import rospy
 import argparse
+import threading
 import numpy as np
 import time 
 from tqdm import tqdm
@@ -191,8 +192,8 @@ def main():
     # agent: GoatAgent = GoatAgent(
     #     config, env.semantic_category_mapping.vocabulary
     # )
-    agent: GoatAgent = RealWorldGoatAgent(
-        config, env.semantic_category_mapping.vocabulary, agent_id=0, adhoc_ip="10.0.0.1"
+    agent: RealWorldGoatAgent= RealWorldGoatAgent(
+        config, env.semantic_category_mapping.vocabulary, agent_id=1, adhoc_ip="10.0.0.2"
     )
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
@@ -237,16 +238,19 @@ def main():
                 f"-------------------- Episode step {ep_step} --------------------"
             )
             env.timestep = agent.get_subtask_timestep() + 1
-            obs = env.get_observation()
 
+            obs = env.get_observation()
             agent.update_state(obs)
             action, info, stuck = agent.act()
             if stuck and action["action"] != DiscreteNavigationAction.STOP: 
                 action = agent._process_action(DiscreteNavigationAction.STOP)
                 agent.handle_stop(action)
 
-            logger.info(f"Action taken: {action}")
+            logger.info(f"Action taken: {action['action']}")
+            update_thread = threading.Thread(target=agent.update_maps)
+            update_thread.start()
             env.apply_action(action, info)
+            update_thread.join()
             pbar.update(1)
 
             if action["action"] == DiscreteNavigationAction.STOP:

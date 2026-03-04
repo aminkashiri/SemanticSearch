@@ -264,15 +264,16 @@ class Visualizer:
             is_collision
         )
 
-        if len(semantic_frame.shape) == 2:
-            semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
-        main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
-            semantic_frame,
-            "Semantics",
-            (V.FIRST_PERSON_W, V.HEIGHT),
-            inst_goal_found,
-            is_collision
-        )
+        if semantic_frame is not None:
+            if len(semantic_frame.shape) == 2:
+                semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
+            main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
+                semantic_frame,
+                "Semantics",
+                (V.FIRST_PERSON_W, V.HEIGHT),
+                inst_goal_found,
+                is_collision
+            )
 
 
         if agent_id is None:
@@ -280,6 +281,10 @@ class Visualizer:
         else:
             path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
         success = cv2.imwrite(path, main_frame)
+        success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_map.png"),  main_frame[V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X2])
+        success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_rgb.png"), rgb_frame)
+        if semantic_frame is not None:
+            success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_sem.png"), semantic_frame)
 
     def _visualize_instance_counts(
         self, image_vis: np.ndarray, instance_memory: InstanceMemory
