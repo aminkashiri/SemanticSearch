@@ -374,12 +374,15 @@ class MapMerger:
         )
 
         neighbor_has_data = self._get_data_mask(transformed_map)
-        if neighbor_id not in self._merged_masks:
-            self._merged_masks[neighbor_id] = torch.zeros(
-                global_map.shape[1:], dtype=torch.bool, device=device
-            )
-        already_merged = self._merged_masks[neighbor_id]
-        new_cells = neighbor_has_data & ~already_merged
+        # if neighbor_id not in self._merged_masks:
+        #     self._merged_masks[neighbor_id] = torch.zeros(
+        #         global_map.shape[1:], dtype=torch.bool, device=device
+        #     )
+        # already_merged = self._merged_masks[neighbor_id]
+
+
+        # new_cells = neighbor_has_data & ~already_merged
+        new_cells = neighbor_has_data
         if new_cells.sum() == 0:
             return merged
         for c in all_channels[merge_channel_mask]:
@@ -387,8 +390,8 @@ class MapMerger:
             theirs = transformed_map[c][new_cells]
             take_theirs = theirs.abs() > ours.abs()
             merged[c][new_cells] = torch.where(take_theirs, theirs, ours)
-        if neighbor_id >= 0:
-            self._merged_masks[neighbor_id] = self._merged_masks[neighbor_id] | neighbor_has_data
+        # if neighbor_id >= 0:
+        #     self._merged_masks[neighbor_id] = self._merged_masks[neighbor_id] | neighbor_has_data
 
         return merged
 
@@ -404,92 +407,179 @@ class MapMerger:
         out_col, out_row = p[0], p[1]
         return np.round(np.array([out_row, out_col])).astype(np.int64)
 
-    def _visualize_failed(
-        self,
-        map_A: Tensor,
-        map_B: Tensor,
-        loc_A: np.ndarray,
-        loc_B: np.ndarray,
-        reason=None,
-    ):
+
+    def _get_crop_bounds(self, *maps_and_locs):
+        all_rows, all_cols = [], []
+        for item in maps_and_locs:
+            if isinstance(item, Tensor):
+                mask = self._get_data_mask(item).cpu().numpy()
+                if mask.any():
+                    rs, cs = np.where(mask)
+                    all_rows.extend([rs.min(), rs.max()])
+                    all_cols.extend([cs.min(), cs.max()])
+            elif isinstance(item, (list, tuple, np.ndarray)) and len(item) == 2:
+                all_rows.append(int(item[0]))
+                all_cols.append(int(item[1]))
+        if not all_rows:
+            return None
+        pad = 10
+        H = maps_and_locs[0].shape[-2] if isinstance(maps_and_locs[0], Tensor) else 960
+        W = maps_and_locs[0].shape[-1] if isinstance(maps_and_locs[0], Tensor) else 960
+        r0 = max(0, min(all_rows) - pad)
+        r1 = min(H, max(all_rows) + pad)
+        c0 = max(0, min(all_cols) - pad)
+        c1 = min(W, max(all_cols) + pad)
+        return r0, r1, c0, c1
+
+    def _equalize_bounds(self, bounds, bounds_B):
+        """Expand both bounds to the same size so zoom level matches."""
+        if bounds is None or bounds_B is None:
+            return bounds, bounds_B
+        r0, r1, c0, c1 = bounds
+        r0b, r1b, c0b, c1b = bounds_B
+        max_h = max(r1 - r0, r1b - r0b)
+        max_w = max(c1 - c0, c1b - c0b)
+        def _expand(r0, r1, c0, c1, th, tw):
+            cr, cc = (r0 + r1) / 2, (c0 + c1) / 2
+            return (int(cr - th / 2), int(cr + th / 2),
+                    int(cc - tw / 2), int(cc + tw / 2))
+        return _expand(r0, r1, c0, c1, max_h, max_w), _expand(r0b, r1b, c0b, c1b, max_h, max_w)
+
+    def _get_semantic_dots(self, map_tensor, min_size=10):
+        sem_start = MC.NON_SEM_CHANNELS
+        sem_end = MC.NON_SEM_CHANNELS + self.num_sem_categories - 1
+        sem = map_tensor[sem_start:sem_end].cpu().numpy()
+        obs = (map_tensor[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
+        return self._extract_semantic_landmarks(sem, obs, min_size)
+
+    def _plot_semantic_dots(self, ax, landmarks, color='green', alpha=0.95, size=25):
+        if not landmarks:
+            return
+        xs = [lm["centroid"][0] for lm in landmarks]
+        ys = [lm["centroid"][1] for lm in landmarks]
+        ax.scatter(xs, ys, c=color, s=size, alpha=alpha, edgecolors='none', zorder=5)
+
+    def _setup_panel(self, ax):
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_edgecolor('black')
+            spine.set_linewidth(1.5)
+
+    def _apply_crop(self, ax, bounds):
+        if bounds:
+            r0, r1, c0, c1 = bounds
+            ax.set_xlim(c0, c1)
+            ax.set_ylim(r1, r0)
+
+    def _visualize_failed(self, map_A, map_B, loc_A, loc_B, reason=None):
+        bounds_A = self._get_crop_bounds(map_A, loc_A)
+        bounds_B = self._get_crop_bounds(map_B, loc_B)
+        bounds_A, bounds_B = self._equalize_bounds(bounds_A, bounds_B)
+
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
         obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
         obs_B = (map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
 
+        axes[0].imshow(1 - obs_A, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10)
+        self._plot_semantic_dots(axes[0], self._get_semantic_dots(map_A))
+        axes[0].set_title("Robot 1 - Obstacle Map")
+        self._setup_panel(axes[0])
+        self._apply_crop(axes[0], bounds_A)
 
+        axes[1].imshow(1 - obs_B, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[1].plot(loc_B[1], loc_B[0], "ro", markersize=10)
+        self._plot_semantic_dots(axes[1], self._get_semantic_dots(map_B))
+        axes[1].set_title("Robot 2 - Obstacle Map (own frame)")
+        self._setup_panel(axes[1])
+        self._apply_crop(axes[1], bounds_B)
 
-        axes[0].imshow(obs_A, cmap="gray", origin="upper")
-        axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[0].set_title("Robot A - Obstacle Map")
-        axes[0].legend()
-        axes[0].axis("off")
-
-        axes[1].imshow(obs_B, cmap="gray", origin="upper")
-        axes[1].plot(loc_B[1], loc_B[0], "ro", markersize=10, label="Robot B")
-        axes[1].set_title("Robot B - Obstacle Map (own frame)")
-        axes[1].legend()
-        axes[1].axis("off")
-
-        if reason == "dist":
-            plt.suptitle("Map Merge FAILED - Distance too far", color="red")
-        else:
-            plt.suptitle("Map Merge FAILED - Alignment could not be estimated", color="red")
+        title = "Map Merge FAILED - Distance too far" if reason == "dist" else "Map Merge FAILED - Alignment could not be estimated"
+        plt.suptitle(title, color="red")
         plt.tight_layout()
-        path = os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_FAILED.png")
-        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.savefig(os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_FAILED.png"), dpi=150, bbox_inches="tight")
+        plt.close(fig)
 
     def _visualize(self, map_A, loc_A, merged, data):
         transformed_map = data["transformed_map"]
-        original_map = data["map"]  # original unwarped map
+        original_map = data["map"]
         loc_B_original = data["location"]
         loc_B_transformed = data["transformed_loc"]
-        fig, axes = plt.subplots(1, 4, figsize=(24, 6))
 
         obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
-        obs_merged =(merged[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float) 
-
-        # Robot A's map
-        axes[0].imshow(obs_A, cmap="gray", origin="upper")
-        axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[0].set_title("Robot A - Obstacle Map")
-        axes[0].legend()
-        axes[0].axis("off")
-
+        obs_merged = (merged[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
         obs_B_original = (original_map[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
-        axes[1].imshow(obs_B_original, cmap="gray", origin="upper")
-        axes[1].plot(loc_B_original[1], loc_B_original[0], "ro", markersize=10, label="Robot B")
-        axes[1].set_title("Robot B - Obstacle Map (own frame)")
-        axes[1].legend()
-        axes[1].axis("off")
-
-        # Panel 3: Overlay — use already-warped map directly, no second warp
         obs_B_warped = (transformed_map[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
-        overlay = np.zeros((*obs_A.shape, 3))
-        overlay[:, :, 2] = np.clip(obs_A, 0, 1)
-        overlay[:, :, 0] = np.clip(obs_B_warped, 0, 1)
-        axes[2].imshow(overlay, origin="upper")
-        axes[2].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[2].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10, label="Robot B (aligned)")
-        axes[2].set_title("Alignment Overlay (blue=A, red=B)")
-        axes[2].legend()
-        axes[2].axis("off")
 
-        # Panel 4: Merged map
-        axes[3].imshow(obs_merged, cmap="gray", origin="upper")
-        axes[3].plot(loc_A[1], loc_A[0], "bo", markersize=10, label="Robot A")
-        axes[3].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10, label="Robot B")
+        bounds = self._get_crop_bounds(map_A, transformed_map, merged, loc_A, loc_B_transformed)
+        bounds_B = self._get_crop_bounds(original_map, loc_B_original)
+        bounds, bounds_B = self._equalize_bounds(bounds, bounds_B)
+
+        fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+
+        # Panel 1: Robot 1
+        axes[0].imshow(1 - obs_A, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10)
+        self._plot_semantic_dots(axes[0], self._get_semantic_dots(map_A))
+        axes[0].set_title("Robot 1 - Obstacle Map")
+        self._setup_panel(axes[0])
+        self._apply_crop(axes[0], bounds)
+
+        # Panel 2: Robot 2 (own frame)
+        axes[1].imshow(1 - obs_B_original, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[1].plot(loc_B_original[1], loc_B_original[0], "ro", markersize=10)
+        self._plot_semantic_dots(axes[1], self._get_semantic_dots(original_map))
+        axes[1].set_title("Robot 2 - Obstacle Map")
+        self._setup_panel(axes[1])
+        self._apply_crop(axes[1], bounds_B)
+
+        # Panel 3: Overlay
+        overlay = np.ones((*obs_A.shape, 3))
+        overlay[:, :, 0] -= obs_A
+        overlay[:, :, 1] -= obs_A
+        overlay[:, :, 1] -= obs_B_warped
+        overlay[:, :, 2] -= obs_B_warped
+        overlay = np.clip(overlay, 0, 1)
+        axes[2].imshow(overlay, origin="upper")
+        axes[2].plot(loc_A[1], loc_A[0], "bo", markersize=10)
+        axes[2].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10)
+        axes[2].set_title("Alignment Overlay")
+        self._setup_panel(axes[2])
+        self._apply_crop(axes[2], bounds)
+
+        # Panel 4: Merged
+        axes[3].imshow(1 - obs_merged, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[3].plot(loc_A[1], loc_A[0], "bo", markersize=10)
+        axes[3].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10)
+        self._plot_semantic_dots(axes[3], self._get_semantic_dots(merged))
         dist_cells = np.sqrt(
             (loc_A[0] - loc_B_transformed[0]) ** 2
             + (loc_A[1] - loc_B_transformed[1]) ** 2
         )
-        axes[3].set_title(f"Merged Map (dist={dist_cells * self.resolution:.2f}m)")
-        axes[3].legend()
-        axes[3].axis("off")
+        axes[3].set_title(f"Merged Map")
+        # axes[3].set_title(f"Merged Map (dist={dist_cells * self.resolution:.2f}m)")
+        self._setup_panel(axes[3])
+        self._apply_crop(axes[3], bounds)
 
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Circle
+        legend_handles = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=10),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='green', markersize=8),
+        ]
+        legend_labels = ["Robot 1", "Robot 2", "Semantic landmarks"]
+        axes[0].legend(legend_handles, legend_labels, loc='upper left',
+                ncol=1, fontsize=12,
+                markerscale=1.2, framealpha=0.8)
         plt.tight_layout()
-        path = os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_SUCCESS.png")
-        plt.savefig(path, dpi=150, bbox_inches="tight")
+
+        plt.savefig(os.path.join(self.vis_dir, f"{self.timestep}_15.map_merge_SUCCESS.png"), dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
 
 if __name__ == "__main__":
     map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/mymap_85.pt")
@@ -509,7 +599,8 @@ if __name__ == "__main__":
         num_sem_categories=num_sem,
         resolution=0.05,
         ransac_thresh=10.0,
-        iou_threshold=0.1,
+        # iou_threshold=0.1,
+        iou_threshold=0.8,
     )
     map_merger.vis_dir = "."
 
@@ -518,25 +609,32 @@ if __name__ == "__main__":
         neighbor_global_map=map_B,
         neighbor_id=1
     )
-    assert transfomed_map is not None
-    merged = map_merger._merge(
-        map_A,
-        transfomed_map,
-        1
-    )
+    if transfomed_map is None:
+        map_merger._visualize_failed(
+            map_A,
+            map_B,
+            loc_A,
+            loc_B
+        )
+    else:
+        data["transformed_map"] = transfomed_map
+        assert transfomed_map is not None
+        merged = map_merger._merge(
+            map_A,
+            data
+        )
 
-    transformed_loc = map_merger.transform_location(
-        data["agent_id"], data["location"]
-    )
-    data["transformed_map"] = transfomed_map
-    data["transformed_loc"] = transformed_loc
+        transformed_loc = map_merger.transform_location(
+            data["agent_id"], data["location"]
+        )
+        data["transformed_loc"] = transformed_loc
 
-    map_merger._visualize(
-        map_A,
-        loc_A,
-        merged,
-        data,
-    )
+        map_merger._visualize(
+            map_A,
+            loc_A,
+            merged,
+            data,
+        )
 
     map_A = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/mymap_90.pt")
     map_B = torch.load("/home/agilex2/projects/search/SemanticSearch/datadump/images/final_results/comm3/othermap_90.pt")
@@ -551,23 +649,29 @@ if __name__ == "__main__":
         neighbor_global_map=map_B,
         neighbor_id=1
     )
-    assert transfomed_map is not None
-    merged = map_merger._merge(
-        map_A,
-        transfomed_map,
-        1
-    )
-
-    transformed_loc = map_merger.transform_location(
-        data["agent_id"], data["location"]
-    )
     data["transformed_map"] = transfomed_map
-    data["transformed_loc"] = transformed_loc
+    if transfomed_map is None:
+        map_merger._visualize_failed(
+            map_A,
+            map_B,
+            loc_A,
+            loc_B
+        )
+    else:
+        merged = map_merger._merge(
+            map_A,
+            data
+        )
 
-    map_merger.timestep += 1
-    map_merger._visualize(
-        map_A,
-        loc_A,
-        merged,
-        data,
-    )
+        transformed_loc = map_merger.transform_location(
+            data["agent_id"], data["location"]
+        )
+        data["transformed_loc"] = transformed_loc
+
+        map_merger.timestep += 1
+        map_merger._visualize(
+            map_A,
+            loc_A,
+            merged,
+            data,
+        )
