@@ -300,13 +300,13 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.log_odds_occ = log_odds_occ          # 0.8
         self.log_odds_free = log_odds_free         # 0.4
         self.max_log_odds = max_log_odds           # 10.0
+        self._prev_local_pose = None
 
 
     @torch.no_grad()
     def forward(
         self,
         obs: Tensor,
-        pose_delta: Tensor,
         state,
         instance_scores: Tensor,
         category_scores,
@@ -318,8 +318,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             seq_obs: sequence of frames containing (RGB, depth, segmentation)
              of shape (3 + 1 + num_sem_categories,
              frame_height, frame_width)
-            seq_pose_delta: sequence of delta in pose since last frame of shape
-             (3)
             seq_dones: binary flag that indicate episode restarts
             seq_camera_poses: sequence of (4, 4) extrinsic camera matrices
             init_local_map: initial local map before any updates of shape
@@ -351,11 +349,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         """
         self.log.debug(f"Updating maps and current position")
 
-        state.local_map, state.local_pose = self._update_local_map_and_pose(
+
+        state.local_map = self._update_local_map_and_pose(
             obs,
-            pose_delta,
-            state.local_map,
             state.local_pose,
+            state.local_map,
             state.origins,
             state.lmb,
             instance_scores,
@@ -369,6 +367,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             state.global_pose,
             state.map_size_parameters,
         )
+        self._prev_local_pose = state.local_pose.clone()
 
         self.log.debug(f"Updated pose: global={state.global_pose.tolist()}, local={state.local_pose.tolist()}, lmb: {state.lmb.tolist()}")
         self.log.debug(f"Updated loc: global={state.global_loc}")
@@ -601,9 +600,8 @@ class Categorical2DSemanticMapModule(nn.Module):
     def _update_local_map_and_pose(
         self,
         obs: Tensor,
-        pose_delta: Tensor,
+        curr_pose: Tensor,
         prev_map: Tensor,
-        prev_pose: Tensor,
         origins: Tensor,
         lmb: Tensor,
         instance_scores: Tensor,
@@ -672,7 +670,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         )
 
         semantic_channels = obs[4 : 4 + self.num_sem_categories]
-        current_pose = pu.get_new_pose(prev_pose.clone(), pose_delta)
 
         if self.record_instance_ids:
             instance_channels = obs[4 + self.num_sem_categories :]
@@ -686,7 +683,7 @@ class Categorical2DSemanticMapModule(nn.Module):
                     instance_scores,
                     category_scores,
                     point_cloud_t.squeeze(0),
-                    torch.concat([current_pose + origins, lmb], axis=0),
+                    torch.concat([curr_pose + origins, lmb], axis=0),
                     image=obs[:3],
                 )
 
@@ -760,7 +757,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         agent_view[_VIS_CHANNEL, y1:y2, x1:x2] = obs_visible
 
         # Transform to map coordinates (single grid_sample for all channels)
-        st_pose = current_pose.clone().detach()
+        st_pose = curr_pose.clone().detach()
         st_pose[:2] = -(
             (
                 st_pose[:2] * 100.0 / self.xy_resolution
@@ -853,7 +850,7 @@ class Categorical2DSemanticMapModule(nn.Module):
         current_map[MC.OBSTACLE_MAP][robot_present] = 0
 
         # Gaze explored, ground plane, stairs: max (monotonic)
-        for ch in [MC.GAZE_EXPLORED_MAP, MC.GROUND_PLANE, MC.STAIRS]:
+        for ch in [MC.GAZE_EXPLORED_MAP, MC.GROUND_PLANE, MC.STAIRS, MC.BEEN_CLOSE_MAP]:
             current_map[ch] = torch.maximum(prev_map[ch], translated[ch])
 
         # Instance channels: overwrite
@@ -869,9 +866,11 @@ class Categorical2DSemanticMapModule(nn.Module):
         # Derived channels
         # ================================================================
 
-        curr_loc = current_pose[:2].flip(0)
+        curr_loc = curr_pose[:2].flip(0)
         curr_loc = (curr_loc * 100.0 / self.xy_resolution).round().int().tolist()
-        prev_loc = prev_pose[:2].flip(0)
+
+        prev_local_pose = self._prev_local_pose if self._prev_local_pose is not None else curr_pose.clone()
+        prev_loc = prev_local_pose[:2].flip(0)
         prev_loc = (prev_loc * 100.0 / self.xy_resolution).round().int().tolist()
 
         current_map[MC.AGENT_VISITED_MAP] = self._get_update_visited_map(
@@ -892,22 +891,21 @@ class Categorical2DSemanticMapModule(nn.Module):
 
 
 
+        if not self.real_world or self.timestep % 5 == 0:
+            visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
+            traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
+            traversible_ma[visited_np == 1] = 0
 
+            import skfmm
+            distances = skfmm.distance(traversible_ma)
+            distances = np.ma.filled(distances, np.max(distances) + 1)
+            distances = torch.from_numpy(distances).to(current_map.device)
 
+            current_map[MC.BEEN_CLOSE_MAP] = 0
+            current_map[MC.BEEN_CLOSE_MAP][
+                distances <= self.been_close_to_radius // self.resolution
+            ] = 1
 
-        visited_np = current_map[MC.VISITED_MAP].detach().cpu().numpy() == 1
-        traversible_ma = np.ma.masked_values(traversible_np * 1, 0)
-        traversible_ma[visited_np == 1] = 0
-
-        import skfmm
-        distances = skfmm.distance(traversible_ma)
-        distances = np.ma.filled(distances, np.max(distances) + 1)
-        distances = torch.from_numpy(distances).to(current_map.device)
-
-        current_map[MC.BEEN_CLOSE_MAP] = 0
-        current_map[MC.BEEN_CLOSE_MAP][
-            distances <= self.been_close_to_radius // self.resolution
-        ] = 1
         current_map[MC.EXPLORED_MAP] = (
             (current_map[MC.GAZE_EXPLORED_MAP] > 0.5)
             | (current_map[MC.BEEN_CLOSE_MAP] == 1.0)
@@ -946,7 +944,7 @@ class Categorical2DSemanticMapModule(nn.Module):
             plt.savefig(self.vis_dir + f"/{self.timestep}_0.local_map.png")
             plt.close()
 
-        return current_map, current_pose
+        return current_map
 
     def _update_global_map_instances_for_one_channel(
         self,
@@ -1156,7 +1154,6 @@ class Categorical2DSemanticMapModule(nn.Module):
             global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]] = state.local_map
 
         state.local_map = global_map[:, lmb[0] : lmb[1], lmb[2] : lmb[3]]
-        state.global_pose = state.local_pose + state.origins
 
     def _get_disk_mask(self, radius):
         """Cache disk masks for reuse"""

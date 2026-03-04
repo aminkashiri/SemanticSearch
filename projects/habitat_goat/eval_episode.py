@@ -276,6 +276,7 @@ if __name__ == "__main__":
             obs = env.get_observation()
 
             agent.update_state(obs)
+            agent.update_maps()
             action, info, stuck = agent.act()
             if stuck and action["action"] != DiscreteNavigationAction.STOP: 
                 action = agent._process_action(DiscreteNavigationAction.STOP)

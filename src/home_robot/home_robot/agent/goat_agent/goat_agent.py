@@ -328,8 +328,6 @@ class GoatAgent(Agent):
         self._curr_obs = obs
         self._update_steps()
         self._update_pose()
-        self._update_maps()
-        self._search_for_goal()
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
@@ -368,19 +366,19 @@ class GoatAgent(Agent):
 
         return action, info, stuck
 
-    def _update_maps(self):
+    def update_maps(self):
         obs_preprocessed, instance_scores, category_scores = self._preprocess_obs(self._curr_obs)
         # * before module call obs.shape is [380+3+1+num_instances]
         # Update map with observations and generate map features
         self.semantic_map_module(
             obs_preprocessed,
-            self.pose_delta,
             self.semantic_map,
             instance_scores,
             category_scores
         )
         # if self.total_timesteps % 10 == 0:
         #     torch.save(self.semantic_map.global_map, os.path.join(self.planner.vis_dir, f'map_{self.total_timesteps}.pt'))
+        self._search_for_goal()
 
     def _get_vis_info(self, vis_inputs, action):
         if self.visualization_level < 1:
@@ -390,25 +388,25 @@ class GoatAgent(Agent):
         obs = self._curr_obs
         info = {
             "agent_id": self.agent_id,
-            "rgb_frame": self.frame_yolo if self.use_yolo else obs.rgb[:, :, ::-1],
+            "rgb_frame": self.frame_yolo.copy() if self.use_yolo else obs.rgb[:, :, ::-1],
             "depth_frame": obs.depth,
             "semantic_frame": obs.semantic if obs.task_observations.get("semantic_frame") is None else obs.task_observations["semantic_frame"],
             "top_down_map": obs.task_observations.get("top_down_map"),
             "is_collision": False,  #!myTODO
             "inst_goal_id": self.inst_goal_id,
             "timestep": self.get_subtask_timestep(),
-            "explored_map": self.semantic_map.get_explored_map(is_local),
+            "explored_map": self.semantic_map.get_explored_map(is_local).copy(),
             "semantic_map_1D": self.semantic_map.get_semantic_map_1D(is_local),
             # "frontier_map": self.semantic_map.get_frontier_map(is_local),
-            "been_close_map": self.semantic_map.get_been_close_map(is_local),
-            "visited_map": self.semantic_map.get_visited_map(is_local),
+            "been_close_map": self.semantic_map.get_been_close_map(is_local).copy(),
+            "visited_map": self.semantic_map.get_visited_map(is_local).copy(),
             "robot_loc": self.semantic_map.get_loc(is_local),
             "robot_orientation": self.semantic_map.global_pose.cpu()[2],
-            "instance_memory": self.instance_memory,
+            # "instance_memory": self.instance_memory,
             **vis_inputs,
         }
         if "obstacle_map" not in info:
-            info["obstacle_map"] = self.semantic_map.get_obstacle_map(is_local)
+            info["obstacle_map"] = self.semantic_map.get_obstacle_map(is_local).copy()
         self._get_task_info(obs, action, info)
         return info
 
@@ -427,11 +425,19 @@ class GoatAgent(Agent):
     def _update_pose(self):
         obs = self._curr_obs
         curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
-        self.pose_delta = torch.tensor(
+        pose_delta = torch.tensor(
             pu.get_rel_pose_change(curr_pose, self.last_pose), device=self.device
         )
         self.last_pose = curr_pose
-        if torch.norm(self.pose_delta[:2]).item() < 0.05:
+
+        new_global = pu.get_new_pose(
+            self.semantic_map.global_pose.clone(),
+            pose_delta
+        )
+        self.semantic_map.global_pose = new_global
+        self.semantic_map.local_pose = new_global - self.semantic_map.origins
+
+        if torch.norm(pose_delta[:2]).item() < 0.05:
             self.stuck_counter += 1
         else:
             self.stuck_counter = 0
