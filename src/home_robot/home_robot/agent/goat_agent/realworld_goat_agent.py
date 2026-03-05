@@ -107,53 +107,55 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         rx_sock.settimeout(0.2)
 
         last_beacon = 0
-
         while self._comm_running:
-            now = time.time()
+            try:
+                now = time.time()
 
-            # --- Discovery ---
-            if now - last_beacon >= self.beacon_interval:
-                self.comm_log.debug(f"Broadcasting beacon on port {self.broadcast_port}")
-                msg = self.BEACON_MAGIC + struct.pack(
-                    "IH", self.agent_id, self.data_port
-                )
-                try:
-                    # tx_sock.sendto(msg, ("<broadcast>", self.broadcast_port))
-                    tx_sock.sendto(msg, (self.broadcast_addr, self.broadcast_port))
-                except OSError:
-                    pass
-                last_beacon = now
+                if now - last_beacon >= self.beacon_interval:
+                    msg = self.BEACON_MAGIC + struct.pack("IH", self.agent_id, self.data_port)
+                    try:
+                        tx_sock.sendto(msg, (self.broadcast_addr, self.broadcast_port))
+                    except OSError:
+                        pass
+                    last_beacon = now
 
-            neighbors = {}
-            while True:
-                try:
-                    data, addr = rx_sock.recvfrom(64)
-                    if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
-                        agent_id, port = struct.unpack("IH", data[4:10])
-                        if agent_id != self.agent_id:
-                            self.comm_log.debug(f"Beacond received from {agent_id}")
-                            neighbors[agent_id] = {"ip": addr[0], "port": port}
-                except socket.timeout:
-                    break
+                neighbors = {}
+                while True:
+                    try:
+                        data, addr = rx_sock.recvfrom(64)
+                        if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
+                            agent_id, port = struct.unpack("IH", data[4:10])
+                            if agent_id != self.agent_id:
+                                neighbors[agent_id] = {"ip": addr[0], "port": port}
+                    except socket.timeout:
+                        break
 
-            # --- Pairwise communication ---
-            for agent_id, info in neighbors.items():
+                for agent_id, info in neighbors.items():
+                    send_map = False
+                    last = self.map_shared_time.get(agent_id, -1)
+                    if (time.time() - last > self.communication_cooldown or
+                        (agent_id not in self._full_map_sent_to)) and self.total_timesteps > 12:
+                        send_map = True
 
-                send_map = False
-                last = self.map_shared_time.get(agent_id, -1)
-                if (time.time() - last > self.communication_cooldown or (agent_id not in self._full_map_sent_to)) and self.total_timesteps > 12:
-                    send_map = True
+                    try:
+                        packed = self._pack_comm_data(send_map)
+                    except Exception as e:
+                        self.comm_log.error(f"Pack failed: {e}")
+                        continue
 
-                packed = self._pack_comm_data(send_map)
+                    if self._send_to_neighbor(ctx, agent_id, info, packed):
+                        if send_map:
+                            self.map_shared_time[agent_id] = time.time()
+                            self._full_map_sent_to.add(agent_id)
 
-                self.comm_log.debug(f"Sending data to {agent_id}, map: {send_map}")
-                if self._send_to_neighbor(ctx, agent_id, info, packed):
-                    self.comm_log.debug(f"Send to {agent_id} successfull")
-                    if send_map:
-                        self.map_shared_time[agent_id] = time.time()
-                        self._full_map_sent_to.add(agent_id)
+                time.sleep(0.1)
 
-            time.sleep(0.1)
+            except Exception as e:
+                self.comm_log.error(f"Sender loop error: {e}")
+                import traceback
+                traceback.print_exc()
+                time.sleep(1)  # don't spin on repeated errors
+
 
         tx_sock.close()
         rx_sock.close()
@@ -164,8 +166,8 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
     ) -> bool:
         try:
             sock = ctx.socket(zmq.REQ)
-            sock.setsockopt(zmq.SNDTIMEO, 300000)
-            sock.setsockopt(zmq.RCVTIMEO, 300000)
+            sock.setsockopt(zmq.SNDTIMEO, 30000)
+            sock.setsockopt(zmq.RCVTIMEO, 30000)
             # sock.setsockopt(zmq.SNDTIMEO, 5000)
             # sock.setsockopt(zmq.RCVTIMEO, 10000)
             sock.setsockopt(zmq.LINGER, 0)
@@ -194,22 +196,18 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         # sock.bind(f"tcp://*:{self.data_port}")
         sock.bind(f"tcp://{self.adhoc_ip}:{self.data_port}")
 
-
         while self._comm_running:
             try:
                 self.comm_log.debug(f"Receiver: Waiting for data t: {time.time()}")
                 raw = sock.recv()
-
                 try:
                     data = self._unpack_comm_data(raw)
                     if data is None:
                         self.comm_log.warning("Received invalid data")
                         sock.send(b"ERR")
                         continue
-
                     # ACK immediately — don't hold the sender waiting for merge
                     sock.send(b"OK")
-
                     self.comm_log.info(
                         f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
                         f"received data at step {self.total_timesteps}, t: {time.time()}, map: {not data.get('map') is None}"
@@ -218,17 +216,17 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         self.comm_log.debug(f"data contains map")
                     data["time"] = time.time()
                     self._recv_queue.put(data)
-
                 except Exception as e:
-                    import traceback
+                    self.comm_log.error(f"Receiver process error: {e}")
                     traceback.print_exc()
-                    self.comm_log.error(f"Agent {self.agent_id} receiver error: {e}, t: {time.time()}")
                     sock.send(b"ERR")
-
             except zmq.Again:
                 continue
             except Exception as e:
-                self.comm_log.error(f"Agent {self.agent_id} receiver error: {e}")
+                self.comm_log.error(f"Receiver loop error: {e}")
+                import traceback
+                traceback.print_exc()
+                time.sleep(1)
 
         sock.close()
         ctx.term()

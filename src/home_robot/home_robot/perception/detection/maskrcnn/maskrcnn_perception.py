@@ -82,7 +82,7 @@ class MaskRCNNPerception(PerceptionModule):
              image of shape (H, W, 3)
         """
         image = cv2.cvtColor(obs.rgb, cv2.COLOR_RGB2BGR)
-        depth = obs.depth
+        depth = obs.depth.copy()
         height, width, _ = image.shape
 
         if obs.task_observations is None:

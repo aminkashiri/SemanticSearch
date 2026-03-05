@@ -85,7 +85,7 @@ class ScoutNavigationClient(AbstractControlModule):
         
         # Velocity Limits 
         min_v, max_v = 0.025, 0.5  # m/s
-        min_w, max_w = 0.025, 1.0 # rad/s
+        min_w, max_w = 0.025, 0.6 # rad/s
         
         # Tolerance: Stop when within 1cm or 1 degree
         linear_tol = 0.0005 

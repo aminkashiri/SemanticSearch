@@ -62,17 +62,48 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         return neighbor_locs
 
     def _drain_recv_queue(self):
-        """Merge all pending received data into our state."""
+        all_messages = []
         while not self._recv_queue.empty():
             try:
-                data = self._recv_queue.get_nowait()
+                all_messages.append(self._recv_queue.get_nowait())
             except queue.Empty:
                 break
-            self.comm_log.info(
-                f"Agent {self.agent_id} merging data from Agent {data['agent_id']} "
-                f"at step {self.total_timesteps}"
-            )
-            self._merge_communication_data(data)
+
+        if not all_messages:
+            return
+
+        per_agent = {}
+        for msg in all_messages:
+            aid = msg["agent_id"]
+            if aid not in per_agent:
+                per_agent[aid] = {"latest": msg, "latest_with_map": None}
+            per_agent[aid]["latest"] = msg
+            if msg.get("map") is not None:
+                per_agent[aid]["latest_with_map"] = msg
+
+        for aid, entries in per_agent.items():
+            latest = entries["latest"]
+            latest_map = entries["latest_with_map"]
+
+            if latest_map is not None:
+                self.comm_log.info(
+                    f"Agent {self.agent_id} merging map from Agent {aid} "
+                    f"at step {self.total_timesteps}"
+                )
+                self._merge_communication_data(latest_map)
+
+                if latest is not latest_map:
+                    self.comm_log.info(
+                        f"Agent {self.agent_id} merging latest location/tasks from Agent {aid} "
+                        f"at step {self.total_timesteps}"
+                    )
+                    self._merge_communication_data(latest)
+            else:
+                self.comm_log.info(
+                    f"Agent {self.agent_id} merging data from Agent {aid} "
+                    f"at step {self.total_timesteps} (no map)"
+                )
+                self._merge_communication_data(latest)
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = super()._preprocess_tasks(tasks_obs)

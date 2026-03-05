@@ -207,7 +207,7 @@ class DeticPerception(PerceptionModule):
              image of shape (H, W, 3)
         """
         image = cv2.cvtColor(obs.rgb, cv2.COLOR_RGB2BGR)
-        depth = obs.depth
+        depth = obs.depth.copy()
         height, width, _ = image.shape
 
         pred = self.predictor(image)
