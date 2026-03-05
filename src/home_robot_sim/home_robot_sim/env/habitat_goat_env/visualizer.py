@@ -109,7 +109,10 @@ class Visualizer:
         self.text_thickness = 1
         self.ind_frame_height = 480
 
-        self.num_agents = config.NUM_AGENTS
+        if config.REAL_WORLD:
+            self.num_agents = 1
+        else:
+            self.num_agents = config.NUM_AGENTS
 
     def reset(self):
         self.vis_dir = self.default_vis_dir
@@ -251,7 +254,7 @@ class Visualizer:
                 main_frame[
                     V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2,
                     V.ORACLE_TOP_DOWN_X1 : V.ORACLE_TOP_DOWN_X1 + V.FIRST_PERSON_W,
-                ] = self.prepare_for_vis(depth_frame / depth_frame.max() * 255.0, "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
+                ] = self.prepare_for_vis((depth_frame / depth_frame.max() * 255.0).astype(np.uint8), "Depth", (V.FIRST_PERSON_W, V.HEIGHT))
 
         main_frame[V.Y1 : V.Y2, V.RGB_X1 : V.RGB_X2] = self.prepare_for_vis(
             rgb_frame,
@@ -261,15 +264,16 @@ class Visualizer:
             is_collision
         )
 
-        if len(semantic_frame.shape) == 2:
-            semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
-        main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
-            semantic_frame,
-            "Semantics",
-            (V.FIRST_PERSON_W, V.HEIGHT),
-            inst_goal_found,
-            is_collision
-        )
+        if semantic_frame is not None:
+            if len(semantic_frame.shape) == 2:
+                semantic_frame = self.color_semantic_frame(semantic_frame + PI.SEM_START)
+            main_frame[V.Y1 : V.Y2, V.SEM_X1 : V.SEM_X2] = self.prepare_for_vis(
+                semantic_frame,
+                "Semantics",
+                (V.FIRST_PERSON_W, V.HEIGHT),
+                inst_goal_found,
+                is_collision
+            )
 
 
         if agent_id is None:
@@ -277,44 +281,6 @@ class Visualizer:
         else:
             path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
         success = cv2.imwrite(path, main_frame)
-
-    def _visualize_instance_counts(
-        self, image_vis: np.ndarray, instance_memory: InstanceMemory
-    ):
-        """
-        Add instance counts to the panel
-
-        Args:
-            instance_memory (InstanceMemory): memory of all instances and views seen so far
-            image_vis (np.ndarray): The image panel before adding instances
-
-        Returns:
-            image_vis (np.ndarray): The image panel after adding instances
-        '"""
-        num_instances_per_category = defaultdict(int)
-        num_views_per_instance = defaultdict(list)
-        for instance_id, instance in instance_memory.instances[0].items():
-            num_instances_per_category[instance.category_id] += 1
-            num_views_per_instance[instance.category_id].append(
-                len(instance.instance_views)
-            )
-        text = "Instance counts"
-        offset = 48
-        y_pos = offset
-
-        for index, count in num_instances_per_category.items():
-            if count > 0:
-                text = f"cat {index}: {num_views_per_instance[index]} views"
-                image_vis = self._put_text_on_image(
-                    image_vis,
-                    text,
-                    V.THIRD_PERSON_W,
-                    y_pos,
-                    V.THIRD_PERSON_W,
-                    V.TOP_PADDING,
-                )
-                y_pos += offset
-        return image_vis
 
     def _wrap_text(self, text, font_scale, bbox_len):
         global V

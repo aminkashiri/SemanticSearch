@@ -239,10 +239,10 @@ class GoatMatching(Matching):
                 self.log.debug("No id provided for this instance. Skipping.")
                 continue
             # * We does not check it goal map is non-empty here. Somewehre else, I should make sure we can navigate to this goal.
-            return best_instance_id
+            return best_instance_id, scores[inst_idx]
 
         self.log.debug("Goal does not match any instance.")
-        return None
+        return None, None
 
     def aggregate_scores_per_instance(self, confidences, agg_fn):
         agg_scores = []
@@ -291,12 +291,12 @@ class GoatMatching(Matching):
             self.log.debug(
                 f"Matching with memory: {len(mem_match_confidences)} instances"
             )
-            inst_goal_id = self.get_best_match(
+            inst_goal_id, best_score = self.get_best_match(
                 mem_match_confidences, mem_match_instance_ids, score_thresh, agg_fn
             )
             if inst_goal_id is not None:
                 self.log.info(f"Goal instance {inst_goal_id} found by matching with memory.")
-                return inst_goal_id
+                return inst_goal_id, best_score
             else:
                 self.log.debug(f"No matches found in the memory")
 
@@ -318,16 +318,15 @@ class GoatMatching(Matching):
             self.log.debug(
                 f"Global instance ids: {obs_match_instance_ids}"
             )
-            inst_goal_id = self.get_best_match(
+            inst_goal_id, best_score = self.get_best_match(
                 obs_match_confidences, obs_match_instance_ids, score_thresh, agg_fn
             )
             if inst_goal_id is not None:
                 self.log.debug(
                     f"Goal instance {inst_goal_id} found in this step by matching with observation."
                 )
-                return inst_goal_id
+                return inst_goal_id, best_score
             else:
                 self.log.debug(f"No matches found with observation")
 
-        return None
-
+        return None, None

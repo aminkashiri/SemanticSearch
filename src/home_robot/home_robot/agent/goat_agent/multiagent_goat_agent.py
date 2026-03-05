@@ -22,7 +22,7 @@ class CommunicationLogger(logging.LoggerAdapter):
 class BaseMultiAgentGoatAgent(GoatAgent):
     def __init__(self, config, vocabulary, agent_id=None, device_id: int = 0):
         super().__init__(config, vocabulary, agent_id, device_id)
-        self.inst_goal_ids = None
+        self.inst_goals = None
         self.tasks_done = None
         self.tasks_failed = None
         self.active_task = None
@@ -76,8 +76,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = super()._preprocess_tasks(tasks_obs)
-        if self.inst_goal_ids is None:
-            self.inst_goal_ids = [None] * len(tasks)
+        if self.inst_goals is None:
+            self.inst_goals = [None] * len(tasks)
             self.tasks_done = [False] * len(tasks)
             self.tasks_failed = [False] * len(tasks)
             self.others_active_task_expiration = {}
@@ -89,18 +89,25 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             if self.tasks_done[i] or self.tasks_failed[i]:
                 continue
 
-            if self.inst_goal_ids[i] is None or self.total_timesteps % self.search_found_goal_freq == 0:
-                inst_goal_id = self.matching.search_for_goal(
+            if self.inst_goals[i] is None or self.total_timesteps % self.search_found_goal_freq == 0:
+                inst_goal_id, best_score = self.matching.search_for_goal(
                     task,
                     self.match_memory,
                     self.semantic_map.global_pose,
                     score_thresh=0 if self.navigate_to_best else None,
                 )
                 if inst_goal_id is not None:
-                    self.inst_goal_ids[i] = inst_goal_id
+                    if self.inst_goals[i] is None or self.inst_goals[i]["score"] < best_score or True:
+                        self.log.info(
+                            f"Found (better) instance goal for task {i} with score {best_score}"
+                        )
+                        self.inst_goals[i] = {
+                            "id": inst_goal_id,
+                            "score": best_score
+                        }
             else:
                 self.log.debug(
-                    f"Instance {self.inst_goal_ids[i]} already found for goal {i}"
+                    f"Instance {self.inst_goals[i]} already found for goal {i}"
                 )
 
         self.match_memory = False
@@ -120,7 +127,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 if (
                     self.tasks_done[i]
                     or self.tasks_failed[i]
-                    or self.inst_goal_ids[i] is None
+                    or self.inst_goals[i] is None
                     or i in self.others_active_task_expiration
                 ):
                     continue
@@ -130,7 +137,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         neighbor_locs = kwargs.get("neighbor_locs", [])
         if self.active_task is not None:
             action, vis_input = self.planner.plan(
-                self.inst_goal_ids[self.active_task],
+                self.inst_goals[self.active_task]["id"],
                 self.tasks[self.active_task].goal_semantic_id,
                 neighbor_locs=neighbor_locs,
                 fallback_to_frontier=False,
@@ -174,7 +181,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
     def reset(self, scene_id, episode_id):
         super().reset(scene_id, episode_id)
-        self.inst_goal_ids = None
+        self.inst_goals = None
         self.tasks_done = None
         self.tasks_failed = None
         self.active_task = None
@@ -228,6 +235,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             "agent_id": self.agent_id,
             "tasks_done": self.tasks_done,
             "active_task": self.active_task,
+            "active_task_score": self.inst_goals[self.active_task]["score"] if self.active_task is not None else None,
             "location": [
                 int(self.semantic_map.global_loc[0]),
                 int(self.semantic_map.global_loc[1]),
@@ -349,27 +357,32 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             ]
         self.log.debug(f"After: {self.tasks_done}")
 
-        self._handle_neighbor_active_task(data["agent_id"], data["active_task"])
+        self._handle_neighbor_active_task(data["agent_id"], data["active_task"], data["active_task_score"])
 
-    def _handle_neighbor_active_task(self, agent_id, active_task):
+    def _handle_neighbor_active_task(self, agent_id, active_task, active_task_score):
         if active_task is None:
             self.log.debug(f"Neighbor active task is None")
             return
 
         same_task = active_task == self.active_task
-        has_priority = agent_id < self.agent_id
-        self.log.debug(f"Neighbor {agent_id} active task: {active_task}, same_task: {same_task}, has_priority: {has_priority}")
         if not same_task:
             self.others_active_task_expiration[active_task] = (
                 self._get_communication_time_unit() + self.active_task_cooldown
             )
             self.log.debug(f"Blocking neighbor's task {active_task} until {self.others_active_task_expiration[active_task]}")
-        elif same_task and has_priority:
+            return
+
+        # Same task
+        has_priority = agent_id < self.agent_id
+        my_score = self.inst_goals[active_task]["score"]
+        self.log.debug(f"Neighbor {agent_id} active task: {active_task}, same_task: {same_task}, has_priority: {has_priority} (my score: {my_score}, neighbor score: {active_task_score})")
+        if my_score < active_task_score or (my_score == active_task_score and has_priority):
             self.others_active_task_expiration[active_task] = (
                 self._get_communication_time_unit() + self.active_task_cooldown
             )
             self.active_task = None
             self.log.debug(f"Yielding task {active_task} to neighbor {agent_id} (higher priority)")
+        
 
     def _update_steps(self):
         super()._update_steps()

@@ -187,7 +187,8 @@ class GoatAgent(Agent):
             agent_id=self.agent_id,
             ground_truth_semantics=config.GROUND_TRUTH_SEMANTICS,
             task_type=self.task_type,
-            stop_distance=config.AGENT.PLANNER.stop_distance
+            stop_distance=config.AGENT.PLANNER.stop_distance,
+            real_world=self.real_world,
         )
 
         self.subtask_timesteps = None

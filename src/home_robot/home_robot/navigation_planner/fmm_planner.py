@@ -47,6 +47,7 @@ class FMMPlanner:
         step_size: int = 5,
         print_images=True,
         debug=False,
+        real_world=False
     ):
         """
         Arguments:
@@ -67,7 +68,7 @@ class FMMPlanner:
         self.debug = debug
         # self.goal_map = None
         self.log = log
-        self.real_world = True
+        self.real_world = real_world
     
     def set_vis_dir(self, vis_dir):
         self.vis_dir = vis_dir

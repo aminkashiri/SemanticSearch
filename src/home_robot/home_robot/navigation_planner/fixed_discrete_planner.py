@@ -89,6 +89,7 @@ class DiscretePlanner:
         agent_id=None,
         ground_truth_semantics=None,
         task_type=None,
+        real_world=False,
     ):
         """
         Similar to old DiscretePlanner, but with changes to:
@@ -145,6 +146,7 @@ class DiscretePlanner:
             step_size=self.step_size,
             print_images=self.visualization_level > 1,
             stop_distance=self.stop_distance,
+            real_world=real_world,
         )
 
     def reset(self):
@@ -1123,6 +1125,7 @@ class DiscretePlanner:
                 robot_loc,
                 postfix=f"_frontier_{i}",
             )
+            stop = False
             if reachable:
                 self.log.info("Planning to frontier successfull.")
                 if is_local:
