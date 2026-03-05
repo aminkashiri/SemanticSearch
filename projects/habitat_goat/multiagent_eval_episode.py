@@ -5,6 +5,9 @@ import yaml
 from typing import List, Union
 from tqdm import tqdm
 from pathlib import Path
+import cProfile
+import pstats
+
 
 # TODO Install home_robot, home_robot_sim and remove this
 sys.path.insert(
@@ -81,7 +84,7 @@ def read_configs(args):
         if len(args.scene) == 2:
             scenes = slice(args.scene[0], args.scene[1])
 
-    config.habitat.dataset.content_scenes = all_scenes[scenes][:2]
+    config.habitat.dataset.content_scenes = all_scenes[scenes]
 
     if args.name is not None:
         config.EXP_NAME = args.name
@@ -146,7 +149,10 @@ if __name__ == "__main__":
         )
         pbar.set_description(f"{env.scene_id}_{env.episode_id}")
 
+        # profiler = cProfile.Profile()
+        # profiler.enable()
         while not env.episode_over:
+
             ep_step += 1
             logger.info(
                 f"-------------------- Episode step {ep_step} --------------------"
@@ -165,6 +171,7 @@ if __name__ == "__main__":
             stucks = []
             for agent, obs in zip(agents, observations):
                 agent.update_state(obs)
+                agent.update_maps()
 
             for agent in agents:
                 other_agents = list(
@@ -184,6 +191,15 @@ if __name__ == "__main__":
                     agent.handle_stop(action)
                     actions.append(action)
 
+            any_moving = not all(
+                action["action"] == DiscreteNavigationAction.STOP for action in actions
+            )
+            # Don't stop the episode if an agent is still looking. Only needed in simulation and objectnav (because of using Stop instead of MultiAgentStop)
+            for action, agent in zip(actions, agents):
+                if action["action_args"]["task_idx"] is None and action["action"] == DiscreteNavigationAction.STOP:
+                    if any_moving:
+                        action["action"] = DiscreteNavigationAction.TURN_RIGHT
+
             logger.info(f"Actions taken: {actions}")
             env.apply_action(actions, info=infos)
             pbar.update(1)
@@ -196,15 +212,6 @@ if __name__ == "__main__":
                 continue
 
             env.add_subepisode_metrics(all_subtask_metrics, actions)
-        
-        
-
-
-        # import cProfile
-        # import pstats
-
-        # profiler = cProfile.Profile()
-        # profiler.enable()
 
         # profiler.disable()
         # stats = pstats.Stats(profiler)
