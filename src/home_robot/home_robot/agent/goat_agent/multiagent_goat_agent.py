@@ -217,7 +217,10 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                     remaining_goals.append(task["category"])
             info["caption"] = f"Remaining Goals: [{', '.join(remaining_goals)}]"
 
-        info["caption"] += f" | Action: {str(action['action']).split('.')[-1]}"
+        if isinstance(action["action"], DiscreteNavigationAction):
+            info["caption"] += f" | Action: {str(action['action']).split('.')[-1]}"
+        else:
+            info["caption"] += f" | Action: {str(action['action'])}"
 
     def handle_stop(self, action):
         self.reset_for_next_task()
