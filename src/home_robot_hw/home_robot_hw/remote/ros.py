@@ -172,7 +172,11 @@ class ScoutRosInterface:
         """
         
         # 1. Get RGB and Depth images
-        rgb, depth = self.rgb_cam.get(), self.dpt_cam.get()
+        rgb = self.rgb_cam.get()
+        if self.filter_depth:
+            depth = self.dpt_cam.get_filtered(std_threshold=0.1)
+        else:
+            depth = self.dpt_cam.get()
         
         # 2. Get camera intrinsics from the depth camera object
         # The self.dpt_cam object is an instance of RosCamera
@@ -182,8 +186,7 @@ class ScoutRosInterface:
         # 3. Calculate the XYZ image
         xyz = get_xyz_image_from_depth(depth, fx, fy, px, py)
         
-        return rgb, depth, xyz # <--- Corrected to return all three
-    # --- END FIX ---
+        return rgb, depth, xyz
 
     # Helper functions
     def _create_pubs_subs(self):

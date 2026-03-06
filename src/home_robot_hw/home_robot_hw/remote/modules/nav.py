@@ -125,8 +125,19 @@ class ScoutNavigationClient(AbstractControlModule):
             rate.sleep()
 
         # 5. Final Stop
-        self._ros_client.velocity_pub.publish(Twist())
-        rospy.loginfo("Navigation goal reached and stopped.")
+        # self._ros_client.velocity_pub.publish(Twist())
+        rospy.loginfo("Navigation goal reached")
+        stop_cmd = Twist()
+        while not rospy.is_shutdown():
+            self._ros_client.velocity_pub.publish(stop_cmd)
+            p1 = self.get_base_pose()
+            rate.sleep()
+            p2 = self.get_base_pose()
+            if (np.linalg.norm(p2[:2] - p1[:2]) < 0.001 and 
+                abs(np.arctan2(np.sin(p2[2]-p1[2]), np.cos(p2[2]-p1[2]))) < 0.001):
+                break
+        rospy.loginfo("stopped")
+
 
     @enforce_enabled
     def home(self):

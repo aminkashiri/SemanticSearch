@@ -32,10 +32,10 @@ ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 ARUCO_PARAMS = cv2.aruco.DetectorParameters()
 ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
 MARKER_EXPAND = {
-    0: (2.5, 2.5, 2.5, 2.),
-    1: (2.5, 2.5, 1.5, 2.5),
-    2: (2.5, 2.5, 2., 2.5),
-    3: (2.5, 2.5, 1.5, 2.5),
+    0: (2.5, 2.5, 2.8., 2),
+    1: (2.5, 2.5, 2, 2.5),
+    2: (2.5, 2.5, 2, 2.8),
+    3: (2.5, 2.5, 2, 2.5),
 }
 
 @dataclass
@@ -624,7 +624,7 @@ class GoatAgent(Agent):
             :, :, 1:
         ]  # one-hot encode and remove background class
 
-        # success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
+        success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:

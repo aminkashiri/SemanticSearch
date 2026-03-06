@@ -74,7 +74,7 @@ class ScoutGoatEnv:
         if self.verbose:
             print(f"[SCOUT_ENV] Connecting to ScoutClient...")
         
-        self.robot = ScoutClient()
+        self.robot = ScoutClient(camera_overrides={"depth_buffer_size": 3})
         
         if self.verbose:
             print(f"[SCOUT_ENV] ✓ Connected to robot")
@@ -180,6 +180,7 @@ class ScoutGoatEnv:
         if self.verbose:
             print(f"[SCOUT_ENV] Getting RGB-D from robot...")
         
+        rospy.sleep(0.1)
         rgb, depth, _ = self.robot.get_images(compute_xyz=True, rotate_images=False)
         
         if self.verbose:
@@ -235,12 +236,14 @@ class ScoutGoatEnv:
         if depth.ndim == 3:
             depth = depth[:, :, 0]
 
-        # depth = cv2.resize(depth, (self.width, self.height), interpolation=cv2.INTER_NEAREST) # Not average!
-        # depth = depth[::2, ::2] # FIX: simple downsample by 2 to match RGB size (assuming original is 1280x720 and target is 640x360)
-        depth = np.where(depth > self.max_depth, MAX_DEPTH_REPLACEMENT_VALUE, depth)
-        depth = np.where(depth < self.min_depth, MIN_DEPTH_REPLACEMENT_VALUE, depth)
-        depth = np.where(np.isnan(depth), MAX_DEPTH_REPLACEMENT_VALUE, depth)
-        depth = np.where(np.isinf(depth), MAX_DEPTH_REPLACEMENT_VALUE, depth)
+        # Neighbor consistency filter: reject isolated valid pixels
+        valid = (depth > self.min_depth) & (depth < self.max_depth) & ~np.isnan(depth) & ~np.isinf(depth)
+        kernel = np.ones((5, 5), dtype=np.float32)
+        neighbor_count = cv2.filter2D(valid.astype(np.float32), -1, kernel)
+        # Reject pixels where fewer than 40% of neighbors are valid
+        isolated = valid & (neighbor_count < 0.4 * kernel.size)
+        depth[isolated] = MAX_DEPTH_REPLACEMENT_VALUE
+
         return depth
     
     
@@ -322,18 +325,18 @@ class ScoutGoatEnv:
                 if self.verbose:
                     print(f"[SCOUT_ENV] Sending to robot: {continuous_action}")
                 self.robot.nav.navigate_to(continuous_action, relative=True, blocking=True)
-                if self.verbose:
-                    new_pose = self.robot.get_base_pose()
-                    print(f"[SCOUT_ENV] New pose: x={new_pose[0]:.2f}, y={new_pose[1]:.2f}, θ={np.degrees(new_pose[2]):.1f}°")
+                # input("Press a button")
+
             except Exception as e:
                 logger.error(f"Navigation failed: {e}")
                 if self.verbose:
                     print(f"[SCOUT_ENV] ✗ Navigation error: {e}")
         
         self.timestep += 1
-        rospy.sleep(0.5)
         
         if self.verbose:
+            new_pose = self.robot.get_base_pose()
+            print(f"[SCOUT_ENV] New pose: x={new_pose[0]:.2f}, y={new_pose[1]:.2f}, θ={np.degrees(new_pose[2]):.1f}°")
             print(f"[SCOUT_ENV] ----- action complete (timestep={self.timestep}) -----\n")
         
         self._last_obs = None
