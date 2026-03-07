@@ -289,10 +289,6 @@ class ScoutGoatEnv:
         if self.verbose:
             print(f"[SCOUT_ENV] Action: {action_enum.name if hasattr(action_enum, 'name') else action_enum}")
         
-        # This is specially necesary to avoid collision with other robots, and also due to 1 step delay between obs and movement.
-        if action_enum is None:
-            print(f"[SCOUT_ENV] Not moving, too close to obstacles.")
-            return
         
         
         if action_enum == DiscreteNavigationAction.STOP:
@@ -329,6 +325,7 @@ class ScoutGoatEnv:
             continuous_action[2] = np.radians(action_enum.xyt[2].item())
             if self.verbose:
                 print(f"[SCOUT_ENV] Continuous TURN : {np.degrees(continuous_action[2]):.1f}°")
+
         if np.any(continuous_action != 0):
             try:
                 if self.verbose:

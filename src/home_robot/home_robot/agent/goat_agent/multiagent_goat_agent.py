@@ -206,6 +206,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             if action[1] == DiscreteNavigationAction.MOVE_FORWARD:
                 print("Too close, not executing forward")
                 action[1] = None
+                self.planner.last_action = None
         return {
             "action": action[1],
             "action_args": {
@@ -342,7 +343,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         self.comm_log.info(
             f"Map aligned with Agent {neighbor_id}, distance: {distance:.2f}m, neighor_loc: {transformed_loc}"
         )
-        if distance > 5.0:
+        if distance > self.communication_radius:
             self.comm_log.warning(
                 f"Map alignment with Agent {neighbor_id} unreliable skipping merge"
             )

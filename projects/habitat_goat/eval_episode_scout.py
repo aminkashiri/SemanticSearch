@@ -265,7 +265,13 @@ def main():
             f"------------------------ Episode {env.scene_id} {env.episode.episode_id} over ------------------------"
         )
         pbar.close()
-        save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)
+        while not rospy.is_shutdown():
+            print("sleeping")
+            try:
+                rospy.sleep(5)
+            except:
+                print("Exiting...")
+        # save_results(results, env, results_dir, ep_step, all_subtask_metrics, agent, obs)
 
 if __name__ == "__main__":
     main()

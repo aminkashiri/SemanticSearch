@@ -483,14 +483,14 @@ class MapMerger:
         obs_A = (map_A[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
         obs_B = (map_B[MC.OBSTACLE_MAP].cpu().numpy() > 0).astype(float)
 
-        axes[0].imshow(1 - obs_A, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[0].imshow(1 - obs_A, cmap="gray", origin="lower", vmin=0, vmax=1)
         axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10)
         self._plot_semantic_dots(axes[0], self._get_semantic_dots(map_A))
         axes[0].set_title("Robot 1 - Obstacle Map")
         self._setup_panel(axes[0])
         self._apply_crop(axes[0], bounds_A)
 
-        axes[1].imshow(1 - obs_B, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[1].imshow(1 - obs_B, cmap="gray", origin="lower", vmin=0, vmax=1)
         axes[1].plot(loc_B[1], loc_B[0], "ro", markersize=10)
         self._plot_semantic_dots(axes[1], self._get_semantic_dots(map_B))
         axes[1].set_title("Robot 2 - Obstacle Map (own frame)")
@@ -522,7 +522,7 @@ class MapMerger:
         plt.rc('axes', titlesize=20)
 
         # Panel 1: Robot 1
-        axes[0].imshow(1 - obs_A, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[0].imshow(1 - obs_A, cmap="gray", origin="lower", vmin=0, vmax=1)
         axes[0].plot(loc_A[1], loc_A[0], "bo", markersize=10)
         self._plot_semantic_dots(axes[0], self._get_semantic_dots(map_A))
         axes[0].set_title("Robot 1 - Obstacle Map")
@@ -530,7 +530,7 @@ class MapMerger:
         self._apply_crop(axes[0], bounds)
 
         # Panel 2: Robot 2 (own frame)
-        axes[1].imshow(1 - obs_B_original, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[1].imshow(1 - obs_B_original, cmap="gray", origin="lower", vmin=0, vmax=1)
         axes[1].plot(loc_B_original[1], loc_B_original[0], "ro", markersize=10)
         self._plot_semantic_dots(axes[1], self._get_semantic_dots(original_map))
         axes[1].set_title("Robot 2 - Obstacle Map")
@@ -544,7 +544,7 @@ class MapMerger:
         overlay[:, :, 1] -= obs_B_warped
         overlay[:, :, 2] -= obs_B_warped
         overlay = np.clip(overlay, 0, 1)
-        axes[2].imshow(overlay, origin="upper")
+        axes[2].imshow(overlay, origin="lower")
         axes[2].plot(loc_A[1], loc_A[0], "bo", markersize=10)
         axes[2].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10)
         axes[2].set_title("Alignment Overlay")
@@ -552,7 +552,7 @@ class MapMerger:
         self._apply_crop(axes[2], bounds)
 
         # Panel 4: Merged
-        axes[3].imshow(1 - obs_merged, cmap="gray", origin="upper", vmin=0, vmax=1)
+        axes[3].imshow(1 - obs_merged, cmap="gray", origin="lower", vmin=0, vmax=1)
         axes[3].plot(loc_A[1], loc_A[0], "bo", markersize=10)
         axes[3].plot(loc_B_transformed[1], loc_B_transformed[0], "ro", markersize=10)
         self._plot_semantic_dots(axes[3], self._get_semantic_dots(merged))
