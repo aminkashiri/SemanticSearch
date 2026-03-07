@@ -242,8 +242,8 @@ class ScoutGoatEnv:
         neighbor_count = cv2.filter2D(valid.astype(np.float32), -1, kernel)
         # Reject pixels where fewer than 40% of neighbors are valid
         isolated = valid & (neighbor_count < 0.4 * kernel.size)
+        depth[~valid] = MAX_DEPTH_REPLACEMENT_VALUE
         depth[isolated] = MAX_DEPTH_REPLACEMENT_VALUE
-
         return depth
     
     
@@ -277,8 +277,10 @@ class ScoutGoatEnv:
         return goals
  
     def apply_action(self, action: Any, info: Optional[Dict[str, Any]] = None, prev_obs: Optional[Observations] = None) -> bool:
+        self.timestep += 1
         if info is not None:
             self._process_info(info)
+        self._last_obs = None
         action_enum = self._preprocess_action(action)
         if self.verbose:
             print(f"\n[SCOUT_ENV] ----- apply_action -----")
@@ -286,6 +288,11 @@ class ScoutGoatEnv:
         
         if self.verbose:
             print(f"[SCOUT_ENV] Action: {action_enum.name if hasattr(action_enum, 'name') else action_enum}")
+        
+        # This is specially necesary to avoid collision with other robots, and also due to 1 step delay between obs and movement.
+        if action_enum is None:
+            print(f"[SCOUT_ENV] Not moving, too close to obstacles.")
+            return
         
         
         if action_enum == DiscreteNavigationAction.STOP:
@@ -332,14 +339,12 @@ class ScoutGoatEnv:
                 if self.verbose:
                     print(f"[SCOUT_ENV] ✗ Navigation error: {e}")
         
-        self.timestep += 1
         
         if self.verbose:
             new_pose = self.robot.get_base_pose()
             print(f"[SCOUT_ENV] New pose: x={new_pose[0]:.2f}, y={new_pose[1]:.2f}, θ={np.degrees(new_pose[2]):.1f}°")
             print(f"[SCOUT_ENV] ----- action complete (timestep={self.timestep}) -----\n")
         
-        self._last_obs = None
     
     def add_subepisode_metrics(self, all_metrics: Dict, action: Any) -> None:
         task_idx = action["action_args"]["task_idx"]
