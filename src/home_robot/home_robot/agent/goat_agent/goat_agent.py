@@ -32,7 +32,7 @@ ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 ARUCO_PARAMS = cv2.aruco.DetectorParameters()
 ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
 MARKER_EXPAND = {
-    0: (2.5, 2.5, 2.8., 2),
+    0: (2.5, 2.5, 2.8, 2),
     1: (2.5, 2.5, 2, 2.5),
     2: (2.5, 2.5, 2, 2.8),
     3: (2.5, 2.5, 2, 2.5),
@@ -324,12 +324,28 @@ class GoatAgent(Agent):
         self.log.debug(
             f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB"
         )
+    def _safety_stop(self):
+        self.too_close = False
+        depth = self._curr_obs.depth
+        h, w = depth.shape[:2]
+        width = 50
+        height = 400
+        cy, cx = h // 2, w // 2
+        center_pixels = depth[cy - width//2 : cy + width//2,
+                        cx - height//2 : cx + height//2]
+        clost_dist = 0.7
+        close_pixels = np.sum(center_pixels < 0.7)
+        self.too_close = close_pixels >= 50
+        if self.too_close:
+            print("Too close, center pixels: ", close_pixels, np.min(center_pixels), np.max(center_pixels))
 
     def update_state(self, obs):
         self._curr_obs = obs
         self._update_steps()
         self._update_pose()
         self.tasks = self._preprocess_tasks(obs.task_observations["tasks"])
+        self._safety_stop()
+
 
     def _preprocess_tasks(self, tasks_obs) -> List[Task]:
         tasks = []
@@ -724,6 +740,10 @@ class GoatAgent(Agent):
         self.semantic_map_module.vis_dir = self.planner.vis_dir
 
     def _process_action(self, action):
+        if self.too_close == True:
+            if action == DiscreteNavigationAction.STOP:
+                print("Too close, not executing forward")
+                action = None
         return {
             "action": action,
             "action_args": {

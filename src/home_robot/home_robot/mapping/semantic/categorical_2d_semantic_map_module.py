@@ -197,9 +197,9 @@ class Categorical2DSemanticMapModule(nn.Module):
         log=None,
         real_world=False,
         start_obs_dilation=0,
-        log_odds_occ=1.0,
-        log_odds_free=1.0,
-        max_log_odds=3.0,
+        log_odds_occ=0.5,
+        log_odds_free=0.8,
+        max_log_odds=5.0,
     ):
         """
         Arguments:
@@ -812,7 +812,8 @@ class Categorical2DSemanticMapModule(nn.Module):
         # Positive update: only where depth points actually landed
         occ_update = torch.where(
             visible_mask & (obs_evidence_in_map > 0),
-            obs_evidence_in_map * self.log_odds_occ,
+            # obs_evidence_in_map * self.log_odds_occ, #! Removed this to remove  dynamic obstacles much faster
+            self.log_odds_occ,
             torch.zeros_like(obs_evidence_in_map),
         )
         # Negative update: anywhere in gaze FOV (we can see it's empty)

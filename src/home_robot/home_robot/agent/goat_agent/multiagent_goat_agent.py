@@ -292,8 +292,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 "time": data["time"],
                 "loc": data["transformed_loc"],
             }
-
-        self._merge_task_info(data)
+            self._merge_task_info(data)
 
     def _merge_map(self, data):
         """Align and merge neighbor's map into ours."""
