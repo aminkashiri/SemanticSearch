@@ -640,7 +640,7 @@ class GoatAgent(Agent):
             :, :, 1:
         ]  # one-hot encode and remove background class
 
-        success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
+        # success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:
