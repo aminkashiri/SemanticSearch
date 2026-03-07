@@ -519,6 +519,7 @@ class MapMerger:
         bounds, bounds_B = self._equalize_bounds(bounds, bounds_B)
 
         fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+        plt.rc('axes', titlesize=20)
 
         # Panel 1: Robot 1
         axes[0].imshow(1 - obs_A, cmap="gray", origin="upper", vmin=0, vmax=1)
@@ -573,7 +574,7 @@ class MapMerger:
         ]
         legend_labels = ["Robot 1", "Robot 2", "Semantic landmarks"]
         axes[0].legend(legend_handles, legend_labels, loc='upper left',
-                ncol=1, fontsize=12,
+                ncol=1, fontsize=16,
                 markerscale=1.2, framealpha=0.8)
         plt.tight_layout()
 
@@ -587,8 +588,8 @@ if __name__ == "__main__":
     num_sem = int((map_A.shape[0] - MC.NON_SEM_CHANNELS) / 2)
 
     # Robot locations in their own frames (x, y) in pixel coords
-    loc_A = [502, 538]
-    loc_B = [434, 406]
+    loc_A = [548, 408]
+    loc_B = [505, 403]
     data = {
         "agent_id": 1,
         "map": map_B,
@@ -599,8 +600,7 @@ if __name__ == "__main__":
         num_sem_categories=num_sem,
         resolution=0.05,
         ransac_thresh=10.0,
-        # iou_threshold=0.1,
-        iou_threshold=0.8,
+        iou_threshold=0.1,
     )
     map_merger.vis_dir = "."
 
