@@ -180,7 +180,7 @@ class ScoutGoatEnv:
         if self.verbose:
             print(f"[SCOUT_ENV] Getting RGB-D from robot...")
         
-        rospy.sleep(0.1)
+        rospy.sleep(0.2)
         rgb, depth, _ = self.robot.get_images(compute_xyz=True, rotate_images=False)
         
         if self.verbose:
@@ -322,11 +322,13 @@ class ScoutGoatEnv:
             continuous_action[2] = self.turn_angle
             if self.verbose:
                 print(f"[SCOUT_ENV] TURN LEFT: {np.degrees(self.turn_angle):.1f}°")
+        elif action_enum is None:
+            print(f"[SCOUT_ENV] Too close to obstacles. moving backward to avoid collision")
+            continuous_action[0] = -self.forward_step / 2
         elif isinstance(action_enum, ContinuousNavigationAction):
             continuous_action[2] = np.radians(action_enum.xyt[2].item())
             if self.verbose:
                 print(f"[SCOUT_ENV] Continuous TURN : {np.degrees(continuous_action[2]):.1f}°")
-        
         if np.any(continuous_action != 0):
             try:
                 if self.verbose:

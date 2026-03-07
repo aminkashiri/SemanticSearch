@@ -151,7 +151,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             ]
         ):
             self.log.info("All tasks done or failed, stopping")
-            return (None, DiscreteNavigationAction.STOP), {}
+            return [None, DiscreteNavigationAction.STOP], {}
 
         if self.active_task is None:
             for i in range(len(self.tasks)):
@@ -175,16 +175,16 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             )
             if action is None:
                 self.tasks_failed[self.active_task] = True
-                return (self.active_task, DiscreteNavigationAction.STOP), vis_input
+                return [self.active_task, DiscreteNavigationAction.STOP], vis_input
             else:
-                return (self.active_task, action), vis_input
+                return [self.active_task, action], vis_input
 
         # If the code reaches here, active task is None.
         action, vis_input = self.planner.plan(
             neighbor_locs=neighbor_locs,
         )
         if action is not None:
-            return (None, action), vis_input
+            return [None, action], vis_input
 
         if self.navigate_to_best:
             self.log.warning(
@@ -202,6 +202,10 @@ class BaseMultiAgentGoatAgent(GoatAgent):
         return self._get_best_action(neighbor_locs=neighbor_locs)
 
     def _process_action(self, action):
+        if self.too_close == True:
+            if action[1] == DiscreteNavigationAction.MOVE_FORWARD:
+                print("Too close, not executing forward")
+                action[1] = None
         return {
             "action": action[1],
             "action_args": {

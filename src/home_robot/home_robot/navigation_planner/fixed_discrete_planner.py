@@ -148,6 +148,7 @@ class DiscretePlanner:
             stop_distance=self.stop_distance,
             real_world=real_world,
         )
+        self.real_world = real_world
 
     def reset(self):
         self.dd = None
@@ -1050,8 +1051,7 @@ class DiscretePlanner:
         return changed
 
     def plan_to_frontier_goal(self, goal_category, postfix, neighbor_locs=None):
-        if self.neighbor_nearby:
-            saved_unreachable_global = self.semantic_map.global_map[MC.UNREACHABLE_FRONTIERS_MAP].clone()
+        saved_unreachable_global = self.semantic_map.global_map[MC.UNREACHABLE_FRONTIERS_MAP].clone()
         i = 0
         while True:
             frontier_map, traversible, is_local = self.get_frontier_planning_maps()
