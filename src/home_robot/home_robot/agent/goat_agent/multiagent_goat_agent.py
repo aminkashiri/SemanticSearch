@@ -282,6 +282,17 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             "time": self._get_communication_time_unit()
         }
 
+    def _distance_to(self, transformed_loc):
+            """Distance in meters from our location to a transformed neighbor location."""
+            return (
+                (torch.tensor(self.semantic_map.global_loc) - torch.tensor(transformed_loc))
+                .float()
+                .norm()
+                .item()
+                * self.semantic_map.resolution
+                / 100
+            )
+
     def _merge_communication_data(self, data):
         neighbor_id = data["agent_id"]
 
@@ -292,7 +303,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 neighbor_id, data["location"]
             )
 
-        if data.get("transformed_loc") is not None:
+        if data.get("transformed_loc") is not None and self._distance_to(data["transformed_loc"]) <= self.communication_radius:
             self.neighbors[neighbor_id] = {
                 "time": data["time"],
                 "loc": data["transformed_loc"],
@@ -330,14 +341,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             data["agent_id"], data["location"]
         )
         data["transformed_loc"] = transformed_loc
-        distance = (
-            (torch.tensor(self.semantic_map.global_loc) - torch.tensor(transformed_loc))
-            .float()
-            .norm()
-            .item()
-            * self.semantic_map.resolution
-            / 100
-        )
+
+        distance = self._distance_to(transformed_loc)
 
 
         self.comm_log.info(
