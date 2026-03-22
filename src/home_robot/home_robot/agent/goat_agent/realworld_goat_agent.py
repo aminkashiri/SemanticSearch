@@ -113,6 +113,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                 now = time.time()
 
                 if now - last_beacon >= self.beacon_interval:
+                    self.comm_log.debug(f"Broadcasting beacon on port {self.broadcast_port}")
                     msg = self.BEACON_MAGIC + struct.pack("IH", self.agent_id, self.data_port)
                     try:
                         tx_sock.sendto(msg, (self.broadcast_addr, self.broadcast_port))
@@ -127,6 +128,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
                             agent_id, port = struct.unpack("IH", data[4:10])
                             if agent_id != self.agent_id:
+                                self.comm_log.debug(f"Beacond received from {agent_id}")
                                 neighbors[agent_id] = {"ip": addr[0], "port": port}
                     except socket.timeout:
                         break
@@ -144,7 +146,9 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         self.comm_log.error(f"Pack failed: {e}")
                         continue
 
+                    self.comm_log.debug(f"Sending data to {agent_id}, map: {send_map}")
                     if self._send_to_neighbor(ctx, agent_id, info, packed):
+                        self.comm_log.debug(f"Send to {agent_id} successfull")
                         if send_map:
                             self.map_shared_time[agent_id] = time.time()
                             self._full_map_sent_to.add(agent_id)
