@@ -143,6 +143,7 @@ class InstanceMemory:
         mask_cropped_instances=False,
         padding_cropped_instances=0,
         category_id_to_category_name=None,
+        log=None
     ):
         self.du_scale = config.AGENT.SEMANTIC_MAP.du_scale
         self.print_images = config.VISUALIZATION_LEVEL > 2
@@ -161,6 +162,7 @@ class InstanceMemory:
             shutil.rmtree(self.save_dir, ignore_errors=True)
 
         self.reset()
+        self.log = log
 
     def reset(self):
         self.images = []
@@ -252,7 +254,7 @@ class InstanceMemory:
             mode="nearest",
         ).squeeze(0).squeeze(0).int()
         
-        # logger.debug(f"In process instances")
+        # self.log.debug(f"In process instances")
         for temp_instance_id in temp_instance_ids:
             assert temp_instance_id != 0
             
@@ -260,7 +262,7 @@ class InstanceMemory:
             
             category_id = semantic_frame[instance_mask].unique()
             category_id = category_id[0].item()
-            # logger.debug(f"Temp instance id: {temp_instance_id}, category id: {category_id}")
+            # self.log.debug(f"Temp instance id: {temp_instance_id}, category id: {category_id}")
             
             if category_id == 0:
                 continue

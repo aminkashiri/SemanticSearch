@@ -86,6 +86,7 @@ class GoatAgent(Agent):
                 config=config,
                 mask_cropped_instances=False,
                 padding_cropped_instances=200,
+                log=self._log,
             )
 
         self.matching = GoatMatching(
@@ -311,6 +312,7 @@ class GoatAgent(Agent):
         self.log.debug(
             f"Available RAM: {psutil.virtual_memory().available / 1e9:.2f} GB"
         )
+
     def _safety_stop(self):
         self.too_close = False
         depth = self._curr_obs.depth
@@ -320,9 +322,8 @@ class GoatAgent(Agent):
         cy, cx = h // 2, w // 2
         center_pixels = depth[cy - width//2 : cy + width//2,
                         cx - height//2 : cx + height//2]
-        clost_dist = 0.7
         close_pixels = np.sum(center_pixels < 0.7)
-        self.too_close = close_pixels >= 50
+        self.too_close = close_pixels >= 50 and self.real_world
         if self.too_close:
             print("Too close, center pixels: ", close_pixels, np.min(center_pixels), np.max(center_pixels))
 
@@ -787,7 +788,7 @@ class GoatAgent(Agent):
         else:
             # Match a goal against every instance in memory the moment the subtask starts.
             # We also search in memory when env is fully explored, but that is handled somewhere else.
-            inst_goal_id = self.matching.search_for_goal(
+            inst_goal_id, _ = self.matching.search_for_goal(
                 self.tasks[self.current_task_idx],
                 self.match_memory,
                 self.semantic_map.global_pose,

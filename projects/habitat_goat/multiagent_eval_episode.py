@@ -120,7 +120,7 @@ if __name__ == "__main__":
     agents: List[SimulationMultiAgentGoatAgent] = []
     # agents: List[RealWorldGoatAgent] = []
     for i in range(config.NUM_AGENTS):
-        agents.append(SimulationMultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
+        agents.append(SimulationMultiAgentGoatAgent(config, env.semantic_category_mapping.vocabulary, agent_id=i))
         # agents.append(RealWorldGoatAgent(config, env.semantic_category_mapping.vocabulary, i))
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)
