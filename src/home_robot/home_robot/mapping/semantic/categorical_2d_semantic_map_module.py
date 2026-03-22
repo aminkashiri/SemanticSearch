@@ -166,10 +166,7 @@ class Categorical2DSemanticMapModule(nn.Module):
     def __init__(
         self,
         device,
-        frame_height: int,
-        frame_width: int,
-        camera_height: int,
-        hfov: int,
+        camera_params,
         num_sem_categories: int,
         map_size_cm: int,
         map_resolution: int,
@@ -190,8 +187,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         dilation_for_instances: int = 5,
         padding_for_instance_overlap: int = 5,
         exploration_type="default",
-        gaze_width=30,
-        gaze_distance=3,
         agent_cell_radius: int = 1,
         print_images: bool = False,
         log=None,
@@ -233,15 +228,17 @@ class Categorical2DSemanticMapModule(nn.Module):
         super().__init__()
 
         self.device = device
-        self.screen_h = frame_height
-        self.screen_w = frame_width
-        self.hfov = hfov
-        aspect_ratio = self.screen_h / self.screen_w
-        hfov_rad = np.deg2rad(self.hfov)
-        vfov_rad = 2 * np.arctan(np.tan(hfov_rad / 2) * aspect_ratio)
-        self.vfov = np.rad2deg(vfov_rad)
 
-        self.camera_matrix = du.get_camera_matrix(self.screen_w, self.screen_h, hfov)
+        self.screen_h = camera_params.height
+        self.screen_w = camera_params.width
+        self.hfov = camera_params.hfov
+        self.vfov = camera_params.vfov
+        self.camera_matrix = camera_params.camera_matrix  # Namespace(xc, zc, f)
+        self.agent_height = camera_params.camera_height * 100.0
+
+        self.gaze_width = self.hfov
+        self.gaze_distance = camera_params.max_depth
+
         self.num_sem_categories = num_sem_categories
 
         self.resolution = map_resolution
@@ -262,7 +259,6 @@ class Categorical2DSemanticMapModule(nn.Module):
 
         self.max_depth = max_depth * 100.0
         self.min_depth = min_depth * 100.0
-        self.agent_height = camera_height * 100.0
         self.max_voxel_height = int(360 / self.z_resolution)
         self.min_voxel_height = int(-40 / self.z_resolution)
         self.min_obs_height_cm = min_obs_height_cm
@@ -282,8 +278,6 @@ class Categorical2DSemanticMapModule(nn.Module):
         self.instance_memory = instance_memory
         self.max_instances = max_instances
         self.exploration_type = exploration_type
-        self.gaze_width = gaze_width
-        self.gaze_distance = gaze_distance
         self.agent_cell_radius = agent_cell_radius
         self.vis_dir = None
         self.timestep = 0

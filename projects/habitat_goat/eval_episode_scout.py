@@ -189,11 +189,13 @@ def main():
         config=config,
         task_config_file=args.task_config,
     )
+    camera_params = env.sync_camera_params()
+
     # agent: GoatAgent = GoatAgent(
     #     config, env.semantic_category_mapping.vocabulary
     # )
     agent: RealWorldGoatAgent= RealWorldGoatAgent(
-        config, env.semantic_category_mapping.vocabulary, agent_id=1, adhoc_ip="10.0.0.2"
+        config, env.semantic_category_mapping.vocabulary, camera_params, agent_id=1, adhoc_ip="10.0.0.2"
     )
 
     results_dir = os.path.join(config.DUMP_LOCATION, "results", config.EXP_NAME)

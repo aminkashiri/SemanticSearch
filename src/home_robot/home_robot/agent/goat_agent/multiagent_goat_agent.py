@@ -20,8 +20,8 @@ class CommunicationLogger(logging.LoggerAdapter):
 
 
 class BaseMultiAgentGoatAgent(GoatAgent):
-    def __init__(self, config, vocabulary, agent_id=None, device_id: int = 0):
-        super().__init__(config, vocabulary, agent_id, device_id)
+    def __init__(self, config, vocabulary, camera_params=None, agent_id=None, device_id: int = 0):
+        super().__init__(config, vocabulary, camera_params, agent_id, device_id)
         self.inst_goals = None
         self.tasks_done = None
         self.tasks_failed = None
@@ -433,8 +433,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
 
 class SimulationMultiAgentGoatAgent(BaseMultiAgentGoatAgent):
-    def __init__(self, config, vocabulary, agent_id=None, device_id=0):
-        super().__init__(config, vocabulary, agent_id, device_id)
+    def __init__(self, config, vocabulary, camera_params=None, agent_id=None, device_id=0):
+        super().__init__(config, vocabulary, camera_params, agent_id, device_id)
         for i in range(config.NUM_AGENTS):
             self.map_merger._cached_transforms[i] = {"iou": 1.0, "transform": np.eye(2, 3)}
 

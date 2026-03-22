@@ -15,6 +15,7 @@ from .goat_matching import GoatMatching
 from scipy.ndimage import binary_erosion
 from typing import Any, Dict, List, Tuple
 from home_robot.utils.logger import get_logger
+from home_robot.utils.camera_params import CameraParams
 from home_robot.core.abstract_agent import Agent
 from home_robot.utils.visualization import visualize_semantic_with_labels, visualize_depth_filter
 from home_robot.mapping.semantic.categorical_2d_semantic_map_state import (
@@ -28,15 +29,17 @@ from home_robot.mapping.semantic.instance_tracking_modules import InstanceMemory
 from home_robot.navigation_planner.fixed_discrete_planner import DiscretePlanner
 from home_robot.utils.constants import MAX_DEPTH_REPLACEMENT_VALUE
 
-ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-ARUCO_PARAMS = cv2.aruco.DetectorParameters()
-ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
-MARKER_EXPAND = {
-    0: (2.5, 2.5, 2.8, 2),
-    1: (2.5, 2.5, 2, 2.5),
-    2: (2.5, 2.5, 2, 2.8),
-    3: (2.5, 2.5, 2, 2.5),
-}
+# ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+# ARUCO_PARAMS = cv2.aruco.DetectorParameters()
+# ARUCO_DETECTOR = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
+# MARKER_EXPAND = {
+#     0: (2.5, 2.5, 2.8, 2),
+#     1: (2.5, 2.5, 2, 2.5),
+#     2: (2.5, 2.5, 2, 2.8),
+#     3: (2.5, 2.5, 2, 2.5),
+# }
+
+MARKER_EXPAND = (2.5, 2.5, 1.5, 1.5)  # up, down, left, right
 
 @dataclass
 class Task:
@@ -59,7 +62,7 @@ class GoatAgent(Agent):
     """
 
     def __init__(
-        self, config, vocabulary, agent_id=None, device_id: int = 0
+        self, config, vocabulary, camera_params=None, agent_id=None, device_id: int = 0
     ):
         self.real_world = config.REAL_WORLD
         
@@ -101,17 +104,17 @@ class GoatAgent(Agent):
             self.device = torch.device(f"cuda:{self.device_id}")
 
         self.num_sem_categories = len(vocabulary) + 1 # For other robots.
-        env_params = self._get_env_params(config)
+        if camera_params is None:
+            camera_params = self._get_camera_params(config)
+        self.camera_params = camera_params
+
         agent_cell_radius = int(
             np.ceil(config.AGENT.radius * 100.0 / config.AGENT.SEMANTIC_MAP.map_resolution)
         )
+
         self.semantic_map_module = Categorical2DSemanticMapModule(
             device=self.device,
-            frame_height=env_params['height'],
-            frame_width=env_params['width'],
-            camera_height=env_params['camera_height'],
-            hfov=env_params['hfov'],
-            max_depth=env_params['max_depth'],
+            camera_params=camera_params,
             num_sem_categories=self.num_sem_categories,
             map_size_cm=config.AGENT.SEMANTIC_MAP.map_size_cm,
             map_resolution=config.AGENT.SEMANTIC_MAP.map_resolution,
@@ -128,14 +131,6 @@ class GoatAgent(Agent):
             instance_memory=self.instance_memory,
             max_instances=getattr(config.AGENT.SEMANTIC_MAP, "max_instances", 0),
             exploration_type=config.AGENT.exploration_type,
-            gaze_width=(
-                40 if config.AGENT.exploration_type == "raycast" else 30
-            ),  #! myTODO: Hardcoded 3
-            gaze_distance=(
-                env_params['max_depth']
-                if config.AGENT.exploration_type == "raycast"
-                else 3
-            ),  #! myTODO: Hardcoded 3
             agent_cell_radius=agent_cell_radius,
             print_images=self.visualization_level > 2,
             log=self._log,
@@ -160,13 +155,14 @@ class GoatAgent(Agent):
         self.max_subtasks_per_episode = config.ENVIRONMENT.max_subtasks_per_episode
 
 
+        turn_angle = config.ENVIRONMENT.turn_angle if self.real_world else config.habitat.simulator.turn_angle
         if config.AGENT.panorama_start:
-            panorama_start_steps = int(360 / env_params["turn_angle"])
+            panorama_start_steps = int(360 / turn_angle)
         else:
             panorama_start_steps = 0
 
         self.planner = DiscretePlanner(
-            turn_angle=env_params["turn_angle"],
+            turn_angle=turn_angle,
             collision_threshold=config.AGENT.PLANNER.collision_threshold,
             step_size=config.AGENT.PLANNER.step_size,
             obs_dilation_selem_radius=config.AGENT.PLANNER.obs_dilation_selem_radius,
@@ -206,37 +202,28 @@ class GoatAgent(Agent):
         self.match_memory = True
         self.search_found_goal_freq = config.AGENT.search_found_goal_freq
 
+        self.neighbor_color = (np.array([60, 80, 70]), np.array([85, 230, 210]))
+        self.neighbor_width_range = (0.05, 0.50)   # meters
+        self.neighbor_height_range = (0.10, 0.20)  # meters
+        self.robot_max_depth_spread = 0.30      # meters
+
+
     def _get_task_type(self, config) -> str:
         if self.real_world:
             return 'Goat-v1'
         else:
             return config.habitat.task.type
 
-    def _get_env_params(self, config) -> dict:
-        """Get camera parameters based on mode (sim vs real)."""
-        if self.real_world:
-            # Real world: use ENVIRONMENT config
-            return {
-                'height': config.ENVIRONMENT.frame_height,
-                'width': config.ENVIRONMENT.frame_width,
-                'camera_height': config.ENVIRONMENT.camera_height,
-                'hfov': config.ENVIRONMENT.hfov,
-                'max_depth': config.ENVIRONMENT.max_depth,
-                'turn_angle': config.ENVIRONMENT.turn_angle,
-                'forward_step_size': config.ENVIRONMENT.forward_step_size,
-            }
-        else:
-            # Simulation: use habitat.simulator config
-            camera = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
-            return {
-                'height': camera.height,
-                'width': camera.width,
-                'camera_height': camera.position[1],
-                'hfov': camera.hfov,
-                'max_depth': camera.max_depth,
-                'turn_angle': config.habitat.simulator.turn_angle,
-                'forward_step_size': config.habitat.simulator.forward_step_size,
-            }
+    def _get_camera_params(self, config) -> CameraParams:
+        assert not self.real_world
+        sensor = config.habitat.simulator.agents.agent0.sim_sensors.depth_sensor
+        return CameraParams.from_habitat_config(
+            sensor_cfg=sensor,
+            min_depth=sensor.min_depth,
+            max_depth=sensor.max_depth,
+        )
+
+
 
     def _setup_perception(self, config, vocabulary):
         if "Goat-v1" in self.task_type:
@@ -504,6 +491,92 @@ class GoatAgent(Agent):
             obs.semantic = obs.semantic * mask_union
             obs.task_observations["instance_frame"] = obs.task_observations["instance_frame"] * mask_union
 
+
+        def mask_other_robots_color(
+            rgb,
+            depth,
+            depth_margin_behind: float = 0.50,
+            depth_margin_front: float = 0.25
+        ):
+            robot_mask = np.zeros(depth.shape[:2], dtype=bool)
+            h, w = depth.shape[:2]
+            fx = fy = self.semantic_map_module.camera_matrix.f
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+
+            hsv_lower, hsv_upper = self.neighbor_color
+            color_mask = cv2.inRange(hsv, hsv_lower, hsv_upper)
+            color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+            color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+
+            contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                if cv2.contourArea(contour) < 150:
+                    continue
+                x, y, bw, bh = cv2.boundingRect(contour)
+                contour_mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.drawContours(contour_mask, [contour], -1, 255, -1)
+                region_depths = depth[contour_mask > 0]
+                valid = region_depths[region_depths < self.camera_params.max_depth]
+                if len(valid) < 150:
+                    self.log.debug(f"Contour rejected: valid_depth={len(valid)} < 150")
+                    continue
+                median_depth = np.median(valid)
+                spread = np.percentile(valid, 90) - np.percentile(valid, 10)
+                if spread > self.robot_max_depth_spread:
+                    self.log.debug(f"Contour rejected: spread={spread:.2f} > {self.robot_max_depth_spread}")
+                    continue
+                real_w = (bw / fx) * median_depth
+                real_h = (bh / fy) * median_depth
+                if not (self.neighbor_width_range[0] < real_w < self.neighbor_width_range[1]):
+                    self.log.debug(f"Contour rejected: width={real_w:.2f}m not in {self.neighbor_width_range}")
+                    continue
+                if not (self.neighbor_height_range[0] < real_h < self.neighbor_height_range[1]):
+                    self.log.debug(f"Contour rejected: height={real_h:.2f}m not in {self.neighbor_height_range}")
+                    continue
+                if y + bh < h * 0.35:
+                    self.log.debug(f"Contour rejected: bottom_y={y+bh} too high in image")
+                    continue
+                self.log.debug(
+                    f"Robot detected: bbox=({x},{y},{bw},{bh}), "
+                    f"size={real_w:.2f}x{real_h:.2f}m, depth={median_depth:.2f}m"
+                )
+
+                cx, cy = x + bw / 2.0, y + bh / 2.0
+                up, down, left, right = MARKER_EXPAND
+                x_min = max(0, int(cx - left * bw))
+                x_max = min(w, int(cx + right * bw))
+                y_min = max(0, int(cy - up * bh))
+                y_max = min(h, int(cy + down * bh))
+
+                roi_depth = depth[y_min:y_max, x_min:x_max]
+                depth_match = (
+                    (roi_depth > median_depth - depth_margin_behind) &
+                    (roi_depth < median_depth + depth_margin_front) &
+                    (roi_depth > 0)
+                )
+                robot_mask[y_min:y_max, x_min:x_max] |= depth_match
+
+            self.log.debug(f"Robot mask: {robot_mask.sum()} pixels")
+            if self.visualization_level > 0:
+                vis = rgb.copy()
+                #  color mask blue overlay
+                vis[color_mask > 0] = (vis[color_mask > 0] * 0.5 + np.array([0, 0, 255]) * 0.5).astype(np.uint8)
+                # final robot mask red overlay
+                vis[robot_mask] = (vis[robot_mask] * 0.4 + np.array([255, 0, 0]) * 0.6).astype(np.uint8)
+                # contour bounding boxes: passed all checks (green) or failed (gray)
+                for contour in contours:
+                    x, y, bw, bh = cv2.boundingRect(contour)
+                    cv2.rectangle(vis, (x, y), (x + bw, y + bh), (150, 150, 150), 1)
+                if robot_mask.any():
+                    # Draw the expanded region
+                    cv2.rectangle(vis, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                cv2.imwrite(
+                    os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_robot_detect.png"),
+                    cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
+                )
+
+            return robot_mask
+
         def mask_other_robots(
             rgb: np.ndarray,
             depth: np.ndarray,
@@ -620,7 +693,8 @@ class GoatAgent(Agent):
                         category_scores[i] = 0
 
         rgb = torch.from_numpy(obs.rgb).to(self.device)
-        other_robots_mask = mask_other_robots(obs.rgb, obs.depth)
+        # other_robots_mask = mask_other_robots(obs.rgb, obs.depth)
+        other_robots_mask = mask_other_robots_color(obs.rgb, obs.depth)
         if self.visualization_level > 2:
             visualize_depth_filter(
                 rgb=obs.rgb,
@@ -640,7 +714,7 @@ class GoatAgent(Agent):
             :, :, 1:
         ]  # one-hot encode and remove background class
 
-        # success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
+        success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:

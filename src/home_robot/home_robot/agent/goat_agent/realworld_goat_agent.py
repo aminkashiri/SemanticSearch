@@ -29,6 +29,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         self,
         config,
         vocabulary,
+        camera_params=None,
         agent_id=None,
         device_id: int = 0,
         broadcast_port: int = 9900,
@@ -36,7 +37,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         beacon_interval: float = 1.0,
         adhoc_ip=None
     ):
-        super().__init__(config, vocabulary, agent_id, device_id)
+        super().__init__(config, vocabulary, camera_params, agent_id, device_id)
 
         self.broadcast_port = broadcast_port
         self.data_port = data_port + agent_id

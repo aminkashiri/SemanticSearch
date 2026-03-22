@@ -20,6 +20,7 @@ from home_robot.core.interfaces import DiscreteNavigationAction, Observations, C
 from home_robot.perception.constants import GoatCategories
 from home_robot.utils.geometry import xyt2sophus
 from home_robot.utils.logger import get_logger
+from home_robot.utils.camera_params import CameraParams
 from home_robot_hw.env.visualizer import Visualizer
 from home_robot.utils.constants import (
     MAX_DEPTH_REPLACEMENT_VALUE,
@@ -47,11 +48,9 @@ class ScoutGoatEnv:
         self.visualization_level = getattr(config, 'VISUALIZATION_LEVEL', 0)
         self.ground_truth_semantics = False
         self.task_type = getattr(config, 'TASK_TYPE', 'Goat-v1')
-        
         self.min_depth = config.ENVIRONMENT.min_depth
         self.max_depth = config.ENVIRONMENT.max_depth
-        self.height = config.ENVIRONMENT.frame_height
-        self.width = config.ENVIRONMENT.frame_width
+        self._camera_params: CameraParams = None
         
         if self.verbose:
             print(f"[SCOUT_ENV] Depth range: {self.min_depth}m - {self.max_depth}m")
@@ -336,7 +335,7 @@ class ScoutGoatEnv:
             except Exception as e:
                 logger.error(f"Navigation failed: {e}")
                 if self.verbose:
-                    print(f"[SCOUT_ENV] ✗ Navigation error: {e}")
+                    print(f"[SCOUT_ENV] Navigation error: {e}")
         
         
         if self.verbose:
@@ -381,3 +380,18 @@ class ScoutGoatEnv:
     def _process_info(self, info: Dict[str, Any]) -> Any:
         if self.visualization_level > 0:
             self.visualizer.visualize(**info)
+
+    def sync_camera_params(self) -> CameraParams:
+        info = self.robot._ros_client.dpt_cam.get_info()
+        self._camera_params = CameraParams.from_ros_camera(
+            camera_info=info,
+            camera_height=self.config.ENVIRONMENT.camera_height,  # mount height stays in config
+            min_depth=self.min_depth,
+            max_depth=self.max_depth,
+        )
+        return self._camera_params
+
+    @property
+    def camera_params(self) -> CameraParams:
+        assert self._camera_params is not None, "Call sync_camera_params() first"
+        return self._camera_params

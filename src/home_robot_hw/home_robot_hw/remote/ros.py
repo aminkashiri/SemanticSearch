@@ -23,9 +23,6 @@ from home_robot_hw.ros.camera import RosCamera
 from home_robot_hw.ros.utils import matrix_from_pose_msg
 from home_robot_hw.ros.visualizer import Visualizer
 
-# Assuming RosCamera class definition is available from home_robot_hw.ros.camera
-# Assuming Visualizer class definition is available from home_robot_hw.ros.visualizer
-
 DEFAULT_COLOR_TOPIC = "/camera/camera/color"
 DEFAULT_DEPTH_TOPIC = "/camera/camera/aligned_depth_to_color"
 
@@ -165,30 +162,23 @@ class ScoutRosInterface:
         # return self.transform_lidar_to_base(lidar_pose)
         return lidar_pose
 
-    # --- FIX APPLIED HERE ---
     def get_images(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Get RGB, depth, and XYZ point cloud from the robot's cameras.
-           FIXED: Now returns all three components (rgb, depth, xyz).
+        """
+        Get RGB, depth, and XYZ point cloud from the robot's cameras.
         """
         
-        # 1. Get RGB and Depth images
         rgb = self.rgb_cam.get()
         if self.filter_depth:
             depth = self.dpt_cam.get_filtered(std_threshold=0.1)
         else:
             depth = self.dpt_cam.get()
         
-        # 2. Get camera intrinsics from the depth camera object
-        # The self.dpt_cam object is an instance of RosCamera
         info = self.dpt_cam.get_info()
         fx, fy, px, py = info["fx"], info["fy"], info["px"], info["py"]
         
-        # 3. Calculate the XYZ image
         xyz = get_xyz_image_from_depth(depth, fx, fy, px, py)
-        
         return rgb, depth, xyz
 
-    # Helper functions
     def _create_pubs_subs(self):
         """Create ROS publishers and subscribers."""
         # Create the tf2 buffer

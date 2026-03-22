@@ -7,16 +7,10 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import rospy
 
-# Assuming necessary imports for other modules:
-# from .modules.nav import ScoutNavigationClient
-# from .ros import ScoutRosInterface
-# from home_robot_hw.constants import ControlMode
-
     
 class ControlMode:
     NAVIGATION = "navigation"
     IDLE = "idle"
-# End of placeholder block
 
 from .modules.nav import ScoutNavigationClient
 from .ros import ScoutRosInterface
@@ -37,7 +31,7 @@ class ScoutClient:
         - /cmd_vel for navigation commands
         """
         # Ros
-        if init_node and not rospy.core.is_initialized(): # <-- Added check for init_node fix
+        if init_node and not rospy.core.is_initialized():
             rospy.init_node("scout_user_client")
 
         if camera_overrides is None:
@@ -92,11 +86,9 @@ class ScoutClient:
         # return self._ros_client.get_base_pose()
         return self._ros_client.get_robot_center_pose()
 
-    # --- FIX APPLIED HERE ---
     def get_images(self, compute_xyz: bool, rotate_images: bool) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """Get RGB, depth, and optional XYZ point cloud from the robot's camera."""
         
-        # FIXED: _ros_client.get_images() now returns 3 components
         rgb, depth, xyz_full = self._ros_client.get_images()
         
         xyz = None
@@ -104,11 +96,7 @@ class ScoutClient:
             # Only return the XYZ image if compute_xyz is True
             xyz = xyz_full
             
-        # Rotation logic (rotate_images) would be applied here if needed, 
-        # but is omitted for brevity based on the initial problem context.
         return rgb, depth, xyz
-    # --- END FIX ---
     
-    # Scout has no joints to get state from in this simplified model
     def get_joint_state(self):
         return None, None, None
