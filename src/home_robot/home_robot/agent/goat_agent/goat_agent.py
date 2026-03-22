@@ -816,7 +816,7 @@ class GoatAgent(Agent):
 
     def _process_action(self, action):
         if self.too_close == True:
-            if action == DiscreteNavigationAction.STOP:
+            if action == DiscreteNavigationAction.MOVE_FORWARD:
                 print("Too close, not executing forward")
                 action = None
         return {
