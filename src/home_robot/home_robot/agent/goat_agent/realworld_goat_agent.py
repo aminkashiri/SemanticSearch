@@ -11,6 +11,9 @@ from typing import List, Optional
 import numpy as np
 import torch
 import zmq
+import subprocess
+import re
+
 
 from .multiagent_goat_agent import BaseMultiAgentGoatAgent
 class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
@@ -49,6 +52,8 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         assert not adhoc_ip is None
         self.adhoc_ip = adhoc_ip
         self.broadcast_addr = self.adhoc_ip.rsplit('.', 1)[0] + '.255'
+        self._neighbor_macs = {}
+        self.rssi_threshold = -60
 
 
     def reset(self, scene_id, episode_id):
@@ -125,11 +130,19 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                 while True:
                     try:
                         data, addr = rx_sock.recvfrom(64)
-                        if len(data) >= 10 and data[:4] == self.BEACON_MAGIC:
-                            agent_id, port = struct.unpack("IH", data[4:10])
-                            if agent_id != self.agent_id:
-                                self.comm_log.debug(f"Beacond received from {agent_id}")
-                                neighbors[agent_id] = {"ip": addr[0], "port": port}
+                        if len(data) < 10 or data[:4] != self.BEACON_MAGIC:
+                            time.sleep(0.1)
+                            continue
+                        agent_id, port = struct.unpack("IH", data[4:10])
+                        if agent_id != self.agent_id:
+                            self.comm_log.debug(f"Beacond received from {agent_id}")
+                            neighbors[agent_id] = {"ip": addr[0], "port": port}
+                            if agent_id not in self._neighbor_macs:
+                                out = subprocess.check_output(["ip", "neigh", "show", addr[0], "dev", "wlan1"], text=True)
+                                m = re.search(r"lladdr (\S+)", out)
+                                if m:
+                                    self._neighbor_macs[agent_id] = m.group(1)
+
                     except socket.timeout:
                         break
 
@@ -213,6 +226,14 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         continue
                     # ACK immediately — don't hold the sender waiting for merge
                     sock.send(b"OK")
+                    rssi = self.get_neighbor_rssi(data["agent_id"])
+                    data["rssi"] = rssi
+                    if rssi is not None:
+                        self.comm_log.info(f"Neighbor {data['agent_id']} RSSI: {rssi} dBm")
+                        if rssi < self.rssi_threshold:
+                            self.comm_log.info(f"Dropping data from {data['agent_id']}, RSSI {rssi} too weak")
+                            continue
+
                     self.comm_log.info(
                         f"Agent {self.agent_id} <- Agent {data['agent_id']}: "
                         f"received data at step {self.total_timesteps}, t: {time.time()}, map: {not data.get('map') is None}"
@@ -305,3 +326,17 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
 
     def _get_communication_time_unit(self):
         return time.time()
+
+    def get_neighbor_rssi(self, agent_id):
+        mac = self._neighbor_macs.get(agent_id)
+        if not mac:
+            return None
+        try:
+            out = subprocess.check_output(
+                ["iw", "wlan1", "station", "get", mac],
+                text=True, stderr=subprocess.DEVNULL
+            )
+            m = re.search(r"signal:\s+(-\d+)", out)
+            return int(m.group(1)) if m else None
+        except subprocess.CalledProcessError:
+            return None

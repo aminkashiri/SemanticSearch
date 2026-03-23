@@ -42,11 +42,11 @@ def compute_known_cells_map(
     
     # Dilate obstacles
     obstacle_map = (obstacle_map_tensor >= 1).float()
-    kernel = torch.ones(1, 1, 3, 3, device=device)
+    kernel = torch.ones(1, 1, 7, 7, device=device)
     obstacle_map = torch.nn.functional.conv2d(
         obstacle_map.unsqueeze(0).unsqueeze(0),
         kernel,
-        padding=1
+        padding=3
     ).squeeze() > 0
     
     cx, cy = robot_pos

@@ -44,8 +44,8 @@ class BaseMultiAgentGoatAgent(GoatAgent):
 
     def act(self, **kwargs):
         #  no lock needed because only the main thread calls act() and modifies state here
-        neighbor_locs = self._get_neighbor_locs()
         self._drain_recv_queue()
+        neighbor_locs = self._get_neighbor_locs()
         for key in list(self.others_active_task_expiration.keys()):
             if (
                 self._get_communication_time_unit()
@@ -308,7 +308,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 "time": data["time"],
                 "loc": data["transformed_loc"],
             }
-            self._merge_task_info(data)
+        self._merge_task_info(data)
 
     def _merge_map(self, data):
         """Align and merge neighbor's map into ours."""
