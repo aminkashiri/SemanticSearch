@@ -5,6 +5,7 @@
 
 import os
 import cv2
+import time
 import torch
 import psutil
 import logging
@@ -203,7 +204,7 @@ class GoatAgent(Agent):
         self.match_memory = True
         self.search_found_goal_freq = config.AGENT.search_found_goal_freq
 
-        self.neighbor_color = (np.array([60, 80, 70]), np.array([85, 230, 210]))
+        self.neighbor_color = (np.array([60, 70, 70]), np.array([85, 230, 225]))
         self.neighbor_width_range = (0.05, 0.50)   # meters
         self.neighbor_height_range = (0.10, 0.20)  # meters
         self.robot_max_depth_spread = 0.30      # meters
@@ -503,6 +504,10 @@ class GoatAgent(Agent):
             h, w = depth.shape[:2]
             fx = fy = self.semantic_map_module.camera_matrix.f
             hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+            np.save(
+                os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_hsv.npy"),
+                hsv
+            )
 
             hsv_lower, hsv_upper = self.neighbor_color
             color_mask = cv2.inRange(hsv, hsv_lower, hsv_upper)
@@ -715,7 +720,11 @@ class GoatAgent(Agent):
             :, :, 1:
         ]  # one-hot encode and remove background class
 
-        success = cv2.imwrite(os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png"), obs.task_observations["semantic_frame"])
+        path = os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png")
+        success = cv2.imwrite(path, obs.task_observations["semantic_frame"])
+        ts_path = path.rsplit(".", 1)[0] + ".ts"
+        with open(ts_path, "w") as f:
+            f.write(str(time.time()))
         obs_preprocessed = torch.cat([rgb, depth, semantic], dim=-1)
 
         if self.record_instance_ids:

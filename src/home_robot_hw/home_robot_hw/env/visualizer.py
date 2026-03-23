@@ -2,7 +2,7 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-import json
+import time
 import os
 import shutil
 from collections import defaultdict
@@ -282,7 +282,12 @@ class Visualizer:
             path = os.path.join(self.vis_dir, f"agent_{agent_id}", f"{timestep}_13.snapshot.png")
         success = cv2.imwrite(path, main_frame)
         success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_map.png"),  main_frame[V.TOP_DOWN_Y1 : V.TOP_DOWN_Y2, V.TOP_DOWN_X1 : V.TOP_DOWN_X2])
-        success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_rgb.png"), rgb_frame)
+        path = os.path.join(os.path.join(self.vis_dir, f"{timestep}_rgb.png"))
+        success = cv2.imwrite(path, rgb_frame)
+        ts_path = path.rsplit(".", 1)[0] + ".ts"
+        with open(ts_path, "w") as f:
+            f.write(str(time.time()))
+
         if semantic_frame is not None:
             success = cv2.imwrite(os.path.join(self.vis_dir, f"{timestep}_sem.png"), semantic_frame)
 
