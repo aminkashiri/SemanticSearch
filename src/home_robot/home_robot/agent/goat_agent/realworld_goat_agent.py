@@ -53,7 +53,7 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
         self.adhoc_ip = adhoc_ip
         self.broadcast_addr = self.adhoc_ip.rsplit('.', 1)[0] + '.255'
         self._neighbor_macs = {}
-        self.rssi_threshold = -60
+        # self.rssi_threshold = -80
 
 
     def reset(self, scene_id, episode_id):
@@ -226,13 +226,13 @@ class RealWorldGoatAgent(BaseMultiAgentGoatAgent):
                         continue
                     # ACK immediately — don't hold the sender waiting for merge
                     sock.send(b"OK")
-                    rssi = self.get_neighbor_rssi(data["agent_id"])
-                    data["rssi"] = rssi
-                    if rssi is not None:
-                        self.comm_log.info(f"Neighbor {data['agent_id']} RSSI: {rssi} dBm")
-                        if rssi < self.rssi_threshold:
-                            self.comm_log.info(f"Dropping data from {data['agent_id']}, RSSI {rssi} too weak")
-                            continue
+                    # rssi = self.get_neighbor_rssi(data["agent_id"])
+                    # data["rssi"] = rssi
+                    # if rssi is not None:
+                        # self.comm_log.info(f"Neighbor {data['agent_id']} RSSI: {rssi} dBm")
+                        # if rssi < self.rssi_threshold:
+                        #     self.comm_log.info(f"Dropping data from {data['agent_id']}, RSSI {rssi} too weak")
+                        #     continue
 
                     self.comm_log.info(
                         f"Agent {self.agent_id} <- Agent {data['agent_id']}: "

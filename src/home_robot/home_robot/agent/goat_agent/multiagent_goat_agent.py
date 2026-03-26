@@ -274,24 +274,13 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             "agent_id": self.agent_id,
             "tasks_done": self.tasks_done,
             "active_task": self.active_task,
-            "active_task_score": self.inst_goals[self.active_task]["score"] if self.active_task is not None else None,
+            "active_task_score": float(self.inst_goals[self.active_task]["score"]) if self.active_task is not None else None,
             "location": [
                 int(self.semantic_map.global_loc[0]),
                 int(self.semantic_map.global_loc[1]),
             ],
             "time": self._get_communication_time_unit()
         }
-
-    def _distance_to(self, transformed_loc):
-            """Distance in meters from our location to a transformed neighbor location."""
-            return (
-                (torch.tensor(self.semantic_map.global_loc) - torch.tensor(transformed_loc))
-                .float()
-                .norm()
-                .item()
-                * self.semantic_map.resolution
-                / 100
-            )
 
     def _merge_communication_data(self, data):
         neighbor_id = data["agent_id"]
@@ -303,7 +292,7 @@ class BaseMultiAgentGoatAgent(GoatAgent):
                 neighbor_id, data["location"]
             )
 
-        if data.get("transformed_loc") is not None and self._distance_to(data["transformed_loc"]) <= self.communication_radius:
+        if data.get("transformed_loc") is not None:
             self.neighbors[neighbor_id] = {
                 "time": data["time"],
                 "loc": data["transformed_loc"],
@@ -341,30 +330,12 @@ class BaseMultiAgentGoatAgent(GoatAgent):
             data["agent_id"], data["location"]
         )
         data["transformed_loc"] = transformed_loc
-
-        distance = self._distance_to(transformed_loc)
-
+        data["transformed_map"] = transfomed_map
 
         self.comm_log.info(
-            f"Map aligned with Agent {neighbor_id}, distance: {distance:.2f}m, neighor_loc: {transformed_loc}"
+            f"Map aligned with Agent {neighbor_id}, neighor_loc: {transformed_loc}"
         )
-        if distance > self.communication_radius:
-            self.comm_log.warning(
-                f"Map alignment with Agent {neighbor_id} unreliable skipping merge"
-            )
-            self.map_merger._visualize(
-                self.semantic_map.global_map,
-                self.semantic_map.global_loc,
-                merged,
-                data,
-            )
-            self._vis_merge_failed(data, reason="dist")
-            data.pop("transformed_map")
-            data.pop("transformed_loc")
-            return
 
-        data["transformed_map"] = transfomed_map
-        data["transformed_loc"] = transformed_loc
 
         if self.visualization_level > 0:
             self.map_merger._visualize(

@@ -471,7 +471,8 @@ class MapMerger:
         if bounds:
             r0, r1, c0, c1 = bounds
             ax.set_xlim(c0, c1)
-            ax.set_ylim(r1, r0)
+            # ax.set_ylim(r1, r0)
+            ax.set_ylim(r0, r1)
 
     def _visualize_failed(self, map_A, map_B, loc_A, loc_B, reason=None):
         bounds_A = self._get_crop_bounds(map_A, loc_A)
