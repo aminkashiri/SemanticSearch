@@ -173,7 +173,7 @@ class MapMerger:
 
     def _get_data_mask(self, map_tensor: Tensor, threshold: float = 0.01) -> torch.Tensor:
         protected_channels = {MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP, 
-                            MC.NON_SEM_CHANNELS + self.num_sem_categories}
+                            MC.NON_SEM_CHANNELS + self.num_sem_categories - 1}
         
         mask = torch.zeros(map_tensor.shape[1:], dtype=torch.bool, device=map_tensor.device)
         
@@ -365,7 +365,7 @@ class MapMerger:
 
         protected_channels = torch.tensor(
             [MC.AGENT_VISITED_MAP, MC.BLACKLISTED_TARGETS_MAP,
-            MC.NON_SEM_CHANNELS + self.num_sem_categories],
+            MC.NON_SEM_CHANNELS + self.num_sem_categories - 1],
             device=device,
         )
         all_channels = torch.arange(global_map.shape[0], device=device)

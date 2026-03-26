@@ -79,7 +79,7 @@ class ScoutGoatEnv:
             print(f"[SCOUT_ENV] ✓ Connected to robot")
         
         self.current_episode = None
-        self.current_task_idx = 0
+        self.tasks_one = 0
         self.episode_over = False
         self.timestep = 0
         self.episode_id = -1
@@ -136,7 +136,7 @@ class ScoutGoatEnv:
         if self.current_episode is None:
             self.current_episode = self.episodes[0]
         
-        self.current_task_idx = 0
+        self.tasks_done = 0
         self.episode_over = False
         self.timestep = 0
         self._last_obs = None
@@ -161,7 +161,7 @@ class ScoutGoatEnv:
         if self.visualization_level > 0:
             dir_name = f"{self.scene_id}_{self.episode_id}"
             if self.config.SEQ:
-                dir_name = f"{dir_name}_{self.current_task_idx}"
+                dir_name = f"{dir_name}_{self.tasks_done}"
             self.visualizer.set_vis_dir(
                 dir_name
             )
@@ -202,10 +202,6 @@ class ScoutGoatEnv:
             print(f"[SCOUT_ENV] Depth shape: {depth.shape}, range: [{depth.min():.3f}, {depth.max():.3f}]m")
         
         tasks = self._preprocess_goals(self.current_episode["tasks"])
-        
-        if self.verbose:
-            current_task = tasks[self.current_task_idx]
-            print(f"[SCOUT_ENV] Current task: {current_task['type']} -> '{current_task['category']}' (sem_id={current_task['semantic_id']})")
         
         obs = home_robot.core.interfaces.Observations(
             rgb=rgb.copy(),
@@ -280,48 +276,44 @@ class ScoutGoatEnv:
         if info is not None:
             self._process_info(info)
         self._last_obs = None
-        action_enum = self._preprocess_action(action)
+        task_idx = action["action_args"]["task_idx"]
+        action = action["action"]
         if self.verbose:
             print(f"\n[SCOUT_ENV] ----- apply_action -----")
         
         
         if self.verbose:
-            print(f"[SCOUT_ENV] Action: {action_enum.name if hasattr(action_enum, 'name') else action_enum}")
+            print(f"[SCOUT_ENV] Action: {action.name if hasattr(action, 'name') else action}")
         
         
-        
-        if action_enum == DiscreteNavigationAction.STOP:
-            if self.verbose:
-                print(f"[SCOUT_ENV] STOP received - Task {self.current_task_idx + 1} complete")
-            self.current_task_idx += 1
-            if self.current_task_idx >= len(self.current_episode["tasks"]):
-                if self.verbose:
-                    print(f"[SCOUT_ENV] ✓ All tasks complete - Episode over")
-                self.episode_over = True
-            else:
-                if self.verbose:
-                    next_task = self.current_episode["tasks"][self.current_task_idx]
-                    print(f"[SCOUT_ENV] Starting task {self.current_task_idx + 1}: {next_task.get('category', 'unknown')}")
-                # self.reset_vis_dir()
         
         continuous_action = np.zeros(3)
-        if action_enum == DiscreteNavigationAction.MOVE_FORWARD:
+        if action== DiscreteNavigationAction.STOP:
+            if self.verbose:
+                print(f"[SCOUT_ENV] STOP received - Task {task_idx} complete")
+            if task_idx is not None:
+                self.tasks_done += 1
+            if self.tasks_done >= len(self.current_episode["tasks"]):
+                if self.verbose:
+                    print(f"[SCOUT_ENV] All tasks complete - Episode over")
+                self.episode_over = True
+        elif action == DiscreteNavigationAction.MOVE_FORWARD:
             continuous_action[0] = self.forward_step
             if self.verbose:
                 print(f"[SCOUT_ENV] FORWARD: {self.forward_step}m")
-        elif action_enum == DiscreteNavigationAction.TURN_RIGHT:
+        elif action == DiscreteNavigationAction.TURN_RIGHT:
             continuous_action[2] = -self.turn_angle
             if self.verbose:
                 print(f"[SCOUT_ENV] TURN RIGHT: {np.degrees(self.turn_angle):.1f}°")
-        elif action_enum == DiscreteNavigationAction.TURN_LEFT:
+        elif action == DiscreteNavigationAction.TURN_LEFT:
             continuous_action[2] = self.turn_angle
             if self.verbose:
                 print(f"[SCOUT_ENV] TURN LEFT: {np.degrees(self.turn_angle):.1f}°")
-        elif action_enum is None:
+        elif action is None:
             print(f"[SCOUT_ENV] Too close to obstacles. moving backward to avoid collision")
             continuous_action[0] = -self.forward_step / 2
-        elif isinstance(action_enum, ContinuousNavigationAction):
-            continuous_action[2] = np.radians(action_enum.xyt[2].item())
+        elif isinstance(action, ContinuousNavigationAction):
+            continuous_action[2] = np.radians(action.xyt[2].item())
             if self.verbose:
                 print(f"[SCOUT_ENV] Continuous TURN : {np.degrees(continuous_action[2]):.1f}°")
 
@@ -358,7 +350,7 @@ class ScoutGoatEnv:
         return {
             "episode_id": self.episode_id,
             "scene_id": self.scene_id,
-            "tasks_completed": self.current_task_idx,
+            "tasks_completed": self.tasks_done,
             "total_tasks": len(self.current_episode["tasks"]) if self.current_episode else 0,
             "timesteps": self.timestep,
         }
@@ -372,10 +364,6 @@ class ScoutGoatEnv:
             def __init__(self, env):
                 self.episode_id = str(env.episode_id)
         return EpisodeWrapper(self)
-
-    def _preprocess_action(self, action) -> int:
-        action_enum = action["action"]
-        return action_enum
 
     def _process_info(self, info: Dict[str, Any]) -> Any:
         if self.visualization_level > 0:
