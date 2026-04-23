@@ -721,7 +721,8 @@ class GoatAgent(Agent):
         ]  # one-hot encode and remove background class
 
         path = os.path.join(self.planner.vis_dir, f"{self.total_timesteps}_sem.png")
-        success = cv2.imwrite(path, obs.task_observations["semantic_frame"])
+        if self.visualization_level > 2:
+            success = cv2.imwrite(path, obs.task_observations["semantic_frame"])
         ts_path = path.rsplit(".", 1)[0] + ".ts"
         with open(ts_path, "w") as f:
             f.write(str(time.time()))
