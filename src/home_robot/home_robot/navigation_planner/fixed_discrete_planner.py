@@ -1022,9 +1022,9 @@ class DiscretePlanner:
         return clustered_map_convex_hull
 
     def get_frontier_planning_maps(self):
-        min_size = 10
+        min_size = 12
         if self.curr_frontier_dilation == self.min_obs_dilation_selem_radius:
-            min_size = 6
+            min_size = 8
         traversible = self.get_traversible(True, self.curr_frontier_dilation)
         frontier_map = self.semantic_map.get_frontier_map(
             local=True, timestep=self.timestep, min_size=min_size, traversible=traversible
@@ -1054,7 +1054,9 @@ class DiscretePlanner:
         saved_unreachable_global = self.semantic_map.global_map[MC.UNREACHABLE_FRONTIERS_MAP].clone()
         i = 0
         while True:
+            self.log.info(f"Getting frontier planning maps")
             frontier_map, traversible, is_local = self.get_frontier_planning_maps()
+            self.log.info(f"[DEBUG HANG] get_frontier_planning_maps returned: frontier={'None' if frontier_map is None else frontier_map.sum()} cells")
             if frontier_map is None:
                 self.log.info(
                     "No frontiers remaining. Setting obstacle dilation to min to find possible frontiers."

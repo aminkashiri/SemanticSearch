@@ -24,8 +24,8 @@
                 },
                 {
                     "type": "imagenav",
-                    "category": "microwave",
-                    "image": "projects/habitat_goat/configs/image_goals/microwave.jpeg"
+                    "category": "kettle",
+                    "image": "projects/habitat_goat/configs/image_goals/kettle.jpeg"
                 },
                 {
                     "type": "objectnav",

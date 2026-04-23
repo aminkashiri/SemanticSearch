@@ -323,7 +323,7 @@ class GoatAgent(Agent):
         cy, cx = h // 2, w // 2
         center_pixels = depth[cy - width//2 : cy + width//2,
                         cx - height//2 : cx + height//2]
-        close_pixels = np.sum(center_pixels < 0.7)
+        close_pixels = np.sum(center_pixels < 0.6)
         self.too_close = close_pixels >= 50 and self.real_world
         if self.too_close:
             print("Too close, center pixels: ", close_pixels, np.min(center_pixels), np.max(center_pixels))

@@ -1,6 +1,6 @@
 NO_GPU: 0                 # 1: run on CPU, 0: run on GPUs
 DUMP_LOCATION: datadump   # path to dump models and log
-EXP_NAME: new1
+EXP_NAME: new3
 REAL_WORLD: True
 NUM_AGENTS: 2             # number of agents. eval_episode ignores this and runs with one agent.
 SEQ: 0                    # Seq 0 doesn't work with single agents. Seq 1 doesn't work with multiple agents.
@@ -34,7 +34,7 @@ AGENT:
   
 
   COMMUNICATION:
-    radius: 5           # m
+    radius: 6           # m
     cooldown: 30        # seconds for real world, steps for sim
     location_valid: 20  # seconds for real world, steps for sim
 
@@ -57,8 +57,8 @@ AGENT:
 
   PLANNER:
     collision_threshold: 0.20       # forward move distance under which we consider there's a collision (in meters)
-    min_obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
-    obs_dilation_selem_radius: 3    # radius (in cells) of obstacle dilation structuring element
+    min_obs_dilation_selem_radius: 4    # radius (in cells) of obstacle dilation structuring element
+    obs_dilation_selem_radius: 4    # radius (in cells) of obstacle dilation structuring element
     map_downsample_factor: 1            # optional downsampling of traversible and goal map before fmm distance call (1 for no downsampling, 2 for halving resolution)
     map_update_frequency: 1             # compute fmm distance map every n steps 
     step_size: 10                    # maximum distance of the short-term goal selected by the planner
@@ -73,7 +73,8 @@ AGENT:
     sinkhorn_iterations: 20
     match_threshold: 0.2
     score_function: confidence_sum    # or match_count
-    score_thresh_image: 24.5  # real-world experiments used 6.0
+    # score_thresh_image: 24.5  # real-world experiments used 6.0
+    score_thresh_image: 10.0  # real-world experiments used 6.0
     score_thresh_lang: 0.24
     match_projection_threshold: 0.2   # confidence must be at least this high to project as goal point.
     goto_past_pose: True

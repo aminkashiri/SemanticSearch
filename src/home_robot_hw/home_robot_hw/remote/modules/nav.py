@@ -75,54 +75,62 @@ class ScoutNavigationClient(AbstractControlModule):
         # 1. Capture Initial State
         start_pose = self.get_base_pose()
         x0, y0, th0 = start_pose[0], start_pose[1], start_pose[2]
-        
-        target_dist = abs(xyt[0])  # Linear goal (0.25m)
-        target_ang = abs(xyt[2])   # Angular goal (rad)
-        
-        # 2. PID/P Gains (Tune these based on Scout's responsiveness)
-        Kp_linear = 2   
+
+        # Work with absolute magnitudes; preserve signs for cmd direction
+        target_dist = abs(xyt[0])
+        linear_sign = np.sign(xyt[0]) if xyt[0] != 0 else 0.0
+
+        target_ang = abs(xyt[2])
+        angular_sign = np.sign(xyt[2]) if xyt[2] != 0 else 0.0
+
+        # 2. P Gains
+        Kp_linear = 2.0
         Kp_angular = 2.0
-        
-        # Velocity Limits 
-        min_v, max_v = 0.025, 0.5  # m/s
-        min_w, max_w = 0.025, 0.6 # rad/s
-        
-        # Tolerance: Stop when within 1cm or 1 degree
-        linear_tol = 0.0005 
+
+        # Velocity Limits
+        min_v, max_v = 0.025, 0.5   # m/s
+        min_w, max_w = 0.025, 0.6   # rad/s
+
+        # Tolerances
+        linear_tol = 0.0005
         angular_tol = np.deg2rad(0.3)
-        
+
+        # --- Accumulate unwrapped angular displacement ---
+        prev_th = th0
+        ang_accumulated = 0.0
+
         rate = rospy.Rate(50)
         while not rospy.is_shutdown():
             curr_pose = self.get_base_pose()
             curr_x, curr_y, curr_th = curr_pose[0], curr_pose[1], curr_pose[2]
 
-            # 3. Calculate Error (Distance Remaining)
+            # 3. Calculate errors
             dist_moved = np.sqrt((curr_x - x0)**2 + (curr_y - y0)**2)
-            ang_moved = abs(np.arctan2(np.sin(curr_th - th0), np.cos(curr_th - th0)))
-            
+
+            # Unwrapped angular delta since last tick
+            d_th = np.arctan2(np.sin(curr_th - prev_th), np.cos(curr_th - prev_th))
+            ang_accumulated += abs(d_th)
+            prev_th = curr_th
+
             error_v = target_dist - dist_moved
-            error_w = target_ang - ang_moved
+            error_w = target_ang - ang_accumulated
 
             cmd = Twist()
 
-            # 4. Control Logic
+            # 4. Control Logic — linear first, then angular
             if target_dist > 0 and error_v > linear_tol:
-                # Proportional output
-                v_out = error_v * Kp_linear
-                # Clamp between min (to prevent stall) and max (to prevent jerking)
-                cmd.linear.x = np.clip(v_out, min_v, max_v)
-            
+                v_out = np.clip(error_v * Kp_linear, min_v, max_v)
+                cmd.linear.x = v_out * linear_sign
+
             elif target_ang > 0 and error_w > angular_tol:
-                w_out = error_w * Kp_angular
-                # Scout turns require more torque, so min_w is higher than min_v
-                cmd.angular.z = np.clip(w_out, min_w, max_w) * np.sign(xyt[2])
-            
+                w_out = np.clip(error_w * Kp_angular, min_w, max_w)
+                cmd.angular.z = w_out * angular_sign
+
             else:
-                # Goal Reached
                 break
 
             self._ros_client.velocity_pub.publish(cmd)
-            rate.sleep()
+            rate.sleep() 
 
         # 5. Final Stop
         # self._ros_client.velocity_pub.publish(Twist())

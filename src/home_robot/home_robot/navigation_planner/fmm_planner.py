@@ -304,7 +304,7 @@ class FMMPlanner:
             best_x, best_y = np.unravel_index(np.argmin(candidate_subset), candidate_subset.shape)
 
 
-            min_clearance_threshold = 7  if self.real_world else 3# cells
+            min_clearance_threshold = 9 if self.real_world else 3# cells
             if obstacle_dist[best_x, best_y] < min_clearance_threshold:
                 # Too close to obstacle — pick safest among progress candidates
                 clearance = np.where(progress_mask, obstacle_dist, 0)
